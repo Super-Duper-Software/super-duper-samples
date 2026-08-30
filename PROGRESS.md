@@ -17,7 +17,7 @@ tickets 12 and 15.
 | 08 | Staged download on audition | done | `4ed08ee` |
 | 09 | Real drag-out — **the milestone** | **done** — code + tests + macOS manual verification (`docs/findings/0002`); Windows §B still outstanding | `0ee382b` |
 | 10 | Sidecars + LRU eviction | **done** — code + tests (`test/eviction.test.ts`) | `0fed16b` |
-| 11 | Library: save, view, delete | **done** — code + tests (`test/library.test.ts`) | _this commit_ |
+| 11 | Library: save, view, delete | **done** — code + tests (`test/library.test.ts`) | `6406a57` |
 | 12–19 | Peaks, collections, manifest, packaging | not started | — |
 
 ## Test counts

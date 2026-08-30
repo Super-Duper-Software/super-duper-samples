@@ -1,0 +1,3 @@
+- BUG: when a clip is "selected"/highlighted, you can't scroll below it - the UI starts buggily preventing the user from scrolling further down
+- search needs to be debounced - it doesn't feel like it currently is
+- FREESOUND_API_KEY is THE SAME as FREESOUND_CLIENT_SECRET - this means that we CANNOT bundle the API key in the app. we either need to limit search to using oauth creds (if possible - check freesounds docs), OR we need to have the worker server be called on every search. prefer the former to keep CF costs down but if it's necessary (as in only API key can run search requests and oauth cannot), that's fine

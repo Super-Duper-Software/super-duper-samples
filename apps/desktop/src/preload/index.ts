@@ -49,6 +49,21 @@ export interface CoreApi {
   grantStagingConsent(): Promise<StagingConsent>
   /** Subscribe to per-sound staging status pushes. Returns an unsubscribe function. */
   onStagingStatus(listener: (change: StagingStatusChange) => void): () => void
+
+  // ---- drag-out (ticket 09) -----------------------------------------
+  /**
+   * Begin an OS drag-out of one or more Sounds. Call from the row's `dragstart`
+   * handler after `event.preventDefault()`. `iconDataUrl` is a PNG of the Sound's
+   * rendered waveform for the drag image (optional — a bundled glyph is used
+   * otherwise). Rejects with `OriginalNotStagedError`'s message if a Sound's
+   * Original is not yet on disk — show it; never fall back to a Preview.
+   */
+  startDrag(
+    soundIds: number | number[],
+    opts?: { iconDataUrl?: string },
+  ): Promise<{ filePath: string; extraFilePaths: string[]; soundIds: number[] }>
+  /** Whether the UI may offer multi-Sound drag on this platform (macOS only for now). */
+  getDragCapabilities(): Promise<{ multiSound: boolean }>
 }
 
 const api: CoreApi = {
@@ -81,6 +96,11 @@ const api: CoreApi = {
     ipcRenderer.on(STAGING_STATUS_CHANNEL, handler)
     return () => ipcRenderer.removeListener(STAGING_STATUS_CHANNEL, handler)
   },
+
+  startDrag: (soundIds, opts) =>
+    ipcRenderer.invoke('core:invoke', 'startDrag', [soundIds, opts]),
+  getDragCapabilities: () =>
+    ipcRenderer.invoke('core:invoke', 'getDragCapabilities', []),
 }
 
 contextBridge.exposeInMainWorld('core', api)

@@ -9,13 +9,15 @@
 // node inside <Waveform> by `audioController`, so it never re-renders this row.
 // A track change flips `isCurrent` for exactly the outgoing and incoming rows.
 
-import { memo, useCallback, useEffect } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import type { DragEvent } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { Sound } from '../../core/types'
 import { useRowTransport } from '../hooks/useRowTransport'
 import { useTransport } from '../store/useTransport'
 import { selectRowStaging, useStaging } from '../store/useStaging'
 import { formatDuration } from '../lib/format'
+import { waveformIconDataUrl } from '../lib/dragIcon'
 import { LicenseChip } from './LicenseChip'
 import { StagingChip } from './StagingChip'
 import { Waveform } from './Waveform'
@@ -52,12 +54,61 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
     else t.playSound(sound)
   }, [isCurrent, sound])
 
+  // Ticket 09: drag the Sound's Original straight out of the app. The row is
+  // always draggable; a drag attempted before the Original is staged is refused
+  // with a visible message here (never a silent no-op, never a Preview).
+  const [dragNotice, setDragNotice] = useState<string | null>(null)
+  const noticeTimer = useRef<number | null>(null)
+  const flashNotice = useCallback((msg: string) => {
+    setDragNotice(msg)
+    if (noticeTimer.current != null) window.clearTimeout(noticeTimer.current)
+    noticeTimer.current = window.setTimeout(() => setDragNotice(null), 4500)
+  }, [])
+  useEffect(
+    () => () => {
+      if (noticeTimer.current != null) window.clearTimeout(noticeTimer.current)
+    },
+    [],
+  )
+
+  const onDragStart = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault() // hand the drag to Electron's native OS drag
+      if (stagingStatus !== 'ready') {
+        flashNotice(
+          stagingStatus === 'failed'
+            ? "This sound's Original could not be downloaded — it can't be dragged out."
+            : 'Still preparing this sound. Press play and wait for “ready” before dragging.',
+        )
+        return
+      }
+      void (async () => {
+        const iconDataUrl = await waveformIconDataUrl(sound.waveformUrls.m)
+        try {
+          await window.core.startDrag(
+            [sound.id],
+            iconDataUrl ? { iconDataUrl } : undefined,
+          )
+        } catch (err) {
+          flashNotice(
+            err instanceof Error && err.message
+              ? err.message
+              : 'Could not start the drag.',
+          )
+        }
+      })()
+    },
+    [sound.id, sound.waveformUrls.m, stagingStatus, flashNotice],
+  )
+
   return (
     <div
       role="option"
       aria-selected={selected}
       tabIndex={selected ? 0 : -1}
       data-index={index}
+      draggable
+      onDragStart={onDragStart}
       onMouseDown={handleSelect}
       onFocus={handleSelect}
       className={[
@@ -121,6 +172,15 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
       </div>
 
       <LicenseChip name={sound.license.name} />
+
+      {dragNotice && (
+        <div
+          role="alert"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 truncate bg-amber-950/95 px-3 py-0.5 text-[11px] text-amber-100"
+        >
+          {dragNotice}
+        </div>
+      )}
     </div>
   )
 }

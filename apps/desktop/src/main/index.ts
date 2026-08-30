@@ -3,6 +3,7 @@
 // (CONVENTIONS.md, spec 0001: "If a behaviour cannot be exercised without
 // launching Electron, it is in the wrong place.").
 
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import {
@@ -14,7 +15,23 @@ import {
 } from '../core'
 import { HttpFreesoundGateway } from '../core/gateway/http'
 import { createElectronAuthPlatform } from './authPlatform'
+import { createElectronDragHost } from './dragHost'
 import { loadConfig } from './config'
+
+/**
+ * The bundled fallback drag icon (ticket 09). In the electron-vite `out/` layout
+ * `__dirname` is `out/main`, so the committed `resources/` dir sits two levels
+ * up; a packaged build (ticket 19) will ship it under `process.resourcesPath`.
+ */
+function resolveDragIconPath(): string {
+  const candidates = [
+    join(__dirname, '../../resources/drag-icon.png'),
+    process.resourcesPath
+      ? join(process.resourcesPath, 'drag-icon.png')
+      : '',
+  ].filter(Boolean)
+  return candidates.find((p) => existsSync(p)) ?? candidates[0]!
+}
 
 /** Channel the renderer listens on for auth-state pushes (ticket 07). */
 const AUTH_STATE_CHANNEL = 'core:event:authState'
@@ -82,6 +99,7 @@ void app.whenReady().then(() => {
     apiKey: config.freesoundApiKey,
     tokenWorkerUrl: config.tokenWorkerUrl,
   })
+  const dragIconFallbackPath = resolveDragIconPath()
   const core = createCore({
     gateway,
     dataDir,
@@ -91,6 +109,11 @@ void app.whenReady().then(() => {
     clientId: config.freesoundClientId,
     onAuthStateChange: broadcastAuthState,
     onStagingStatusChange: broadcastStagingStatus,
+    dragHost: createElectronDragHost({
+      getWindow: () => BrowserWindow.getAllWindows()[0] ?? null,
+      fallbackIconPath: dragIconFallbackPath,
+    }),
+    dragIconFallbackPath,
   })
 
   registerIpc(core)

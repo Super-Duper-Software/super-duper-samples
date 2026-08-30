@@ -37,6 +37,13 @@ import {
   type StagingStatus,
   type StagingStatusChange,
 } from './staging/stagingController'
+import {
+  createDragController,
+  type DragController,
+  type DragStartResult,
+  type StartDragOptions,
+} from './staging/dragController'
+import type { DragHost } from './staging/dragHost'
 
 export type { FreesoundGateway } from './gateway/index'
 export * from './types'
@@ -73,6 +80,18 @@ export type {
   StagingStatus,
   StagingStatusChange,
 } from './staging/stagingController'
+export { OriginalNotStagedError } from './staging/dragController'
+export type {
+  DragController,
+  DragStartResult,
+  StartDragOptions,
+} from './staging/dragController'
+export {
+  createRecordingDragHost,
+  type DragHost,
+  type DragPayload,
+  type RecordingDragHost,
+} from './staging/dragHost'
 
 const DEFAULT_PAGE_SIZE = 15
 const DEBOUNCE_MS = 250
@@ -111,6 +130,21 @@ export interface CoreDeps {
   stagingMaxRetries?: number
   /** Backoff before each retry, ms. Defaults to `[1000, 3000, 9000]`. */
   stagingBackoffMs?: readonly number[]
+
+  // ---- drag-out (ticket 09) ------------------------------------------
+  /**
+   * The single OS drag-and-drop boundary (`webContents.startDrag`). Real impl
+   * in `src/main/`, a recording fake in tests. When omitted, `startDrag` throws
+   * and `getDragCapabilities()` reports no drag support — search/preview/staging
+   * are unaffected.
+   */
+  dragHost?: DragHost
+  /**
+   * Absolute path to the bundled fallback drag icon (a waveform glyph), used
+   * when the renderer cannot supply the Sound's own waveform as the drag image.
+   * Guarantees `startDrag` never hands the OS an empty icon.
+   */
+  dragIconFallbackPath?: string
 }
 
 /** The command API. Later tickets add methods here; the bridge forwards them all. */
@@ -204,6 +238,30 @@ export interface Core {
     listener: (change: StagingStatusChange) => void,
   ): () => void
 
+  // ---- drag-out (ticket 09) ------------------------------------------
+
+  /**
+   * Begin an OS drag-out of one or more Sounds whose Originals are on disk.
+   * Hardlinks each Original into a temp directory under a sanitised,
+   * human-readable name and hands those paths to the OS through `DragHost` — the
+   * content-store path (`<id>.<ext>`) is never dragged, and a Preview is never
+   * substituted. Throws `OriginalNotStagedError` (never a silent no-op) if a
+   * requested Sound's Original is not yet staged. A multi-Sound request collapses
+   * to the first Sound on platforms where ticket 01 did not verify that every
+   * file is delivered.
+   */
+  startDrag(
+    soundIds: number | readonly number[],
+    opts?: StartDragOptions,
+  ): DragStartResult
+
+  /**
+   * Drag capabilities for the current platform. `multiSound` is true only where
+   * ticket 01 verified multi-file drag delivers every file (macOS); the UI must
+   * not offer multi-Sound drag when it is false.
+   */
+  getDragCapabilities(): { multiSound: boolean }
+
   /** Release the database handle and cancel any pending debounced/refresh timers. */
   close(): void
 }
@@ -267,6 +325,22 @@ export function createCore(deps: CoreDeps): Core {
     maxRetries: deps.stagingMaxRetries,
     backoffMs: deps.stagingBackoffMs,
   })
+
+  const drag: DragController | undefined = deps.dragHost
+    ? createDragController({
+        db,
+        dataDir: deps.dataDir,
+        dragHost: deps.dragHost,
+        fallbackIconPath: deps.dragIconFallbackPath,
+      })
+    : undefined
+
+  function requireDrag(): DragController {
+    if (!drag) {
+      throw new Error('Drag-out is not configured (no DragHost was provided).')
+    }
+    return drag
+  }
 
   // Keyed by cache key. Holds BOTH foreground searches and background prefetches,
   // so a real request for a page already being prefetched attaches to the same
@@ -394,6 +468,10 @@ export function createCore(deps: CoreDeps): Core {
     getStagingConsent: () => staging.getStagingConsent(),
     grantStagingConsent: () => staging.grantStagingConsent(),
     subscribeStagingStatus: (listener) => staging.subscribe(listener),
+    startDrag: (soundIds, opts) => requireDrag().startDrag(soundIds, opts),
+    getDragCapabilities: () => ({
+      multiSound: drag?.multiSoundDragSupported ?? false,
+    }),
     close: () => {
       controller.dispose()
       staging.close()

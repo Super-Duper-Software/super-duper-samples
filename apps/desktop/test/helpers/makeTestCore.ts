@@ -3,11 +3,24 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createCore, type Core, type StagingStatusChange } from '../../src/core'
+import {
+  createCore,
+  type Core,
+  type DragHost,
+  type StagingStatusChange,
+} from '../../src/core'
 import { FakeFreesoundGateway } from '../../src/core/gateway/fake'
 import type { FreesoundGateway, RawSearchPage } from '../../src/core/gateway/index'
 import { FakeAuthPlatform } from './fakeAuthPlatform'
 import { FakeScheduler } from './fakeScheduler'
+
+/**
+ * The committed bundled drag icon (ticket 09). Passed to every test core so the
+ * drag controller has a non-empty fallback icon without a renderer in the loop.
+ */
+const DRAG_ICON_FALLBACK = fileURLToPath(
+  new URL('../../resources/drag-icon.png', import.meta.url),
+)
 
 const fixturesDir = fileURLToPath(
   new URL('../fixtures/freesound/', import.meta.url),
@@ -43,6 +56,8 @@ export interface TestCore {
   scheduler: FakeScheduler
   dataDir: string
   dbPath: string
+  /** The `DragHost` the core was built with, if any (ticket 09). */
+  dragHost?: DragHost
 }
 
 /**
@@ -66,6 +81,8 @@ export async function makeTestCore(
     stagingMaxRetries?: number
     stagingBackoffMs?: readonly number[]
     onStagingStatusChange?: (change: StagingStatusChange) => void
+    /** Ticket 09 — a recording `DragHost` so a test can see what is dragged. */
+    dragHost?: DragHost
   } = {},
 ): Promise<TestCore> {
   const dataDir = await mkdtemp(join(tmpdir(), 'freesound-desktop-test-'))
@@ -85,6 +102,16 @@ export async function makeTestCore(
     stagingMaxRetries: opts.stagingMaxRetries,
     stagingBackoffMs: opts.stagingBackoffMs,
     onStagingStatusChange: opts.onStagingStatusChange,
+    dragHost: opts.dragHost,
+    dragIconFallbackPath: DRAG_ICON_FALLBACK,
   })
-  return { core, gateway, authPlatform, scheduler, dataDir, dbPath }
+  return {
+    core,
+    gateway,
+    authPlatform,
+    scheduler,
+    dataDir,
+    dbPath,
+    dragHost: opts.dragHost,
+  }
 }

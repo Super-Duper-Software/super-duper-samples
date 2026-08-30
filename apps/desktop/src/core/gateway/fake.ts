@@ -19,6 +19,12 @@ export interface FakeFreesoundGatewayConfig {
   defaultPage?: RawSearchPage
   /** If set, every `search` call rejects with this error instead of returning. */
   failWith?: Error
+  /**
+   * If set, every `search` call rejects with a 429 `GatewayError` carrying this
+   * `Retry-After` (seconds), exactly as the real gateway does when Freesound
+   * rate-limits. Takes precedence over `failWith`.
+   */
+  throttle?: { retryAfter?: number }
 }
 
 /**
@@ -42,6 +48,10 @@ export class FakeFreesoundGateway implements FreesoundGateway {
   async search(params: GatewaySearchParams): Promise<RawSearchPage> {
     this.calls.push({ ...params })
 
+    if (this.#config.throttle) {
+      const { retryAfter } = this.#config.throttle
+      throw new GatewayError('Freesound search returned HTTP 429', 429, retryAfter)
+    }
     if (this.#config.failWith) throw this.#config.failWith
 
     const paged = this.#config.pagedPages?.[params.query]

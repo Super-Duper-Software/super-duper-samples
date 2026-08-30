@@ -8,6 +8,20 @@ import {
 
 const DEFAULT_BASE_URL = 'https://freesound.org/apiv2/'
 
+/**
+ * `Retry-After` is either a number of seconds or an HTTP date. Return seconds, or
+ * `undefined` when the header is absent or unparseable (the core then applies its
+ * own default).
+ */
+function parseRetryAfter(header: string | null): number | undefined {
+  if (!header) return undefined
+  const secs = Number(header)
+  if (Number.isFinite(secs) && secs >= 0) return Math.ceil(secs)
+  const when = Date.parse(header)
+  if (!Number.isNaN(when)) return Math.max(0, Math.ceil((when - Date.now()) / 1000))
+  return undefined
+}
+
 export interface HttpFreesoundGatewayConfig {
   /** Freesound token-auth API key. Supplied by the main process from config. */
   apiKey: string
@@ -52,6 +66,7 @@ export class HttpFreesoundGateway implements FreesoundGateway {
       throw new GatewayError(
         `Freesound search returned HTTP ${res.status}`,
         res.status,
+        parseRetryAfter(res.headers?.get?.('retry-after') ?? null),
       )
     }
 

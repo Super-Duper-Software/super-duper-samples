@@ -73,7 +73,7 @@ describe('core.search', () => {
     await expect(core.search('rain')).rejects.toBeInstanceOf(GatewayError)
   })
 
-  it('one search call yields a full page with no follow-up gateway calls', async () => {
+  it('one search call yields a full page with no per-Sound follow-up gateway calls', async () => {
     const gateway = new FakeFreesoundGateway({
       pages: { rain: loadFixture('search-rain.json') },
     })
@@ -81,10 +81,12 @@ describe('core.search', () => {
 
     const result = await core.search('rain')
 
-    expect(gateway.searchCallCount).toBe(1)
+    // The page being viewed costs exactly one gateway call. Any further call is
+    // the ticket-05 next-page prefetch — never a per-Sound detail fetch.
+    expect(gateway.calls.filter((c) => c.page === 1)).toHaveLength(1)
     // Every field needed to render a row is already present — nothing to fetch per Sound.
     for (const s of result.sounds) assertFullRowShape(s)
-    expect(gateway.searchCallCount).toBe(1)
+    expect(gateway.calls.every((c) => typeof c.page === 'number')).toBe(true)
   })
 
   it('does not call the gateway for a blank query', async () => {

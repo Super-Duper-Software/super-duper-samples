@@ -13,11 +13,13 @@
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.11.2",
+    "better-sqlite3": "^12.11.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",

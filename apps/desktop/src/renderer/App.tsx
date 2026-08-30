@@ -59,9 +59,17 @@ export default function App() {
           </p>
         )}
 
-        {status === 'error' && (
+        {status === 'error' && error && (
           <p className="p-4 text-sm text-red-400" role="alert">
-            Search failed: {error}
+            {error.kind === 'throttled'
+              ? `Rate-limited by Freesound${
+                  error.retryAfter != null
+                    ? ` — you can retry in about ${error.retryAfter}s`
+                    : ''
+                }.`
+              : error.kind === 'network'
+                ? 'Search failed: no connection to Freesound.'
+                : `Search failed: ${error.message}`}
           </p>
         )}
 

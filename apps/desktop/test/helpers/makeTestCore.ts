@@ -42,15 +42,28 @@ export interface TestCore {
 }
 
 /**
- * Build the core in-process — no Electron. Real temp dir, real (future) db path,
+ * Build the core in-process — no Electron. Real temp dir, real SQLite database,
  * fake gateway. This is the primary test seam (spec 0001 § Testing Decisions).
+ *
+ * `dbPath` is returned so a test can spin up a SECOND `createCore` on the same
+ * file and assert persistence. `debounceMs` defaults small so `searchDebounced`
+ * tests do not wait 250ms.
  */
 export async function makeTestCore(
-  opts: { gateway?: FreesoundGateway } = {},
+  opts: {
+    gateway?: FreesoundGateway
+    dbPath?: string
+    debounceMs?: number
+  } = {},
 ): Promise<TestCore> {
   const dataDir = await mkdtemp(join(tmpdir(), 'freesound-desktop-test-'))
-  const dbPath = join(dataDir, 'library.db')
+  const dbPath = opts.dbPath ?? join(dataDir, 'library.db')
   const gateway = opts.gateway ?? makeFakeGateway()
-  const core = createCore({ gateway, dataDir, dbPath })
+  const core = createCore({
+    gateway,
+    dataDir,
+    dbPath,
+    debounceMs: opts.debounceMs ?? 20,
+  })
   return { core, gateway, dataDir, dbPath }
 }

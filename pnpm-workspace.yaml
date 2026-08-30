@@ -6,7 +6,9 @@ packages:
 allowBuilds:
   electron: true
   esbuild: true
+  better-sqlite3: true
 
 onlyBuiltDependencies:
   - electron
   - esbuild
+  - better-sqlite3

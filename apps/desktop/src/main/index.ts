@@ -51,7 +51,7 @@ function registerIpc(core: Core): void {
 void app.whenReady().then(() => {
   const config = loadConfig()
   const dataDir = app.getPath('userData')
-  const dbPath = join(dataDir, 'library.db') // DB itself is ticket 05.
+  const dbPath = join(dataDir, 'library.db') // opened in the core, off the renderer thread.
 
   const gateway = new HttpFreesoundGateway({ apiKey: config.freesoundApiKey })
   const core = createCore({ gateway, dataDir, dbPath })
@@ -62,6 +62,8 @@ void app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+
+  app.on('will-quit', () => core.close())
 })
 
 app.on('window-all-closed', () => {

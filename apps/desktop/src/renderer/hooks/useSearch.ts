@@ -1,46 +1,67 @@
-// Owns a query's lifecycle in the renderer: debounce, the first page, and the
-// "load more" append path. Deliberately minimal — ticket 05 replaces this with
-// the SQLite-backed cache + prefetch. It only has to:
+// Owns a query's lifecycle in the renderer: the first page and the "load more"
+// append path. Debounce and the result cache both live in the CORE now (ticket
+// 05) — this hook calls `window.core.searchDebounced` on every change and simply
+// renders whatever resolves. It only has to:
 //   - show a loading state while a query is in flight
-//   - keep an empty result set distinct from an error
+//   - keep an empty result set distinct from an error, and throttling distinct
+//     from a generic failure
 //   - append later pages without duplicating rows
 //   - never run two page requests for the same query at once
+//   - drop responses for a query the user has already moved on from
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Sound } from '../../core/types'
 
 export type SearchStatus = 'idle' | 'loading' | 'ok' | 'error'
 
+export interface SearchError {
+  kind: 'throttled' | 'network' | 'generic'
+  message: string
+  /** Seconds until retry is allowed — only for `kind: 'throttled'`. */
+  retryAfter: number | null
+}
+
 export interface UseSearch {
   status: SearchStatus
-  error: string | null
+  error: SearchError | null
   sounds: Sound[]
   totalCount: number
-  /** A further page exists and can be requested with `loadMore`. */
   hasMore: boolean
-  /** A `loadMore` request is currently in flight (first page uses `status`). */
   loadingMore: boolean
-  /** Append the next page. No-op if nothing more, already loading, or idle. */
   loadMore: () => void
 }
 
-const DEBOUNCE_MS = 250
+/** Turn an unknown thrown value into a classified, renderable error. */
+function classifyError(e: unknown): SearchError {
+  const name = e instanceof Error ? e.name : ''
+  const message = e instanceof Error ? e.message : String(e)
+
+  // `name` survives IPC serialization; `retryAfter` may not, so fall back to the
+  // message, which always carries the number.
+  const looksThrottled = name === 'ThrottledError' || /rate-limited/i.test(message)
+  if (looksThrottled) {
+    const anyE = e as { retryAfter?: unknown }
+    const fromField =
+      typeof anyE.retryAfter === 'number' ? anyE.retryAfter : null
+    const fromMsg = message.match(/(\d+)\s*s/)
+    const retryAfter = fromField ?? (fromMsg ? Number(fromMsg[1]) : null)
+    return { kind: 'throttled', message, retryAfter }
+  }
+
+  if (name === 'NetworkError') return { kind: 'network', message, retryAfter: null }
+  return { kind: 'generic', message, retryAfter: null }
+}
 
 export function useSearch(query: string): UseSearch {
   const [status, setStatus] = useState<SearchStatus>('idle')
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<SearchError | null>(null)
   const [sounds, setSounds] = useState<Sound[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
 
-  // The query this hook currently considers authoritative. Late responses for a
-  // superseded query are dropped by comparing against it.
   const activeQuery = useRef('')
-  // Highest page successfully appended so far.
   const pageRef = useRef(1)
-  // The page number of the request in flight, or null. Guards against firing a
-  // duplicate request for the same page on rapid scroll.
   const inFlightPage = useRef<number | null>(null)
 
   useEffect(() => {
@@ -61,33 +82,29 @@ export function useSearch(query: string): UseSearch {
 
     setStatus('loading')
     setError(null)
+    inFlightPage.current = 1
 
-    const timer = setTimeout(() => {
-      inFlightPage.current = 1
-      window.core
-        .search(q, { page: 1 })
-        .then((r) => {
-          if (activeQuery.current !== q) return
-          setSounds(r.sounds)
-          setTotalCount(r.totalCount)
-          setHasMore(r.hasMore)
-          pageRef.current = 1
-          setStatus('ok')
-        })
-        .catch((e: unknown) => {
-          if (activeQuery.current !== q) return
-          setError(e instanceof Error ? e.message : String(e))
-          setSounds([])
-          setTotalCount(0)
-          setHasMore(false)
-          setStatus('error')
-        })
-        .finally(() => {
-          if (inFlightPage.current === 1) inFlightPage.current = null
-        })
-    }, DEBOUNCE_MS)
-
-    return () => clearTimeout(timer)
+    window.core
+      .searchDebounced(q, { page: 1 })
+      .then((r) => {
+        if (activeQuery.current !== q) return
+        setSounds(r.sounds)
+        setTotalCount(r.totalCount)
+        setHasMore(r.hasMore)
+        pageRef.current = 1
+        setStatus('ok')
+      })
+      .catch((e: unknown) => {
+        if (activeQuery.current !== q) return
+        setError(classifyError(e))
+        setSounds([])
+        setTotalCount(0)
+        setHasMore(false)
+        setStatus('error')
+      })
+      .finally(() => {
+        if (inFlightPage.current === 1) inFlightPage.current = null
+      })
   }, [query])
 
   const loadMore = useCallback(() => {
@@ -112,7 +129,6 @@ export function useSearch(query: string): UseSearch {
       })
       .catch(() => {
         if (activeQuery.current !== q) return
-        // Keep what we have; stop trying to paginate further.
         setHasMore(false)
       })
       .finally(() => {

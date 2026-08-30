@@ -1,0 +1,20 @@
+{
+  "name": "@freesound/token-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Stateless Cloudflare Worker (ticket 06): exchanges and refreshes Freesound OAuth2 tokens without exposing client_secret.",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250121.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

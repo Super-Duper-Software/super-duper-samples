@@ -1,0 +1,15 @@
+{
+  "name": "@freesound/spike-drag-out",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Throwaway spike (ticket 01): drag an audio file out of an Electron window.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "gen-wav": "node generate-wav.mjs",
+    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check generate-wav.mjs"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0"
+  }
+}

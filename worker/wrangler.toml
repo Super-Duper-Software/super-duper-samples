@@ -1,0 +1,24 @@
+name = "freesound-token-worker"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+# --- Public config -----------------------------------------------------------
+# FREESOUND_CLIENT_ID is the public half of the OAuth2 credential. Safe to
+# commit. Replace with your Freesound application's client id.
+#
+# FREESOUND_CLIENT_SECRET is NOT here on purpose. It is a Worker secret:
+#   wrangler secret put FREESOUND_CLIENT_SECRET
+[vars]
+FREESOUND_CLIENT_ID = "replace-with-your-freesound-client-id"
+
+# Optional, soft abuse controls. Leave empty to disable.
+#   ALLOWED_ORIGINS      comma-separated Origin header values to allow
+#   ALLOWED_USER_AGENTS  comma-separated User-Agent substrings to allow
+#   RATE_LIMIT_PER_MINUTE per-IP request cap for the best-effort limiter (default 30)
+ALLOWED_ORIGINS = ""
+ALLOWED_USER_AGENTS = ""
+RATE_LIMIT_PER_MINUTE = "30"
+
+# Intentionally NO storage bindings of any kind (KV, D1, Durable Objects, R2,
+# Queues, Hyperdrive). The Worker is stateless and must stay that way.

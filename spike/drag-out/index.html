@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'unsafe-inline'"
+    />
+    <title>drag-out spike</title>
+    <style>
+      body {
+        font: 14px -apple-system, system-ui, sans-serif;
+        margin: 24px;
+        color: #222;
+      }
+      h1 {
+        font-size: 16px;
+      }
+      #drag {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 220px;
+        height: 120px;
+        margin: 16px 0;
+        border: 2px dashed #888;
+        border-radius: 8px;
+        background: #f4f4f8;
+        cursor: grab;
+        user-select: none;
+        -webkit-user-drag: element;
+      }
+      #drag:active {
+        cursor: grabbing;
+      }
+      .row {
+        margin: 8px 0;
+      }
+      button {
+        font: inherit;
+        padding: 6px 10px;
+        margin-right: 8px;
+      }
+      #log {
+        white-space: pre-wrap;
+        background: #111;
+        color: #6f6;
+        padding: 10px;
+        border-radius: 6px;
+        min-height: 80px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 12px;
+      }
+      code {
+        background: #eee;
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>drag-out platform spike</h1>
+    <p>
+      Grab the box below and drop it into Finder, Logic, Audacity, Final Cut or
+      Ableton. Pick a mode first.
+    </p>
+
+    <div class="row">
+      <label
+        ><input type="radio" name="mode" value="single" checked /> drag
+        single</label
+      >
+      <label
+        ><input type="radio" name="mode" value="multi" /> drag multi (2
+        files)</label
+      >
+      <label
+        ><input type="radio" name="mode" value="hardlink" /> drag hardlink
+        copy</label
+      >
+    </div>
+
+    <div class="row">
+      <label
+        ><input type="checkbox" id="deleteSource" /> delete source file 3s after
+        dragstart</label
+      >
+    </div>
+
+    <div id="drag" draggable="true">drag me</div>
+
+    <div class="row">
+      <button id="fire">fire startDrag() without dragging (will no-op unless a real drag is in progress)</button>
+    </div>
+
+    <div id="log">ready.</div>
+
+    <script src="renderer.js"></script>
+  </body>
+</html>

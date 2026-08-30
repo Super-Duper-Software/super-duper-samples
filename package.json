@@ -1,0 +1,7 @@
+{
+  "name": "freesound-dnd",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Freesound desktop client — pnpm workspace root.",
+  "packageManager": "pnpm@10.15.1"
+}

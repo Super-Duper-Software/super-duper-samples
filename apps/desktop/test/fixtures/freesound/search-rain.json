@@ -1,0 +1,94 @@
+{
+  "count": 1873,
+  "next": "https://freesound.org/apiv2/search/text/?query=rain&page=2&page_size=3&fields=id%2Cname%2Cusername%2Clicense%2Cduration%2Ctags%2Cfilesize%2Ctype%2Csamplerate%2Cchannels%2Cbitdepth%2Cprevious%2Cimages%2Curl%2Cnum_downloads%2Cavg_rating%2Ccreated",
+  "previous": null,
+  "results": [
+    {
+      "id": 321967,
+      "name": "Rain_Heavy_Loop.wav",
+      "username": "klankbeeld",
+      "license": "http://creativecommons.org/licenses/by/4.0/",
+      "duration": 34.7208,
+      "tags": ["rain", "heavy", "storm", "loop", "weather", "field-recording"],
+      "filesize": 6127544,
+      "type": "wav",
+      "samplerate": 44100.0,
+      "channels": 2,
+      "bitdepth": 16,
+      "num_downloads": 15234,
+      "avg_rating": 4.4211,
+      "created": "2016-05-01T12:34:56.789",
+      "url": "https://freesound.org/people/klankbeeld/sounds/321967/",
+      "previews": {
+        "preview-hq-mp3": "https://cdn.freesound.org/previews/321/321967_5450487-hq.mp3",
+        "preview-lq-mp3": "https://cdn.freesound.org/previews/321/321967_5450487-lq.mp3",
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/321/321967_5450487-hq.ogg",
+        "preview-lq-ogg": "https://cdn.freesound.org/previews/321/321967_5450487-lq.ogg"
+      },
+      "images": {
+        "waveform_m": "https://cdn.freesound.org/displays/321/321967_5450487_wave_M.png",
+        "waveform_l": "https://cdn.freesound.org/displays/321/321967_5450487_wave_L.png",
+        "spectral_m": "https://cdn.freesound.org/displays/321/321967_5450487_spec_M.jpg",
+        "spectral_l": "https://cdn.freesound.org/displays/321/321967_5450487_spec_L.jpg"
+      }
+    },
+    {
+      "id": 408535,
+      "name": "light rain on window.flac",
+      "username": "InspectorJ",
+      "license": "http://creativecommons.org/licenses/by-nc/3.0/",
+      "duration": 12.004,
+      "tags": ["rain", "window", "light", "ambience", "indoor"],
+      "filesize": 2884120,
+      "type": "flac",
+      "samplerate": 48000.0,
+      "channels": 2,
+      "bitdepth": 24,
+      "num_downloads": 8321,
+      "avg_rating": 4.75,
+      "created": "2017-11-20T09:11:02.000",
+      "url": "https://freesound.org/people/InspectorJ/sounds/408535/",
+      "previews": {
+        "preview-hq-mp3": "https://cdn.freesound.org/previews/408/408535_7037-hq.mp3",
+        "preview-lq-mp3": "https://cdn.freesound.org/previews/408/408535_7037-lq.mp3",
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/408/408535_7037-hq.ogg",
+        "preview-lq-ogg": "https://cdn.freesound.org/previews/408/408535_7037-lq.ogg"
+      },
+      "images": {
+        "waveform_m": "https://cdn.freesound.org/displays/408/408535_7037_wave_M.png",
+        "waveform_l": "https://cdn.freesound.org/displays/408/408535_7037_wave_L.png",
+        "spectral_m": "https://cdn.freesound.org/displays/408/408535_7037_spec_M.jpg",
+        "spectral_l": "https://cdn.freesound.org/displays/408/408535_7037_spec_L.jpg"
+      }
+    },
+    {
+      "id": 17185,
+      "name": "rain-thunder.aiff",
+      "username": "reinsamba",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "duration": 58.9,
+      "tags": ["rain", "thunder", "storm"],
+      "filesize": 10382118,
+      "type": "aiff",
+      "samplerate": 44100.0,
+      "channels": 2,
+      "bitdepth": 16,
+      "num_downloads": 44210,
+      "avg_rating": 4.1,
+      "created": "2006-02-11T18:00:00.000",
+      "url": "https://freesound.org/people/reinsamba/sounds/17185/",
+      "previews": {
+        "preview-hq-mp3": "https://cdn.freesound.org/previews/17/17185_18799-hq.mp3",
+        "preview-lq-mp3": "https://cdn.freesound.org/previews/17/17185_18799-lq.mp3",
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/17/17185_18799-hq.ogg",
+        "preview-lq-ogg": "https://cdn.freesound.org/previews/17/17185_18799-lq.ogg"
+      },
+      "images": {
+        "waveform_m": "https://cdn.freesound.org/displays/17/17185_18799_wave_M.png",
+        "waveform_l": "https://cdn.freesound.org/displays/17/17185_18799_wave_L.png",
+        "spectral_m": "https://cdn.freesound.org/displays/17/17185_18799_spec_M.jpg",
+        "spectral_l": "https://cdn.freesound.org/displays/17/17185_18799_spec_L.jpg"
+      }
+    }
+  ]
+}

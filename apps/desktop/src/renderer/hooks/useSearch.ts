@@ -10,7 +10,7 @@
 //   - drop responses for a query the user has already moved on from
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Sound } from '../../core/types'
+import type { SearchFilter, SearchSort, Sound } from '../../core/types'
 
 export type SearchStatus = 'idle' | 'loading' | 'ok' | 'error'
 
@@ -52,7 +52,13 @@ function classifyError(e: unknown): SearchError {
   return { kind: 'generic', message, retryAfter: null }
 }
 
-export function useSearch(query: string): UseSearch {
+export function useSearch(
+  query: string,
+  sort: SearchSort = 'relevance',
+  filter: SearchFilter = {},
+  /** Wait until the persisted sort/filter prefs have loaded (ticket 15). */
+  ready = true,
+): UseSearch {
   const [status, setStatus] = useState<SearchStatus>('idle')
   const [error, setError] = useState<SearchError | null>(null)
   const [sounds, setSounds] = useState<Sound[]>([])
@@ -64,7 +70,17 @@ export function useSearch(query: string): UseSearch {
   const pageRef = useRef(1)
   const inFlightPage = useRef<number | null>(null)
 
+  // `loadMore` (a stable callback) reads the latest sort/filter through a ref so
+  // later pages carry the same options as page 1.
+  const optsRef = useRef<{ sort: SearchSort; filter: SearchFilter }>({ sort, filter })
+  optsRef.current = { sort, filter }
+
+  // A stable, order-independent identity for the filter object so the effect
+  // re-runs when a filter value actually changes, not on every render.
+  const filterKey = JSON.stringify(filter)
+
   useEffect(() => {
+    if (!ready) return
     const q = query.trim()
     activeQuery.current = q
 
@@ -85,7 +101,7 @@ export function useSearch(query: string): UseSearch {
     inFlightPage.current = 1
 
     window.core
-      .searchDebounced(q, { page: 1 })
+      .searchDebounced(q, { page: 1, sort, filter })
       .then((r) => {
         if (activeQuery.current !== q) return
         setSounds(r.sounds)
@@ -105,7 +121,8 @@ export function useSearch(query: string): UseSearch {
       .finally(() => {
         if (inFlightPage.current === 1) inFlightPage.current = null
       })
-  }, [query])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, sort, filterKey, ready])
 
   const loadMore = useCallback(() => {
     const q = activeQuery.current
@@ -116,7 +133,11 @@ export function useSearch(query: string): UseSearch {
     setLoadingMore(true)
 
     window.core
-      .search(q, { page: next })
+      .search(q, {
+        page: next,
+        sort: optsRef.current.sort,
+        filter: optsRef.current.filter,
+      })
       .then((r) => {
         if (activeQuery.current !== q) return
         setSounds((prev) => {

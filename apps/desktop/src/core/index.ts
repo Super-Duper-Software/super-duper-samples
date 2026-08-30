@@ -7,13 +7,21 @@
 
 import { mapRawSound } from './gateway/mapRawSound'
 import type { FreesoundGateway, RawSearchPage } from './gateway/index'
-import type { SearchOptions, SearchResult, Sound } from './types'
+import type {
+  SearchFilter,
+  SearchOptions,
+  SearchPrefs,
+  SearchResult,
+  SearchSort,
+  Sound,
+} from './types'
 import {
   DEFAULT_RETRY_AFTER_SECONDS,
   GatewayError,
   ThrottledError,
 } from './errors'
 import { openDb, type DB } from './db/index'
+import { getMeta, setMeta } from './db/appMeta'
 import { getSoundsByIds, upsertSound, upsertSounds } from './db/sounds'
 import {
   deleteLibraryEntry,
@@ -117,6 +125,58 @@ export type { LibrarySort, SortDir } from './db/library'
 const DEFAULT_PAGE_SIZE = 15
 const DEBOUNCE_MS = 250
 
+/** `app_meta` key holding the persisted active sort + filter (ticket 15). */
+const SEARCH_PREFS_KEY = 'search_prefs'
+
+/** The neutral prefs: relevance order, no filter. */
+const DEFAULT_SEARCH_PREFS: SearchPrefs = { sort: 'relevance', filter: {} }
+
+/**
+ * Collapse the default sort to `undefined` so a plain query's gateway URL and
+ * cache key are byte-for-byte what they were before ticket 15.
+ */
+function normalizeSort(sort: SearchSort | undefined): SearchSort | undefined {
+  return !sort || sort === 'relevance' ? undefined : sort
+}
+
+/**
+ * Keep only the constraining entries. An all-empty (or absent) filter becomes
+ * `undefined`, so it drops out of the cache key entirely and an "unfiltered"
+ * query hashes exactly as it did pre-ticket-15 — no migration, no collision.
+ */
+function normalizeFilter(
+  filter: SearchFilter | undefined,
+): SearchFilter | undefined {
+  if (!filter) return undefined
+  const out: SearchFilter = {}
+  if (filter.durationMin != null) out.durationMin = filter.durationMin
+  if (filter.durationMax != null) out.durationMax = filter.durationMax
+  if (filter.sampleRate != null) out.sampleRate = filter.sampleRate
+  if (filter.bitDepth != null) out.bitDepth = filter.bitDepth
+  if (filter.channels != null) out.channels = filter.channels
+  if (filter.fileType) out.fileType = filter.fileType
+  if (filter.license) out.license = filter.license
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/**
+ * Read the persisted sort + filter from `app_meta`. Any absence or corruption
+ * falls back to the neutral prefs — bad stored state must never wedge search.
+ */
+function readSearchPrefs(db: DB): SearchPrefs {
+  const raw = getMeta(db, SEARCH_PREFS_KEY)
+  if (!raw) return { ...DEFAULT_SEARCH_PREFS, filter: {} }
+  try {
+    const parsed = JSON.parse(raw) as Partial<SearchPrefs>
+    return {
+      sort: parsed.sort ?? 'relevance',
+      filter: normalizeFilter(parsed.filter) ?? {},
+    }
+  } catch {
+    return { ...DEFAULT_SEARCH_PREFS, filter: {} }
+  }
+}
+
 export interface CoreDeps {
   /** The sole network boundary. */
   gateway: FreesoundGateway
@@ -206,6 +266,22 @@ export interface Core {
    * every keystroke; the debounce lives here so it is tested at the core seam.
    */
   searchDebounced(query: string, opts?: SearchOptions): Promise<SearchResult>
+
+  /**
+   * The persisted active sort + filter state (ticket 15). Read once on startup
+   * so the renderer restores the last session's sort and filters. Returns
+   * `{ sort: 'relevance', filter: {} }` when nothing has been saved yet or the
+   * stored blob is unreadable.
+   */
+  getSearchPrefs(): SearchPrefs
+
+  /**
+   * Persist the active sort + filter state (ticket 15) into `app_meta` so it
+   * survives an app restart. The renderer calls this whenever the user changes
+   * the sort or a filter; it does NOT run a search — the renderer re-runs the
+   * query itself with the new options.
+   */
+  setSearchPrefs(prefs: SearchPrefs): SearchPrefs
 
   /**
    * Sign in through the system browser (ticket 07). Opens Freesound's authorize
@@ -490,12 +566,23 @@ export function createCore(deps: CoreDeps): Core {
     query: string,
     page: number,
     pageSize: number,
+    sort: SearchSort | undefined,
+    filter: SearchFilter | undefined,
     ck: ReturnType<typeof cacheKey>,
     allowPrefetch: boolean,
   ): Promise<SearchResult> {
     let raw: RawSearchPage
     try {
-      raw = await gateway.search({ query: query.trim(), page, pageSize })
+      // `sort` / `filter` only ride along when they constrain something, so an
+      // unfiltered query's gateway call is unchanged (and the fake records the
+      // bare `{ query, page, pageSize }` older tests assert on).
+      raw = await gateway.search({
+        query: query.trim(),
+        page,
+        pageSize,
+        ...(sort ? { sort } : {}),
+        ...(filter ? { filter } : {}),
+      })
     } catch (err) {
       // A failure on a MISS propagates as a typed error and writes NOTHING —
       // no empty cache row, so a later retry still reaches the gateway.
@@ -512,7 +599,11 @@ export function createCore(deps: CoreDeps): Core {
       hasMore,
     })
 
-    if (allowPrefetch && hasMore) prefetchNextPage(query, page, pageSize)
+    // Prefetch MUST carry the same sort + filter, or page 2 would be fetched
+    // unfiltered and cached under this filtered query's next-page key.
+    if (allowPrefetch && hasMore) {
+      prefetchNextPage(query, page, pageSize, sort, filter)
+    }
 
     return { query, totalCount: raw.count, page, pageSize, sounds, hasMore }
   }
@@ -524,6 +615,8 @@ export function createCore(deps: CoreDeps): Core {
   ): Promise<SearchResult> {
     const page = opts?.page ?? 1
     const pageSize = opts?.pageSize ?? DEFAULT_PAGE_SIZE
+    const sort = normalizeSort(opts?.sort)
+    const filter = normalizeFilter(opts?.filter)
     const trimmed = query.trim()
 
     if (trimmed === '') {
@@ -537,7 +630,10 @@ export function createCore(deps: CoreDeps): Core {
       })
     }
 
-    const params: SearchCacheParams = { query: trimmed, page, pageSize }
+    // `sort` / `filter` are part of the params object, so `cacheKey` (a hash of
+    // the canonical JSON) puts a differently-sorted or differently-filtered
+    // query on its own row — cached and served independently, no collision.
+    const params: SearchCacheParams = { query: trimmed, page, pageSize, sort, filter }
     const ck = cacheKey(params)
 
     const cached = readSearchCache(db, ck.key)
@@ -546,11 +642,17 @@ export function createCore(deps: CoreDeps): Core {
     const existing = inFlight.get(ck.key)
     if (existing) return existing
 
-    const p = fetchAndStore(query, page, pageSize, ck, allowPrefetch).finally(
-      () => {
-        inFlight.delete(ck.key)
-      },
-    )
+    const p = fetchAndStore(
+      query,
+      page,
+      pageSize,
+      sort,
+      filter,
+      ck,
+      allowPrefetch,
+    ).finally(() => {
+      inFlight.delete(ck.key)
+    })
     inFlight.set(ck.key, p)
     return p
   }
@@ -559,17 +661,26 @@ export function createCore(deps: CoreDeps): Core {
     query: string,
     page: number,
     pageSize: number,
+    sort: SearchSort | undefined,
+    filter: SearchFilter | undefined,
   ): void {
     const nextParams: SearchCacheParams = {
       query: query.trim(),
       page: page + 1,
       pageSize,
+      sort,
+      filter,
     }
     const { key } = cacheKey(nextParams)
     if (inFlight.has(key) || readSearchCache(db, key)) return
     // Fire-and-forget; errors are swallowed. `allowPrefetch: false` so prefetch
-    // never chains into prefetching page+2, page+3, …
-    void runSearch(query, { page: page + 1, pageSize }, false).catch(() => {})
+    // never chains into prefetching page+2, page+3, … The sort/filter are
+    // already normalized; passing them back through `runSearch` is idempotent.
+    void runSearch(
+      query,
+      { page: page + 1, pageSize, sort, filter },
+      false,
+    ).catch(() => {})
   }
 
   const controller: SearchController = createSearchController(
@@ -580,6 +691,15 @@ export function createCore(deps: CoreDeps): Core {
   return {
     search: (query, opts) => runSearch(query, opts, true),
     searchDebounced: (query, opts) => controller.query(query, opts),
+    getSearchPrefs: () => readSearchPrefs(db),
+    setSearchPrefs: (prefs) => {
+      const clean: SearchPrefs = {
+        sort: prefs.sort ?? 'relevance',
+        filter: normalizeFilter(prefs.filter) ?? {},
+      }
+      setMeta(db, SEARCH_PREFS_KEY, JSON.stringify(clean))
+      return clean
+    },
     signIn: () => auth.signIn(),
     signOut: () => auth.signOut(),
     getAuthState: () => auth.getState(),

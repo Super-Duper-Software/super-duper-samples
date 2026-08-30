@@ -3,6 +3,7 @@ import {
   ReauthRequiredError,
   RetryableTokenError,
 } from '../auth/errors'
+import { freesoundFilterString, freesoundSortParam } from './freesoundQuery'
 import {
   SEARCH_FIELDS,
   type DownloadOriginalOptions,
@@ -87,6 +88,13 @@ export class HttpFreesoundGateway implements FreesoundGateway {
     url.searchParams.set('page', String(params.page))
     url.searchParams.set('page_size', String(params.pageSize))
     url.searchParams.set('fields', SEARCH_FIELDS)
+
+    // ticket 15 — sort + structured filter, only when they constrain something,
+    // so a plain query's URL is byte-for-byte what it always was.
+    const sort = freesoundSortParam(params.sort)
+    if (sort) url.searchParams.set('sort', sort)
+    const filter = freesoundFilterString(params.filter)
+    if (filter) url.searchParams.set('filter', filter)
 
     let res: Response
     try {

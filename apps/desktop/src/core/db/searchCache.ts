@@ -1,16 +1,19 @@
 // `search_cache` table access + the cache-key scheme.
 //
 // The key is `sha256(canonicalJson(params))`. `params` is an open-ended object
-// holding EVERY value that affects which Sounds a page contains. Today that is
-// `{ query, page, pageSize }`; ticket 15 adds `{ sort, filters: {...} }`. Because
-// the key is a hash of a canonical serialization of the whole object, new fields
-// change the key with NO migration — an unfiltered query and the same query with
-// a filter simply land on different rows.
+// holding EVERY value that affects which Sounds a page contains: `{ query, page,
+// pageSize }` plus, since ticket 15, `{ sort, filter: {...} }` whenever they
+// constrain the result. Because the key is a hash of a canonical serialization
+// of the whole object, new fields change the key with NO migration — an
+// unfiltered query and the same query with a filter simply land on different
+// rows. The core omits `sort`/`filter` entirely when they carry no constraint
+// (`relevance` / empty), so a plain query hashes exactly as it did pre-ticket.
 //
 // Canonicalization sorts object keys recursively and drops `undefined`, so the
 // key is stable regardless of the order params were built in.
 
 import { createHash } from 'node:crypto'
+import type { SearchFilter, SearchSort } from '../types'
 import type { DB } from './index'
 
 /** Everything that affects a result page. Extend freely — see file header. */
@@ -18,7 +21,10 @@ export interface SearchCacheParams {
   query: string
   page: number
   pageSize: number
-  // ticket 15 will add: sort?: string; filters?: Record<string, unknown>
+  /** ticket 15 — result ordering; omitted by the core when it is `relevance`. */
+  sort?: SearchSort
+  /** ticket 15 — structured pre-filter; omitted by the core when it is empty. */
+  filter?: SearchFilter
   [k: string]: unknown
 }
 

@@ -2,8 +2,8 @@
 
 Tracer-bullet backlog: `.scratch/freesound-desktop-v1/`. Ticket 09 (the milestone) is
 built and its macOS drag-out was manually verified by the user on 2026-08-30. Tickets 10
-(sidecars + LRU eviction) and 11 (Library save / view / delete) are done. Frontier is now
-tickets 12 and 15.
+(sidecars + LRU eviction), 11 (Library save / view / delete) and 15 (search filters +
+sort) are done. Frontier is now ticket 12.
 
 | # | Ticket | State | Commit |
 |---|---|---|---|
@@ -18,13 +18,116 @@ tickets 12 and 15.
 | 09 | Real drag-out — **the milestone** | **done** — code + tests + macOS manual verification (`docs/findings/0002`); Windows §B still outstanding | `0ee382b` |
 | 10 | Sidecars + LRU eviction | **done** — code + tests (`test/eviction.test.ts`) | `0fed16b` |
 | 11 | Library: save, view, delete | **done** — code + tests (`test/library.test.ts`) | `6406a57` |
-| 12–19 | Peaks, collections, manifest, packaging | not started | — |
+| 15 | Search filters and sort | **done** — code + tests (`test/search-filters.test.ts`) | `this commit` |
+| 12–14, 16–19 | Peaks, collections, manifest, packaging | not started | — |
 
 ## Test counts
 
-- `apps/desktop`: 113 vitest tests (+8 for ticket 11), `tsc --noEmit` clean, `electron-vite build` clean.
+- `apps/desktop`: 139 vitest tests (+26 for ticket 15), `tsc --noEmit` clean, `electron-vite build` clean.
 - `worker`: 30 vitest tests, `tsc --noEmit` clean.
 - `spike/drag-out`: syntax-checked only (throwaway).
+
+## Ticket 15 — what landed
+
+- **Filter model** (`src/core/types.ts`, exported):
+  - `SearchSort = 'relevance' | 'duration_asc' | 'duration_desc' | 'rating' | 'downloads' | 'created'`.
+  - `SearchFilter` — all optional: `durationMin`, `durationMax` (seconds),
+    `sampleRate`, `bitDepth`, `channels`, `fileType`, `license`.
+  - `LicenseFilter = 'commercial' | 'cc0' | 'cc-by' | 'cc-by-nc' | 'sampling-plus'`.
+    `'commercial'` is the headline "usable in commercial work" control: it does
+    NOT enumerate what to exclude — it admits ONLY the commercial-safe licenses,
+    which is how CC-BY-NC and legacy Sampling+ are kept out before a result is
+    fetched.
+  - `SearchPrefs = { sort; filter }` — the persisted active state.
+  - `SearchOptions` gains `sort?` + `filter?`.
+- **Freesound param translation** (`src/core/gateway/freesoundQuery.ts`, pure,
+  verified against the APIv2 text-search docs):
+  - `freesoundSortParam`: `relevance → undefined` (Freesound default `score`),
+    `duration_asc/desc → same`, `rating → rating_desc`, `downloads →
+    downloads_desc`, `created → created_desc`.
+  - `freesoundFilterString`: space-separated Solr terms —
+    `duration:[lo TO hi]` (uppercase `TO`, `*` for an open end),
+    `samplerate:44100`, `bitdepth:24`, `channels:2`, `type:wav`,
+    `license:"Attribution Noncommercial"` (multi-word values quoted).
+    `commercial` → `license:("Attribution" OR "Creative Commons 0")`.
+    Returns `undefined` when nothing is constrained.
+  - `HttpFreesoundGateway.search` sets `sort=` / `filter=` on the URL ONLY when
+    non-empty, so a plain query's request is byte-for-byte unchanged.
+- **Gateway seam**: `GatewaySearchParams` gains `sort?` / `filter?`.
+  `FakeFreesoundGateway` records the full params (incl. a copy of the structured
+  `filter`) on every `search` call; fixtures are still keyed by `query` alone, so
+  tests assert on the *request*.
+- **Cache key** (`src/core/db/searchCache.ts` + `src/core/index.ts`):
+  `cacheKey(...)` now hashes `{ query, page, pageSize, sort, filter }`. The core
+  first *normalizes*: `relevance` and an all-empty filter collapse to `undefined`
+  and `canonicalJson` drops them, so an unfiltered query hashes EXACTLY as it did
+  pre-ticket — no migration, no collision, and differently-filtered/-sorted
+  queries land on independent rows.
+- **Prefetch** (`prefetchNextPage`) now takes the normalized `sort` + `filter`
+  and threads them into both the next-page cache-key computation and the
+  `runSearch` call, so page 2 is fetched *with the same constraints* and cached
+  under the filtered next-page key (not the bare one).
+- **Persistence**: `core.getSearchPrefs()` / `core.setSearchPrefs(prefs)` store a
+  JSON blob in `app_meta` under `search_prefs` (migration 002 table, no new
+  migration). `getSearchPrefs` falls back to `{ sort: 'relevance', filter: {} }`
+  on absence or a corrupt blob. `setSearchPrefs` never runs a search.
+- **preload**: `getSearchPrefs` / `setSearchPrefs` on the `core:invoke`
+  passthrough (no `src/main` change); filter/sort/prefs types re-exported.
+- **Renderer**:
+  - `src/renderer/store/useSearchPrefs.ts` — Zustand mirror of the persisted
+    prefs. `load()` on startup; every `setSort` / `setFilter` / `removeFilter` /
+    `clearFilter` writes through to `core.setSearchPrefs`. `ready` gates the
+    first search so there is no unfiltered flash.
+  - `src/renderer/lib/filterLabels.ts` — pure option lists + `activeFilterChips`
+    (a `SearchFilter` → removable-chip derivation, reused for the empty-results
+    hint).
+  - `src/renderer/components/FilterBar.tsx` — the sort `<select>` + duration
+    min/max inputs + sample-rate / bit-depth / channels / file-type / license
+    dropdowns, then a row of removable active-filter chips and a "Clear all".
+  - `src/renderer/hooks/useSearch.ts` — now `useSearch(query, sort, filter,
+    ready)`; re-runs page 1 when sort or any filter value changes (keyed on
+    `JSON.stringify(filter)`), and `loadMore` carries the current sort/filter via
+    a ref. Changing a filter never touches the query text (owned by `App`).
+  - `src/renderer/App.tsx` — mounts `<FilterBar/>` under the search box, loads
+    prefs once, and when a filtered query returns zero results shows a "try
+    relaxing this filter" panel with one button per active filter plus
+    "Clear all filters".
+- `test/search-filters.test.ts` — 26 tests: `freesoundSortParam` /
+  `freesoundFilterString` exact-string translation for every dimension +
+  composition + the commercial-license exclusion; `HttpFreesoundGateway` puts
+  `sort=`/`filter=` on the URL (and omits them when neutral); the core threads
+  every filter dimension + every sort option through to the fake as structured
+  params; query + sort + all filters compose in one call; the cache key isolates
+  differently-filtered and differently-sorted queries (distinct rows, no gateway
+  call on a re-hit, unfiltered row not shadowed); prefetch carries the same
+  sort+filter and serves page 2 from cache; prefs round-trip through a fresh core
+  on the same DB and `setSearchPrefs` runs no search.
+
+### Deferrals / judgement calls (ticket 15)
+
+- **No new migration.** `app_meta` (m002) already exists; `search_cache.key` is a
+  hash of an open-ended params object, so folding in `sort`/`filter` needs no
+  schema change. `MIGRATIONS` is still `[m001, m002]`.
+- **`license: 'commercial'` is an inclusion list, not an exclusion.** Admitting
+  only `"Attribution"` + `"Creative Commons 0"` is robust to Freesound adding
+  further non-commercial license strings later; the ADR/CONTEXT § License
+  obligation is untouched — this is only a pre-search convenience.
+- **Sample rate / bit depth / channels are exact-match dropdowns**, not ranges —
+  the ticket asks to "filter by" them, and Freesound indexes them as exact
+  integers. Duration is the only range control.
+- **"Clear all" clears filters only, not sort** — sort is not a filter, and
+  wiping it on a filter-clear is surprising. Sort has its own reset (pick
+  "Relevance").
+- **Filter change re-runs from page 1.** "Don't lose the user's place" is read as
+  "don't clear the query text" (we don't); the result set genuinely changes, so
+  resetting to page 1 is correct.
+- **Pre-existing `test/eviction.test.ts` flakiness** (ticket 10's file, timing
+  based) still surfaces under heavy full-suite CPU contention — it is 25/25 green
+  in isolation and 8/8 green across spaced full-suite runs. Hardened one
+  assertion (line ~259) to poll for the staging-status transition instead of
+  assuming it lands with the file unlinks; the remaining races in that file are
+  ticket-10 scope. The 26 new tests add no timers — every assertion is on a
+  recorded call param or a DB row.
 
 ## Ticket 11 — what landed
 

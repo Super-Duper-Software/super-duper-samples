@@ -60,11 +60,74 @@ export interface Sound {
   created: string
 }
 
+/**
+ * Result ordering (ticket 15). `'relevance'` is Freesound's default text-match
+ * score; the rest map to Freesound's `duration_asc` / `duration_desc` /
+ * `rating_desc` / `downloads_desc` / `created_desc` sort values.
+ */
+export type SearchSort =
+  | 'relevance'
+  | 'duration_asc'
+  | 'duration_desc'
+  | 'rating'
+  | 'downloads'
+  | 'created'
+
+/**
+ * License pre-filter (ticket 15). `'commercial'` is the headline control —
+ * "usable in commercial work": it admits ONLY CC0 and CC-BY, which excludes the
+ * non-commercial material (CC-BY-NC and legacy Sampling+) a commercial user must
+ * not build on. The other values pin the search to one specific license.
+ *
+ * This is a search-time convenience for not getting attached to unusable
+ * material — it is NOT the License obligation itself (CONTEXT.md § License),
+ * which still travels with every Sound regardless of how it was found.
+ */
+export type LicenseFilter =
+  | 'commercial'
+  | 'cc0'
+  | 'cc-by'
+  | 'cc-by-nc'
+  | 'sampling-plus'
+
+/**
+ * Structured, pre-search constraints (ticket 15). Every field is optional; an
+ * absent or all-empty filter constrains nothing. The gateway translates this to
+ * Freesound's Solr-style `filter=` string; the core folds it into the search
+ * cache key so a filtered query is cached and served independently.
+ */
+export interface SearchFilter {
+  /** Minimum duration in seconds (inclusive). */
+  durationMin?: number
+  /** Maximum duration in seconds (inclusive). */
+  durationMax?: number
+  /** Exact sample rate in Hz, e.g. 44100 / 48000. */
+  sampleRate?: number
+  /** Exact bit depth, e.g. 16 / 24. */
+  bitDepth?: number
+  /** Exact channel count, e.g. 1 (mono) / 2 (stereo). */
+  channels?: number
+  /** Original file format, e.g. `'wav'` / `'aiff'` / `'flac'`. */
+  fileType?: string
+  /** License pre-filter — see {@link LicenseFilter}. */
+  license?: LicenseFilter
+}
+
+/** The persisted active sort + filter state (ticket 15, stored in `app_meta`). */
+export interface SearchPrefs {
+  sort: SearchSort
+  filter: SearchFilter
+}
+
 export interface SearchOptions {
   /** 1-based page number. Defaults to 1. */
   page?: number
   /** Results per page. Defaults to 15. */
   pageSize?: number
+  /** Result ordering. Defaults to `'relevance'`. */
+  sort?: SearchSort
+  /** Structured pre-filter. Defaults to no constraint. */
+  filter?: SearchFilter
 }
 
 export interface SearchResult {

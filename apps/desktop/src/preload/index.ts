@@ -11,8 +11,22 @@ import type {
   StagingStatus,
   StagingStatusChange,
 } from '../core'
-import type { SearchOptions, SearchResult, Sound } from '../core/types'
+import type {
+  SearchOptions,
+  SearchPrefs,
+  SearchResult,
+  Sound,
+} from '../core/types'
 import type { SortDir } from '../core'
+
+export type {
+  LicenseFilter,
+  SearchFilter,
+  SearchOptions,
+  SearchPrefs,
+  SearchResult,
+  SearchSort,
+} from '../core/types'
 
 export type {
   AuthState,
@@ -32,6 +46,12 @@ export interface CoreApi {
   search(query: string, opts?: SearchOptions): Promise<SearchResult>
   /** Debounced search — rapid keystrokes collapse to one gateway call (ticket 05). */
   searchDebounced(query: string, opts?: SearchOptions): Promise<SearchResult>
+
+  // ---- search filters & sort (ticket 15) --------------------------------
+  /** The persisted active sort + filter state, restored on startup. */
+  getSearchPrefs(): Promise<SearchPrefs>
+  /** Persist the active sort + filter state. Does not run a search. */
+  setSearchPrefs(prefs: SearchPrefs): Promise<SearchPrefs>
 
   // ---- auth (ticket 07) --------------------------------------------------
   /** Start interactive sign-in via the system browser. Resolves to the new state. */
@@ -122,6 +142,10 @@ const api: CoreApi = {
   search: (query, opts) => ipcRenderer.invoke('core:search', query, opts),
   searchDebounced: (query, opts) =>
     ipcRenderer.invoke('core:invoke', 'searchDebounced', [query, opts]),
+  getSearchPrefs: () =>
+    ipcRenderer.invoke('core:invoke', 'getSearchPrefs', []),
+  setSearchPrefs: (prefs) =>
+    ipcRenderer.invoke('core:invoke', 'setSearchPrefs', [prefs]),
 
   signIn: () => ipcRenderer.invoke('core:invoke', 'signIn', []),
   signOut: () => ipcRenderer.invoke('core:invoke', 'signOut', []),

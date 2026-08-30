@@ -2,6 +2,8 @@
 // crosses the network to Freesound or to the token Worker lives behind it, so
 // tests can drive the core with a fake and never touch the network.
 
+import type { SearchFilter, SearchSort } from '../types'
+
 /**
  * The exact `fields` set requested from `/apiv2/search/text/`. One search call
  * returns everything a result row needs, so NO per-Sound detail request is ever
@@ -15,6 +17,16 @@ export interface GatewaySearchParams {
   /** 1-based page number. */
   page: number
   pageSize: number
+  /**
+   * ticket 15 — result ordering. Absent means Freesound's default relevance
+   * (`score`). Translated to a `sort=` param by `freesoundSortParam`.
+   */
+  sort?: SearchSort
+  /**
+   * ticket 15 — structured pre-filter. Absent or all-empty means no constraint.
+   * Translated to a Solr-style `filter=` string by `freesoundFilterString`.
+   */
+  filter?: SearchFilter
 }
 
 /** A raw Freesound sound object, exactly as it appears in a search response. */

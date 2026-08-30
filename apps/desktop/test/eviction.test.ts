@@ -256,6 +256,11 @@ describe('core.stageOnAudition — a stage over budget triggers LRU eviction', (
     expect(existsSync(join(dataDir, 'content', `${DRIZZLE_ID}.flac`))).toBe(true)
     expect(existsSync(join(dataDir, 'content', `${DRIZZLE_ID}.json`))).toBe(true)
 
+    // The `staged_entries` row is dropped in the step right after the two file
+    // unlinks, so poll for the status too rather than assume it lands together.
+    await waitUntil(
+      () => core.getStagingStatus([RAIN_ID])[RAIN_ID] === 'not-started',
+    )
     expect(core.getStagingStatus([RAIN_ID])[RAIN_ID]).toBe('not-started')
   })
 

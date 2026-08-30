@@ -136,7 +136,14 @@ export class FakeFreesoundGateway implements FreesoundGateway {
   }
 
   async search(params: GatewaySearchParams): Promise<RawSearchPage> {
-    this.calls.push({ ...params })
+    // Record the FULL params — including the ticket-15 `sort` and a copy of the
+    // structured `filter` — so a test can assert exactly what the core asked
+    // for. Fixtures are still served by `query` alone (tests assert on the
+    // request, not on new fixture bodies).
+    this.calls.push({
+      ...params,
+      ...(params.filter ? { filter: { ...params.filter } } : {}),
+    })
 
     if (this.#config.throttle) {
       const { retryAfter } = this.#config.throttle

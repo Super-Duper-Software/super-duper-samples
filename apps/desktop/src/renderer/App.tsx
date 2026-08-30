@@ -1,14 +1,17 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { AuthBar } from './components/AuthBar'
+import { FilterBar } from './components/FilterBar'
 import { ResultList } from './components/ResultList'
 import { StagingConsentBanner } from './components/StagingConsentBanner'
 import { TransportBar } from './components/TransportBar'
 import { useSearch } from './hooks/useSearch'
 import { useLibraryView } from './hooks/useLibraryView'
 import { formatResultCount } from './lib/format'
+import { activeFilterChips } from './lib/filterLabels'
 import { useResultSelection } from './store/useResultSelection'
 import { useLibrary } from './store/useLibrary'
+import { useSearchPrefs } from './store/useSearchPrefs'
 import type { Sound } from '../core/types'
 
 type View = 'search' | 'library'
@@ -18,9 +21,18 @@ export default function App() {
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const sort = useSearchPrefs((s) => s.sort)
+  const filter = useSearchPrefs((s) => s.filter)
+  const prefsReady = useSearchPrefs((s) => s.ready)
+  useEffect(() => {
+    useSearchPrefs.getState().load()
+  }, [])
+
   const { status, error, sounds, totalCount, hasMore, loadingMore, loadMore } =
-    useSearch(query)
+    useSearch(query, sort, filter, prefsReady)
   const library = useLibraryView(view === 'library')
+
+  const activeChips = activeFilterChips(filter)
 
   const focusSearch = useCallback(() => {
     const el = inputRef.current
@@ -96,16 +108,19 @@ export default function App() {
         </div>
 
         {view === 'search' ? (
-          <input
-            ref={inputRef}
-            type="search"
-            className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-600 focus:outline-none"
-            placeholder="Search sounds…  (press / to return here · press s to save the selected sound)"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={onInputKeyDown}
-            autoFocus
-          />
+          <>
+            <input
+              ref={inputRef}
+              type="search"
+              className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-600 focus:outline-none"
+              placeholder="Search sounds…  (press / to return here · press s to save the selected sound)"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onInputKeyDown}
+              autoFocus
+            />
+            <FilterBar />
+          </>
         ) : (
           <div className="flex items-center gap-2 text-xs text-neutral-400">
             <span>Sorted by date saved</span>
@@ -153,12 +168,46 @@ export default function App() {
             {status === 'ok' && sounds.length === 0 && (
               <div className="p-4 text-sm text-neutral-400">
                 <p className="font-medium text-neutral-300">
-                  Nothing matched “{query.trim()}”.
+                  Nothing matched “{query.trim()}”
+                  {activeChips.length > 0 ? ' with these filters.' : '.'}
                 </p>
-                <p className="mt-1">
-                  Try fewer or more general words, check the spelling, or drop a
-                  filter.
-                </p>
+                {activeChips.length > 0 ? (
+                  <>
+                    <p className="mt-1">
+                      Try relaxing{' '}
+                      {activeChips.length === 1 ? 'this filter' : 'one of these filters'}:
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {activeChips.map((c) => (
+                        <button
+                          key={c.keys.join(',')}
+                          type="button"
+                          onClick={() =>
+                            c.keys.forEach((k) =>
+                              useSearchPrefs.getState().removeFilter(k),
+                            )
+                          }
+                          className="inline-flex items-center gap-1 rounded border border-amber-800/60 bg-amber-950/40 px-1.5 py-0.5 text-[11px] text-amber-200 hover:border-amber-600 hover:text-amber-100"
+                          title="Remove this filter"
+                        >
+                          <span>{c.label}</span>
+                          <span aria-hidden>×</span>
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => useSearchPrefs.getState().clearFilter()}
+                        className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+                      >
+                        Clear all filters
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="mt-1">
+                    Try fewer or more general words, or check the spelling.
+                  </p>
+                )}
               </div>
             )}
 

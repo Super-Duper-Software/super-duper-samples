@@ -11,8 +11,21 @@
 //   - Once a sound's waveform has been shown, its id is remembered module-wide,
 //     so scrolling back re-applies the mask synchronously with no new work and
 //     the browser serves the PNG from its HTTP cache — no churn per scroll frame.
+//
+// Ticket 04 adds a playhead. When `active` (this row is the sound being
+// auditioned) the component renders a thin overlay bar and registers its DOM
+// node with `audioController`, which moves it at 60fps by writing the
+// `--playhead` CSS variable DIRECTLY on that node. React is not involved in the
+// motion — this component does not re-render as the playhead advances. Clicking
+// the waveform while active seeks.
 
 import { memo, useEffect, useRef, useState } from 'react'
+import type { MouseEvent } from 'react'
+import {
+  registerPlayheadNode,
+  unregisterPlayheadNode,
+} from '../store/audioController'
+import { useTransport } from '../store/useTransport'
 
 /** Sound ids whose waveform has been shown at least once this session. */
 const shown = new Set<number>()
@@ -21,11 +34,19 @@ export interface WaveformProps {
   soundId: number
   /** `sound.waveformUrls.m` — the medium pre-rendered PNG. */
   url: string
+  /** True when this row is the sound currently being auditioned. */
+  active?: boolean
   className?: string
 }
 
-export const Waveform = memo(function Waveform({ soundId, url, className }: WaveformProps) {
+export const Waveform = memo(function Waveform({
+  soundId,
+  url,
+  active = false,
+  className,
+}: WaveformProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const playheadRef = useRef<HTMLDivElement>(null)
   const [masked, setMasked] = useState(() => shown.has(soundId))
 
   useEffect(() => {
@@ -59,6 +80,15 @@ export const Waveform = memo(function Waveform({ soundId, url, className }: Wave
     return () => io.disconnect()
   }, [soundId])
 
+  // Hand the playhead node to the audio controller while this row is active.
+  useEffect(() => {
+    if (!active) return
+    const node = playheadRef.current
+    if (!node) return
+    registerPlayheadNode(soundId, node)
+    return () => unregisterPlayheadNode(soundId)
+  }, [active, soundId])
+
   // Only the mask URL is dynamic; size/repeat/position live in a static CSS
   // class so React never rewrites them and the compositor is not thrashed.
   const style = masked
@@ -68,12 +98,27 @@ export const Waveform = memo(function Waveform({ soundId, url, className }: Wave
       } as const)
     : undefined
 
+  function onClick(e: MouseEvent<HTMLDivElement>) {
+    if (!active) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    if (rect.width <= 0) return
+    useTransport.getState().seekFraction((e.clientX - rect.left) / rect.width)
+  }
+
   return (
     <div
       ref={ref}
-      aria-hidden="true"
-      className={`waveform-mask bg-emerald-400/80 ${className ?? ''}`}
-      style={style}
-    />
+      onClick={onClick}
+      className={`relative overflow-hidden ${active ? 'cursor-pointer' : ''} ${className ?? ''}`}
+    >
+      <div
+        aria-hidden="true"
+        className="waveform-mask absolute inset-0 bg-emerald-400/80"
+        style={style}
+      />
+      {active && (
+        <div ref={playheadRef} aria-hidden="true" className="waveform-playhead" />
+      )}
+    </div>
   )
 })

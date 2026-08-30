@@ -2,9 +2,17 @@
 // object and a stable `onSelect`), so a scroll that changes which rows are
 // on-screen re-renders only the rows that entered/left — never every row, and
 // never on a per-frame cadence.
+//
+// Auditioning (ticket 04): the row's ONLY tie to playback is `useRowTransport`,
+// a `useShallow` subscription to `{ isCurrent, status, failed }`. It gets NO
+// playhead / currentTime prop. The 60fps playhead is written straight to a DOM
+// node inside <Waveform> by `audioController`, so it never re-renders this row.
+// A track change flips `isCurrent` for exactly the outgoing and incoming rows.
 
 import { memo, useCallback } from 'react'
 import type { Sound } from '../../core/types'
+import { useRowTransport } from '../hooks/useRowTransport'
+import { useTransport } from '../store/useTransport'
 import { formatDuration } from '../lib/format'
 import { LicenseChip } from './LicenseChip'
 import { Waveform } from './Waveform'
@@ -23,6 +31,16 @@ export interface ResultRowProps {
 function ResultRowImpl({ sound, index, selected, start, size, onSelect }: ResultRowProps) {
   const handleSelect = useCallback(() => onSelect(index), [onSelect, index])
 
+  const { isCurrent, status, failed } = useRowTransport(sound.id)
+  const isPlaying = isCurrent && status === 'playing'
+  const isLoading = isCurrent && status === 'loading'
+
+  const onPlayPause = useCallback(() => {
+    const t = useTransport.getState()
+    if (isCurrent) t.toggle()
+    else t.playSound(sound)
+  }, [isCurrent, sound])
+
   return (
     <div
       role="option"
@@ -40,9 +58,25 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
       ].join(' ')}
       style={{ top: 0, height: size, transform: `translateY(${start}px)` }}
     >
+      <button
+        type="button"
+        aria-label={isPlaying ? `Pause ${sound.name}` : `Play ${sound.name}`}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={onPlayPause}
+        className={[
+          'grid h-7 w-7 shrink-0 place-items-center rounded-full border text-[11px]',
+          isCurrent
+            ? 'border-emerald-500 bg-emerald-600/20 text-emerald-300'
+            : 'border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100',
+        ].join(' ')}
+      >
+        {isLoading ? '…' : isPlaying ? '❚❚' : '▶'}
+      </button>
+
       <Waveform
         soundId={sound.id}
         url={sound.waveformUrls.m}
+        active={isCurrent}
         className="h-9 w-28 shrink-0 rounded-sm"
       />
 
@@ -57,6 +91,14 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
           <span className="shrink-0 text-xs tabular-nums text-neutral-400">
             {formatDuration(sound.duration)}
           </span>
+          {failed && (
+            <span
+              className="shrink-0 rounded border border-red-800/70 bg-red-950/60 px-1 text-[10px] font-medium uppercase tracking-wide text-red-300"
+              title="This Preview failed to load — try again or pick another sound"
+            >
+              preview failed
+            </span>
+          )}
           <span
             className="min-w-0 flex-1 truncate text-xs text-neutral-500"
             title={sound.tags.join(', ')}
@@ -72,3 +114,23 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
 }
 
 export const ResultRow = memo(ResultRowImpl)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Verifying "the playhead does not re-render rows" (ticket 04, checkbox 11).
+//
+// Automated: `test/renderer.transport.test.ts` proves the state-shape invariant
+// — the transport store has no per-frame field, and volume/loop/seek keep every
+// row's `useShallow` selector output shallow-equal.
+//
+// Manual (needs the Electron GUI, not available in CI):
+//   1. `pnpm --filter @freesound/desktop dev`, run a search, press ▶ on a row.
+//   2. React DevTools → Profiler → gear → "Highlight updates when components
+//      render". While the playhead sweeps the waveform, NO row outline flashes.
+//      Only when you start a different track do exactly two rows flash (the old
+//      current row and the new one).
+//   3. Profiler → Record a few seconds of playback → the commit list stays
+//      empty during the sweep (0 commits/sec from playhead motion). Starting a
+//      track produces a single commit touching 2 <ResultRow> instances.
+//   4. In the Performance panel, the rAF work shows up as tiny style
+//      recalculations on one node (`.waveform-playhead`), no React render.
+// ─────────────────────────────────────────────────────────────────────────────

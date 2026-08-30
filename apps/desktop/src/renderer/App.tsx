@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { ResultList } from './components/ResultList'
+import { TransportBar } from './components/TransportBar'
 import { useSearch } from './hooks/useSearch'
 import { formatResultCount } from './lib/format'
 import { useResultSelection } from './store/useResultSelection'
@@ -92,6 +93,8 @@ export default function App() {
           />
         )}
       </section>
+
+      <TransportBar />
     </main>
   )
 }

@@ -34,3 +34,21 @@
   -webkit-mask-position: center;
   mask-position: center;
 }
+
+/*
+ * Auditioning playhead (ticket 04). Its horizontal position is the CSS custom
+ * property `--playhead` (0..1), written DIRECTLY on this node at 60fps by
+ * audioController's requestAnimationFrame loop — never through React state, so
+ * the row it lives in does not re-render as playback advances.
+ */
+.waveform-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  left: calc(var(--playhead, 0) * 100%);
+  background-color: #fafafa;
+  box-shadow: 0 0 4px rgba(250, 250, 250, 0.7);
+  pointer-events: none;
+  will-change: left;
+}

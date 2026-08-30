@@ -80,6 +80,8 @@ export async function makeTestCore(
     stagingConcurrency?: number
     stagingMaxRetries?: number
     stagingBackoffMs?: readonly number[]
+    /** Ticket 10 — shrink the staging byte budget so eviction tests can trip it. */
+    stagingByteBudget?: number
     onStagingStatusChange?: (change: StagingStatusChange) => void
     /** Ticket 09 — a recording `DragHost` so a test can see what is dragged. */
     dragHost?: DragHost
@@ -101,6 +103,7 @@ export async function makeTestCore(
     stagingConcurrency: opts.stagingConcurrency,
     stagingMaxRetries: opts.stagingMaxRetries,
     stagingBackoffMs: opts.stagingBackoffMs,
+    stagingByteBudget: opts.stagingByteBudget,
     onStagingStatusChange: opts.onStagingStatusChange,
     dragHost: opts.dragHost,
     dragIconFallbackPath: DRAG_ICON_FALLBACK,

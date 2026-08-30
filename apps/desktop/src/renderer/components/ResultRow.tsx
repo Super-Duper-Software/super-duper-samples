@@ -71,6 +71,12 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
     [],
   )
 
+  // Ticket 10: tell the core the drag is over (whatever the drop outcome) so it
+  // lifts the eviction-skip hold `startDrag` placed on this Sound's Original.
+  const onDragEnd = useCallback(() => {
+    void window.core.endDrag([sound.id])
+  }, [sound.id])
+
   const onDragStart = useCallback(
     (e: DragEvent<HTMLDivElement>) => {
       e.preventDefault() // hand the drag to Electron's native OS drag
@@ -109,6 +115,7 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
       data-index={index}
       draggable
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       onMouseDown={handleSelect}
       onFocus={handleSelect}
       className={[

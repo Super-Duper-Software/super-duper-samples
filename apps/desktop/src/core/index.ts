@@ -44,6 +44,12 @@ import {
   type StartDragOptions,
 } from './staging/dragController'
 import type { DragHost } from './staging/dragHost'
+import { createDragRegistry } from './staging/dragRegistry'
+import {
+  DEFAULT_STAGING_BYTE_BUDGET,
+  type DiskUsage,
+  type EvictionOutcome,
+} from './staging/eviction'
 
 export type { FreesoundGateway } from './gateway/index'
 export * from './types'
@@ -92,6 +98,11 @@ export {
   type DragPayload,
   type RecordingDragHost,
 } from './staging/dragHost'
+export {
+  DEFAULT_STAGING_BYTE_BUDGET,
+  type DiskUsage,
+  type EvictionOutcome,
+} from './staging/eviction'
 
 const DEFAULT_PAGE_SIZE = 15
 const DEBOUNCE_MS = 250
@@ -130,6 +141,17 @@ export interface CoreDeps {
   stagingMaxRetries?: number
   /** Backoff before each retry, ms. Defaults to `[1000, 3000, 9000]`. */
   stagingBackoffMs?: readonly number[]
+
+  // ---- eviction (ticket 10) -------------------------------------------
+  /**
+   * Cap on total bytes of Staged (auditioned-but-unsaved) Originals on disk.
+   * After a stage pushes the total past this, least-recently-accessed Staged
+   * Sounds are evicted — Original + sidecar + row together — until it fits.
+   * Library Sounds and Sounds with a live Drag-Out are never evicted. Runs
+   * silently, off the hot path. Defaults to `DEFAULT_STAGING_BYTE_BUDGET`
+   * (2 GiB). Tests shrink it.
+   */
+  stagingByteBudget?: number
 
   // ---- drag-out (ticket 09) ------------------------------------------
   /**
@@ -262,6 +284,33 @@ export interface Core {
    */
   getDragCapabilities(): { multiSound: boolean }
 
+  /**
+   * Signal that an OS drag-out of these Sounds has finished (the renderer calls
+   * this from `dragend`, whatever the drop outcome). It releases the
+   * eviction-skip hold that `startDrag` placed on each Sound's Original. Safe to
+   * call with unknown ids, and harmless if a matching `startDrag` never ran — an
+   * unreleased hold also self-expires after a short TTL.
+   */
+  endDrag(soundIds: number | readonly number[]): void
+
+  // ---- eviction & disk usage (ticket 10) -----------------------------
+
+  /**
+   * Current on-disk footprint in bytes, split by intent: `staged` (auditioned
+   * but unsaved), `library` (explicitly kept), and their `total`. For the "disk
+   * usage" panel — the only place staging size is ever surfaced to the user.
+   */
+  getDiskUsage(): Promise<DiskUsage>
+
+  /**
+   * Delete every Staged Original, its sidecar and its `staged_entries` row to
+   * reclaim space now, without waiting for the byte budget to force it. The
+   * Library is left completely untouched; a Sound with a live Drag-Out is
+   * skipped. Resolves with what was removed (`evicted`, `freedBytes`) and what
+   * was spared (`skipped`).
+   */
+  clearStaged(): Promise<EvictionOutcome>
+
   /** Release the database handle and cancel any pending debounced/refresh timers. */
   close(): void
 }
@@ -314,6 +363,10 @@ export function createCore(deps: CoreDeps): Core {
         })
       : unconfiguredAuth(deps.onAuthStateChange)
 
+  // The seam eviction uses to skip Sounds with a live Drag-Out. Shared by the
+  // drag controller (which marks drags in-flight) and staging (which evicts).
+  const dragRegistry = createDragRegistry()
+
   const staging: StagingController = createStagingController({
     db,
     dataDir: deps.dataDir,
@@ -321,6 +374,8 @@ export function createCore(deps: CoreDeps): Core {
     auth,
     scheduler,
     onStatusChange: deps.onStagingStatusChange,
+    byteBudget: deps.stagingByteBudget ?? DEFAULT_STAGING_BYTE_BUDGET,
+    inFlightDrags: dragRegistry,
     concurrency: deps.stagingConcurrency,
     maxRetries: deps.stagingMaxRetries,
     backoffMs: deps.stagingBackoffMs,
@@ -332,6 +387,7 @@ export function createCore(deps: CoreDeps): Core {
         dataDir: deps.dataDir,
         dragHost: deps.dragHost,
         fallbackIconPath: deps.dragIconFallbackPath,
+        dragRegistry,
       })
     : undefined
 
@@ -472,10 +528,15 @@ export function createCore(deps: CoreDeps): Core {
     getDragCapabilities: () => ({
       multiSound: drag?.multiSoundDragSupported ?? false,
     }),
+    endDrag: (soundIds) =>
+      dragRegistry.end(typeof soundIds === 'number' ? [soundIds] : soundIds),
+    getDiskUsage: () => staging.getDiskUsage(),
+    clearStaged: () => staging.clearStaged(),
     close: () => {
       controller.dispose()
       staging.close()
       auth.close()
+      dragRegistry.clear()
       db.close()
     },
   }

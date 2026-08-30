@@ -25,6 +25,14 @@ import type { FreesoundGateway } from '../gateway/index'
 import type { Sound } from '../types'
 import { isOriginalOnDisk, writeOriginal } from './contentStore'
 import {
+  clearStaged as clearStagedFiles,
+  computeDiskUsage,
+  evictStagedOverBudget,
+  type DiskUsage,
+  type EvictionOutcome,
+} from './eviction'
+import type { InFlightDrags } from './dragRegistry'
+import {
   createDownloadQueue,
   type DownloadQueue,
   type StagingStatus,
@@ -68,6 +76,17 @@ export interface StagingController {
   grantStagingConsent(): StagingConsent
   /** Subscribe to status transitions. Returns an unsubscribe fn. */
   subscribe(listener: (change: StagingStatusChange) => void): () => void
+  /**
+   * Current on-disk footprint, split between Staged and Library bytes. Backs
+   * `core.getDiskUsage()`.
+   */
+  getDiskUsage(): Promise<DiskUsage>
+  /**
+   * Remove every Staged Original + sidecar + row to reclaim space, leaving the
+   * Library untouched and skipping any Sound with a live Drag-Out. Backs
+   * `core.clearStaged()`.
+   */
+  clearStaged(): Promise<EvictionOutcome>
   /** Test/introspection: the underlying queue. */
   readonly queue: DownloadQueue
   /** Cancel everything. Called from `core.close()`. */
@@ -82,6 +101,16 @@ export interface StagingControllerDeps {
   scheduler: Scheduler
   /** Broadcast every status change (main forwards it to the renderer). */
   onStatusChange?: (change: StagingStatusChange) => void
+  /**
+   * Total-bytes budget for Staged Originals. Exceeding it after a stage triggers
+   * an LRU eviction. See `DEFAULT_STAGING_BYTE_BUDGET`.
+   */
+  byteBudget: number
+  /**
+   * Membership test for "a live Drag-Out still needs this Sound's Original".
+   * Eviction and `clearStaged` skip any Sound it reports.
+   */
+  inFlightDrags: InFlightDrags
   /** Test seams. */
   concurrency?: number
   maxRetries?: number
@@ -129,9 +158,41 @@ export function createStagingController(
       // ticket 10 evicts against.
       upsertSound(db, sound)
       upsertStagedEntry(db, { soundId, byteSize, path: paths.original, now })
+      // A fresh Original just landed — the staging area may now be over budget.
+      // Evict LRU-first, off the hot path, silently (ticket 10).
+      scheduleEviction()
     },
     onStatusChange: (soundId, status) => emit({ soundId, status }),
   })
+
+  // ---- eviction (ticket 10) -------------------------------------------
+
+  // Coalesce bursts of completed downloads into one eviction pass, and keep it
+  // entirely off the audition hot path. `setImmediate` yields to pending I/O
+  // first; the pass itself is fully async. Failures are swallowed — eviction is
+  // best-effort and the user is never told it ran (CONTEXT.md § Staged).
+  let evictionScheduled = false
+  function scheduleEviction(): void {
+    if (evictionScheduled) return
+    evictionScheduled = true
+    setImmediate(() => {
+      evictionScheduled = false
+      void evictStagedOverBudget(
+        db,
+        dataDir,
+        deps.byteBudget,
+        deps.inFlightDrags,
+      ).catch(() => {})
+    })
+  }
+
+  function getDiskUsage(): Promise<DiskUsage> {
+    return computeDiskUsage(db, dataDir)
+  }
+
+  function clearStaged(): Promise<EvictionOutcome> {
+    return clearStagedFiles(db, dataDir, deps.inFlightDrags)
+  }
 
   function isReadyOnDisk(soundId: number, sound?: Sound): boolean {
     if (hasStagedEntry(db, soundId) || hasLibraryEntry(db, soundId)) return true
@@ -208,6 +269,8 @@ export function createStagingController(
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
+    getDiskUsage,
+    clearStaged,
     queue,
     close() {
       queue.clear()

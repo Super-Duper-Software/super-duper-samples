@@ -5,13 +5,22 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AuthState,
+  DiskUsage,
+  EvictionOutcome,
   StagingConsent,
   StagingStatus,
   StagingStatusChange,
 } from '../core'
 import type { SearchOptions, SearchResult } from '../core/types'
 
-export type { AuthState, StagingConsent, StagingStatus, StagingStatusChange } from '../core'
+export type {
+  AuthState,
+  DiskUsage,
+  EvictionOutcome,
+  StagingConsent,
+  StagingStatus,
+  StagingStatusChange,
+} from '../core'
 
 /** Channel the main process pushes auth-state transitions on (ticket 07). */
 const AUTH_STATE_CHANNEL = 'core:event:authState'
@@ -64,6 +73,21 @@ export interface CoreApi {
   ): Promise<{ filePath: string; extraFilePaths: string[]; soundIds: number[] }>
   /** Whether the UI may offer multi-Sound drag on this platform (macOS only for now). */
   getDragCapabilities(): Promise<{ multiSound: boolean }>
+  /**
+   * Signal that an OS drag-out of these Sounds has ended (call from `dragend`,
+   * whatever the outcome). Releases the eviction hold `startDrag` placed on each
+   * Sound's Original.
+   */
+  endDrag(soundIds: number | number[]): Promise<void>
+
+  // ---- eviction & disk usage (ticket 10) ----------------------------
+  /** On-disk footprint in bytes, split into `staged` / `library` / `total`. */
+  getDiskUsage(): Promise<DiskUsage>
+  /**
+   * Delete every Staged Original + sidecar + row to reclaim space now. The
+   * Library is untouched; Sounds with a live Drag-Out are skipped.
+   */
+  clearStaged(): Promise<EvictionOutcome>
 }
 
 const api: CoreApi = {
@@ -101,6 +125,11 @@ const api: CoreApi = {
     ipcRenderer.invoke('core:invoke', 'startDrag', [soundIds, opts]),
   getDragCapabilities: () =>
     ipcRenderer.invoke('core:invoke', 'getDragCapabilities', []),
+  endDrag: (soundIds) =>
+    ipcRenderer.invoke('core:invoke', 'endDrag', [soundIds]),
+
+  getDiskUsage: () => ipcRenderer.invoke('core:invoke', 'getDiskUsage', []),
+  clearStaged: () => ipcRenderer.invoke('core:invoke', 'clearStaged', []),
 }
 
 contextBridge.exposeInMainWorld('core', api)

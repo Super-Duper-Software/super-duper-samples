@@ -31,6 +31,7 @@ import { getSoundsByIds } from '../db/sounds'
 import type { Sound } from '../types'
 import { contentPaths, extForSound } from './contentStore'
 import type { DragHost, DragPayload } from './dragHost'
+import type { DragRegistry } from './dragRegistry'
 
 /** Subdirectory of `dataDir` holding the human-named hardlinks handed to the OS. */
 export const DRAG_DIRNAME = 'drag'
@@ -100,6 +101,13 @@ export interface DragControllerDeps {
    * `startDrag` never passes an empty icon (ticket 01 findings §2.3).
    */
   fallbackIconPath?: string
+  /**
+   * In-flight-drag registry (ticket 10). `startDrag` marks each dragged Sound as
+   * having a live Drag-Out; `core.endDrag` (from the renderer's `dragend`) clears
+   * it. Eviction skips any Sound it still holds so the OS never loses the path
+   * mid-drop. Optional — when absent, in-flight tracking is simply not recorded.
+   */
+  dragRegistry?: Pick<DragRegistry, 'begin'>
 }
 
 export function createDragController(deps: DragControllerDeps): DragController {
@@ -148,10 +156,15 @@ export function createDragController(deps: DragControllerDeps): DragController {
     }
     dragHost.startDrag(payload)
 
+    const soundIds = sounds.map((s) => s.id)
+    // The OS now owns this drag; protect each Original from eviction until the
+    // renderer signals `dragend` (or the registry's TTL lapses).
+    deps.dragRegistry?.begin(soundIds)
+
     return {
       filePath: payload.filePath,
       extraFilePaths: payload.extraFilePaths,
-      soundIds: sounds.map((s) => s.id),
+      soundIds,
     }
   }
 

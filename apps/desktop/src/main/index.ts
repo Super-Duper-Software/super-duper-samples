@@ -5,9 +5,13 @@
 
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { createCore, type Core } from '../core'
+import { createCore, createRealScheduler, type AuthState, type Core } from '../core'
 import { HttpFreesoundGateway } from '../core/gateway/http'
+import { createElectronAuthPlatform } from './authPlatform'
 import { loadConfig } from './config'
+
+/** Channel the renderer listens on for auth-state pushes (ticket 07). */
+const AUTH_STATE_CHANNEL = 'core:event:authState'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -35,7 +39,8 @@ function registerIpc(core: Core): void {
     core.search(query, opts as Parameters<Core['search']>[1]),
   )
 
-  // Generic passthrough so later commands need no main-process change.
+  // Generic passthrough so later commands need no main-process change. This
+  // already covers `signIn` / `signOut` / `getAuthState`.
   ipcMain.handle(
     'core:invoke',
     (_event, method: string, args: unknown[] = []) => {
@@ -48,15 +53,41 @@ function registerIpc(core: Core): void {
   )
 }
 
+function broadcastAuthState(state: AuthState): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(AUTH_STATE_CHANNEL, state)
+  }
+}
+
 void app.whenReady().then(() => {
   const config = loadConfig()
   const dataDir = app.getPath('userData')
   const dbPath = join(dataDir, 'library.db') // opened in the core, off the renderer thread.
 
-  const gateway = new HttpFreesoundGateway({ apiKey: config.freesoundApiKey })
-  const core = createCore({ gateway, dataDir, dbPath })
+  const gateway = new HttpFreesoundGateway({
+    apiKey: config.freesoundApiKey,
+    tokenWorkerUrl: config.tokenWorkerUrl,
+  })
+  const core = createCore({
+    gateway,
+    dataDir,
+    dbPath,
+    authPlatform: createElectronAuthPlatform(),
+    scheduler: createRealScheduler(),
+    clientId: config.freesoundClientId,
+    onAuthStateChange: broadcastAuthState,
+  })
 
   registerIpc(core)
+
+  // Push the current auth state to each window as it finishes loading, so the
+  // renderer never has to poll on startup. Registered BEFORE the first window.
+  app.on('browser-window-created', (_e, win) => {
+    win.webContents.on('did-finish-load', () => {
+      win.webContents.send(AUTH_STATE_CHANNEL, core.getAuthState())
+    })
+  })
+
   createWindow()
 
   app.on('activate', () => {

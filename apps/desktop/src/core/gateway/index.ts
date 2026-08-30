@@ -58,6 +58,26 @@ export interface RawSearchPage {
 }
 
 /**
+ * A normalized OAuth token set, as returned by the token Worker's `/exchange`
+ * and `/refresh` (the Worker forwards Freesound's
+ * `{ access_token, refresh_token, expires_in, scope, token_type }`). Field names
+ * are camel-cased at this boundary so nothing downstream sees the wire shape.
+ */
+export interface TokenSet {
+  accessToken: string
+  refreshToken: string
+  /** Seconds until `accessToken` expires (Freesound issues 24h == 86400). */
+  expiresIn: number
+  scope: string
+  tokenType: string
+}
+
+/** The signed-in user's profile, from `GET /apiv2/me/`. Only the username is used. */
+export interface FreesoundProfile {
+  username: string
+}
+
+/**
  * The network boundary. `search` is the only method implemented for ticket 02;
  * the rest are declared so later tickets extend one interface, and throw
  * `NotImplemented` until then.
@@ -71,9 +91,26 @@ export interface FreesoundGateway {
   /** ticket 08 — download a Sound's Original as the signed-in user. */
   downloadOriginal(soundId: number): Promise<never>
 
-  /** ticket 06/07 — exchange an OAuth authorization code for tokens. */
-  exchangeToken(code: string): Promise<never>
+  /**
+   * ticket 07 — exchange an OAuth authorization code for tokens, via the token
+   * Worker (`POST ${workerUrl}/exchange`). The app never holds `client_secret`.
+   * `redirectUri` is the single registered loopback URI and is forwarded to the
+   * Worker. Maps the Worker's `{ error: "reauthorize" }` to `ReauthRequiredError`
+   * and `{ error: "retry" }` to `RetryableTokenError`.
+   */
+  exchangeToken(code: string, redirectUri: string): Promise<TokenSet>
 
-  /** ticket 06/07 — refresh an expiring OAuth access token. */
-  refreshToken(refreshToken: string): Promise<never>
+  /**
+   * ticket 07 — refresh an expiring OAuth access token, via the token Worker
+   * (`POST ${workerUrl}/refresh`). Same error mapping as `exchangeToken`.
+   */
+  refreshToken(refreshToken: string): Promise<TokenSet>
+
+  /**
+   * ticket 07 — fetch the signed-in user's profile straight from Freesound
+   * (`GET /apiv2/me/`, `Authorization: Bearer <accessToken>`), for the username
+   * shown in the app. A 401 here is thrown as a `GatewayError` with `status: 401`
+   * so the core's auth wrapper triggers exactly one refresh + retry.
+   */
+  getMe(accessToken: string): Promise<FreesoundProfile>
 }

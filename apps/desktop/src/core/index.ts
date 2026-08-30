@@ -22,6 +22,13 @@ import {
   type SearchCacheParams,
 } from './db/searchCache'
 import { createSearchController, type SearchController } from './searchController'
+import {
+  createAuthController,
+  type AuthController,
+  type AuthPlatform,
+  type AuthState,
+  type Scheduler,
+} from './auth/index'
 
 export type { FreesoundGateway } from './gateway/index'
 export * from './types'
@@ -32,6 +39,22 @@ export {
   ThrottledError,
   DEFAULT_RETRY_AFTER_SECONDS,
 } from './errors'
+export type {
+  AuthPlatform,
+  AuthState,
+  AuthStatus,
+  AwaitLoopbackCodeOptions,
+  LoopbackResult,
+  Scheduler,
+} from './auth/index'
+export {
+  createRealScheduler,
+  LoopbackPortInUseError,
+  OAuthStateMismatchError,
+  ReauthRequiredError,
+  RetryableTokenError,
+  SignInCancelledError,
+} from './auth/index'
 
 const DEFAULT_PAGE_SIZE = 15
 const DEBOUNCE_MS = 250
@@ -45,6 +68,21 @@ export interface CoreDeps {
   dbPath: string
   /** Debounce window for `searchDebounced`, ms. Defaults to 250. Tests shrink it. */
   debounceMs?: number
+
+  // ---- auth (ticket 07) --------------------------------------------------
+  /**
+   * The three OS capabilities the core cannot provide for itself: system
+   * browser, one-shot loopback listener, `safeStorage`. Real Electron impl in
+   * `src/main/`, fake in tests. When omitted, the auth commands throw and
+   * `getAuthState()` reports `signedOut` — search/preview still work.
+   */
+  authPlatform?: AuthPlatform
+  /** Timer seam for proactive refresh + sign-in timeout. Defaults to real timers. */
+  scheduler?: Scheduler
+  /** `FREESOUND_CLIENT_ID` (public). Required for sign-in. */
+  clientId?: string
+  /** Broadcast every auth-state transition (main forwards it to the renderer). */
+  onAuthStateChange?: (state: AuthState) => void
 }
 
 /** The command API. Later tickets add methods here; the bridge forwards them all. */
@@ -75,13 +113,80 @@ export interface Core {
    */
   searchDebounced(query: string, opts?: SearchOptions): Promise<SearchResult>
 
-  /** Release the database handle and cancel any pending debounced call. */
+  /**
+   * Sign in through the system browser (ticket 07). Opens Freesound's authorize
+   * page, catches the code on the loopback listener, exchanges it via the Worker,
+   * shows the username, and stays signed in for days with proactive refresh.
+   * Rejects (leaving state `signedOut`) on port-in-use, `state` mismatch, a
+   * cancelled/timed-out browser step, or a dead grant.
+   */
+  signIn(): Promise<AuthState>
+
+  /**
+   * Sign out: clear the stored tokens only. The Library, downloaded Originals,
+   * Collections and every other table are left untouched (CONTEXT.md § Account).
+   */
+  signOut(): Promise<void>
+
+  /** Current auth state: `signedIn` / `signedOut` / `signingIn` + `username`. */
+  getAuthState(): AuthState
+
+  /**
+   * Subscribe to auth-state transitions. Returns an unsubscribe function. Used
+   * by the main process to push state to the renderer over a `core:event`
+   * channel; the renderer itself reads `getAuthState()` + that event.
+   */
+  subscribeAuthState(listener: (state: AuthState) => void): () => void
+
+  /** Release the database handle and cancel any pending debounced/refresh timers. */
   close(): void
+}
+
+/**
+ * Stand-in when the core is built without `authPlatform` (some unit tests, and
+ * any environment where OAuth is not configured). Search and Preview never touch
+ * this — they are token-auth.
+ */
+function unconfiguredAuth(
+  onStateChange?: (s: AuthState) => void,
+): AuthController {
+  const state: AuthState = {
+    status: 'signedOut',
+    username: null,
+    reauthRequired: false,
+  }
+  const notConfigured = () =>
+    Promise.reject(
+      new Error(
+        'Authentication is not configured (missing AuthPlatform / FREESOUND_CLIENT_ID).',
+      ),
+    )
+  onStateChange?.(state)
+  return {
+    signIn: notConfigured as AuthController['signIn'],
+    signOut: () => Promise.resolve(),
+    getState: () => state,
+    subscribe: () => () => {},
+    authorized: notConfigured as AuthController['authorized'],
+    close: () => {},
+  }
 }
 
 export function createCore(deps: CoreDeps): Core {
   const { gateway, dbPath, debounceMs = DEBOUNCE_MS } = deps
   const db: DB = openDb(dbPath)
+
+  const auth: AuthController =
+    deps.authPlatform && deps.scheduler
+      ? createAuthController({
+          gateway,
+          platform: deps.authPlatform,
+          scheduler: deps.scheduler,
+          db,
+          clientId: deps.clientId ?? '',
+          onStateChange: deps.onAuthStateChange,
+        })
+      : unconfiguredAuth(deps.onAuthStateChange)
 
   // Keyed by cache key. Holds BOTH foreground searches and background prefetches,
   // so a real request for a page already being prefetched attaches to the same
@@ -199,8 +304,13 @@ export function createCore(deps: CoreDeps): Core {
   return {
     search: (query, opts) => runSearch(query, opts, true),
     searchDebounced: (query, opts) => controller.query(query, opts),
+    signIn: () => auth.signIn(),
+    signOut: () => auth.signOut(),
+    getAuthState: () => auth.getState(),
+    subscribeAuthState: (listener) => auth.subscribe(listener),
     close: () => {
       controller.dispose()
+      auth.close()
       db.close()
     },
   }

@@ -26,6 +26,69 @@ Search and Preview playback use **token auth only** — no OAuth, no sign-in. Th
 key is read from `.env` (git-ignored) via electron-vite's env handling; without it
 search returns HTTP 401.
 
+## Authentication (ticket 07)
+
+Sign-in is an **OAuth2 authorization-code grant** against Freesound, with **no
+PKCE** (Freesound does not support it) and **no `client_secret` in the app**
+(ADR-0004). The secret lives only in the ticket-06 Cloudflare Worker.
+
+Flow, all driven by the **core** (`src/core/auth/`), tested with no Electron:
+
+1. `core.signIn()` generates a random `state`, opens the user's **real system
+   browser** at
+   `https://freesound.org/apiv2/oauth2/authorize/?client_id=…&response_type=code&state=…`
+   — never an in-app login form.
+2. A **one-shot loopback listener** binds the fixed port **8910** and serves
+   `GET /callback`. Freesound registers exactly one redirect URI,
+   `http://localhost:8910/callback` (ADR-0004, `CONVENTIONS.md`). It captures
+   `?code=&state=`, the core verifies `state`, the listener replies with a tiny
+   "you can close this tab" page and **shuts down**. Port already in use →
+   `LoopbackPortInUseError` ("port 8910 is already in use …"). Timeout / user
+   never authorizes → `SignInCancelledError`, cleanly.
+3. The code is exchanged **via the Worker** (`POST ${FREESOUND_TOKEN_WORKER_URL}/exchange`).
+   The core then fetches `GET https://freesound.org/apiv2/me/` (Bearer) for the
+   **username**, shown in the header ("Signed in as X / Sign out").
+4. The **refresh token** is encrypted with Electron **`safeStorage`** (via the
+   injected `AuthPlatform` — **`keytar` is not used**) and stored, together with
+   the username, as one blob in the `auth` table (`refresh_token_enc`), alongside
+   `access_token_expires`. The **access token stays in memory only**.
+5. On relaunch the core reads the encrypted blob, restores `signedIn` + username
+   immediately, and refreshes on demand before the first authenticated call —
+   search and audition never wait on it.
+6. **Proactive refresh** is scheduled 5 min before the 24 h expiry through an
+   injectable `Scheduler`, and reschedules itself on success. It fires with no
+   user involvement.
+7. **401 interceptor** (`AuthController.authorized(fn)`, used by tickets 08/09):
+   any authenticated call that 401s triggers **exactly one** refresh and
+   **exactly one** retry — never a loop. A dead refresh (Worker says
+   `reauthorize`), or a still-401 retry, clears the stored token and transitions
+   to `signedOut` with `reauthRequired: true`; the renderer shows a one-click
+   "Sign in again". A transient refresh failure (`retry`) keeps the session.
+8. **Sign-out** deletes only the `auth` row. `library_entries`, `sounds`,
+   `collections`, `staged_entries`, `peaks` and every downloaded file are left
+   intact (CONTEXT.md § Account). Search + Preview keep working while signed out;
+   a subtle "Sign in to download & drag" hint is shown.
+
+### Config
+
+`.env` needs `FREESOUND_CLIENT_ID` and `FREESOUND_TOKEN_WORKER_URL` for sign-in
+(search/preview still work without them). **`FREESOUND_CLIENT_SECRET` is never in
+this app** — only in the Worker (`wrangler secret put`).
+
+### Manual verification (needs a real browser + real Freesound + a deployed Worker)
+
+Automated tests cannot exercise the real browser round-trip. To check it by hand:
+
+1. Deploy the Worker (`worker/README.md`) and note its URL.
+2. In the Freesound API application settings (https://freesound.org/apiv2/apply/),
+   register the **redirect URI** exactly as `http://localhost:8910/callback`
+   (the only one Freesound allows per credential).
+3. Put `FREESOUND_CLIENT_ID` (from Freesound) and `FREESOUND_TOKEN_WORKER_URL`
+   (the deployed Worker) in `apps/desktop/.env`. Leave `FREESOUND_CLIENT_SECRET`
+   out — it belongs only in the Worker.
+4. `pnpm --filter @freesound/desktop dev`, click **Sign in**, authorize in the
+   browser, confirm the username appears and survives a quit + relaunch.
+
 ## Database (ticket 05)
 
 Persistence is **SQLite** via [`better-sqlite3`](https://github.com/WiseLibraries/better-sqlite3)

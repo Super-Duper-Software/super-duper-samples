@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url'
 import { createCore, type Core } from '../../src/core'
 import { FakeFreesoundGateway } from '../../src/core/gateway/fake'
 import type { FreesoundGateway, RawSearchPage } from '../../src/core/gateway/index'
+import { FakeAuthPlatform } from './fakeAuthPlatform'
+import { FakeScheduler } from './fakeScheduler'
 
 const fixturesDir = fileURLToPath(
   new URL('../fixtures/freesound/', import.meta.url),
@@ -37,13 +39,16 @@ export function makeFakeGateway(
 export interface TestCore {
   core: Core
   gateway: FreesoundGateway
+  authPlatform: FakeAuthPlatform
+  scheduler: FakeScheduler
   dataDir: string
   dbPath: string
 }
 
 /**
  * Build the core in-process — no Electron. Real temp dir, real SQLite database,
- * fake gateway. This is the primary test seam (spec 0001 § Testing Decisions).
+ * fake gateway, fake `AuthPlatform` + `Scheduler`. This is the primary test seam
+ * (spec 0001 § Testing Decisions).
  *
  * `dbPath` is returned so a test can spin up a SECOND `createCore` on the same
  * file and assert persistence. `debounceMs` defaults small so `searchDebounced`
@@ -54,16 +59,23 @@ export async function makeTestCore(
     gateway?: FreesoundGateway
     dbPath?: string
     debounceMs?: number
+    authPlatform?: FakeAuthPlatform
+    scheduler?: FakeScheduler
   } = {},
 ): Promise<TestCore> {
   const dataDir = await mkdtemp(join(tmpdir(), 'freesound-desktop-test-'))
   const dbPath = opts.dbPath ?? join(dataDir, 'library.db')
   const gateway = opts.gateway ?? makeFakeGateway()
+  const authPlatform = opts.authPlatform ?? new FakeAuthPlatform()
+  const scheduler = opts.scheduler ?? new FakeScheduler()
   const core = createCore({
     gateway,
     dataDir,
     dbPath,
     debounceMs: opts.debounceMs ?? 20,
+    authPlatform,
+    scheduler,
+    clientId: 'test-client-id',
   })
-  return { core, gateway, dataDir, dbPath }
+  return { core, gateway, authPlatform, scheduler, dataDir, dbPath }
 }

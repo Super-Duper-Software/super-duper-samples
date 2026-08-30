@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
+import { AuthBar } from './components/AuthBar'
 import { ResultList } from './components/ResultList'
 import { TransportBar } from './components/TransportBar'
 import { useSearch } from './hooks/useSearch'
@@ -32,13 +33,16 @@ export default function App() {
   return (
     <main className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
       <header className="shrink-0 border-b border-neutral-800 p-4">
-        <div className="mb-3 flex items-baseline justify-between">
+        <div className="mb-3 flex items-baseline justify-between gap-4">
           <h1 className="text-lg font-semibold">Freesound</h1>
-          {showResults && (
-            <span className="text-xs text-neutral-400" aria-live="polite">
-              {formatResultCount(totalCount)}
-            </span>
-          )}
+          <div className="flex items-center gap-4">
+            {showResults && (
+              <span className="text-xs text-neutral-400" aria-live="polite">
+                {formatResultCount(totalCount)}
+              </span>
+            )}
+            <AuthBar />
+          </div>
         </div>
 
         <input

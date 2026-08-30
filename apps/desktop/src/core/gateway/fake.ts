@@ -1,9 +1,15 @@
 import { GatewayError, NotImplemented } from '../errors'
+import { ReauthRequiredError, RetryableTokenError } from '../auth/errors'
 import type {
   FreesoundGateway,
+  FreesoundProfile,
   GatewaySearchParams,
   RawSearchPage,
+  TokenSet,
 } from './index'
+
+/** How the fake should answer the next `refreshToken` call. */
+export type FakeRefreshMode = 'ok' | 'reauthorize' | 'retry'
 
 export interface FakeFreesoundGatewayConfig {
   /** Recorded pages keyed by exact query string. */
@@ -25,24 +31,62 @@ export interface FakeFreesoundGatewayConfig {
    * rate-limits. Takes precedence over `failWith`.
    */
   throttle?: { retryAfter?: number }
+
+  // ---- OAuth (ticket 07) --------------------------------------------------
+
+  /** Access token `exchangeToken` hands back (and the base for refreshed ones). */
+  accessToken?: string
+  /** Refresh token `exchangeToken` hands back. */
+  refreshToken?: string
+  /** `expires_in` seconds for every issued token set. Defaults to 86400 (24h). */
+  expiresIn?: number
+  /** Username `getMe` returns. Defaults to `"fake-user"`. */
+  username?: string
+  /** How `refreshToken` behaves. Defaults to `'ok'`. */
+  refreshMode?: FakeRefreshMode
+  /**
+   * Number of leading `getMe` calls that throw `GatewayError(status 401)` before
+   * succeeding — drives the "exactly one refresh + one retry" interceptor test.
+   */
+  getMeUnauthorizedTimes?: number
 }
 
 /**
  * Test gateway driven by recorded JSON fixtures. Records every call so tests can
- * assert that one search costs exactly one gateway call and nothing follows it.
+ * assert that one search costs exactly one gateway call and nothing follows it,
+ * and (ticket 07) that a 401 causes exactly one refresh and one retry.
  */
 export class FakeFreesoundGateway implements FreesoundGateway {
   /** Every `search` call, in order. */
   readonly calls: GatewaySearchParams[] = []
+  /** `[code, redirectUri]` for every `exchangeToken` call, in order. */
+  readonly exchangeCalls: Array<[string, string]> = []
+  /** The `refreshToken` argument for every `refreshToken` call, in order. */
+  readonly refreshCalls: string[] = []
+  /** The access token passed to every `getMe` call, in order. */
+  readonly getMeCalls: string[] = []
 
   #config: FakeFreesoundGatewayConfig
+  #refreshSeq = 0
+  #getMe401Left: number
 
   constructor(config: FakeFreesoundGatewayConfig = {}) {
     this.#config = config
+    this.#getMe401Left = config.getMeUnauthorizedTimes ?? 0
   }
 
   get searchCallCount(): number {
     return this.calls.length
+  }
+
+  /** Change the refresh behaviour mid-test (e.g. after a successful sign-in). */
+  setRefreshMode(mode: FakeRefreshMode): void {
+    this.#config = { ...this.#config, refreshMode: mode }
+  }
+
+  /** Arm N future `getMe` calls to answer 401 before succeeding. */
+  armGetMeUnauthorized(times: number): void {
+    this.#getMe401Left = times
   }
 
   async search(params: GatewaySearchParams): Promise<RawSearchPage> {
@@ -79,11 +123,43 @@ export class FakeFreesoundGateway implements FreesoundGateway {
     return Promise.reject(new NotImplemented('downloadOriginal'))
   }
 
-  exchangeToken(): Promise<never> {
-    return Promise.reject(new NotImplemented('exchangeToken'))
+  async exchangeToken(code: string, redirectUri: string): Promise<TokenSet> {
+    this.exchangeCalls.push([code, redirectUri])
+    return this.#issue(this.#config.refreshToken ?? 'fake-refresh-token')
   }
 
-  refreshToken(): Promise<never> {
-    return Promise.reject(new NotImplemented('refreshToken'))
+  async refreshToken(refreshToken: string): Promise<TokenSet> {
+    this.refreshCalls.push(refreshToken)
+    const mode = this.#config.refreshMode ?? 'ok'
+    if (mode === 'reauthorize') {
+      throw new ReauthRequiredError('fake: refresh token revoked', 401)
+    }
+    if (mode === 'retry') {
+      throw new RetryableTokenError('fake: token service unavailable', 503)
+    }
+    // A refresh rotates the refresh token, exactly like Freesound.
+    return this.#issue(`fake-refresh-token-${++this.#refreshSeq}`)
+  }
+
+  async getMe(accessToken: string): Promise<FreesoundProfile> {
+    this.getMeCalls.push(accessToken)
+    if (this.#getMe401Left > 0) {
+      this.#getMe401Left -= 1
+      throw new GatewayError('Freesound /me/ returned HTTP 401', 401)
+    }
+    return { username: this.#config.username ?? 'fake-user' }
+  }
+
+  #issue(refreshToken: string): TokenSet {
+    return {
+      accessToken:
+        this.#refreshSeq === 0
+          ? this.#config.accessToken ?? 'fake-access-token'
+          : `fake-access-token-${this.#refreshSeq}`,
+      refreshToken,
+      expiresIn: this.#config.expiresIn ?? 86_400,
+      scope: 'read write',
+      tokenType: 'Bearer',
+    }
   }
 }

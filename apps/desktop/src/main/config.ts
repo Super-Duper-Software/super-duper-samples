@@ -19,9 +19,20 @@ export function loadConfig(): DesktopConfig {
         'Copy apps/desktop/.env.example to apps/desktop/.env and add your key.',
     )
   }
+
+  const freesoundClientId = read('FREESOUND_CLIENT_ID')
+  const tokenWorkerUrl = read('FREESOUND_TOKEN_WORKER_URL')
+  if (!freesoundClientId || !tokenWorkerUrl) {
+    console.warn(
+      '[config] FREESOUND_CLIENT_ID and/or FREESOUND_TOKEN_WORKER_URL are not set — ' +
+        'OAuth sign-in is disabled (search and Preview still work). ' +
+        'FREESOUND_CLIENT_SECRET is NEVER read here — it lives only in the token Worker (ADR-0004).',
+    )
+  }
+
   return {
     freesoundApiKey,
-    freesoundClientId: read('FREESOUND_CLIENT_ID'),
-    tokenWorkerUrl: read('FREESOUND_TOKEN_WORKER_URL'),
+    freesoundClientId,
+    tokenWorkerUrl,
   }
 }

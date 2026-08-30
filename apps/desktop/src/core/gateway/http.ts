@@ -1,9 +1,15 @@
 import { GatewayError, NetworkError, NotImplemented } from '../errors'
 import {
+  ReauthRequiredError,
+  RetryableTokenError,
+} from '../auth/errors'
+import {
   SEARCH_FIELDS,
   type FreesoundGateway,
+  type FreesoundProfile,
   type GatewaySearchParams,
   type RawSearchPage,
+  type TokenSet,
 } from './index'
 
 const DEFAULT_BASE_URL = 'https://freesound.org/apiv2/'
@@ -25,24 +31,51 @@ function parseRetryAfter(header: string | null): number | undefined {
 export interface HttpFreesoundGatewayConfig {
   /** Freesound token-auth API key. Supplied by the main process from config. */
   apiKey: string
+  /**
+   * Deployed ticket-06 token Worker base URL (`FREESOUND_TOKEN_WORKER_URL`). The
+   * Worker holds `client_secret`; this app never does. Required for OAuth
+   * sign-in; search/preview work without it.
+   */
+  tokenWorkerUrl?: string
   /** Override the API base. Must end with a slash. Defaults to the real API. */
   baseUrl?: string
   /** Injectable for tests. Defaults to the global `fetch`. */
   fetchImpl?: typeof fetch
 }
 
+/** Wire shape of the Worker's success body (see worker/src/index.ts). */
+interface WorkerTokenBody {
+  access_token?: string
+  refresh_token?: string
+  expires_in?: number
+  scope?: string
+  token_type?: string
+}
+
+/** Wire shape of the Worker's error body. */
+interface WorkerErrorBody {
+  error?: string
+  upstream_status?: number
+  detail?: string
+  hint?: string
+}
+
 /**
- * Real gateway: hits `https://freesound.org/apiv2/search/text/` with token auth
- * (`Authorization: Token <key>`), NOT OAuth. Search and Preview work signed-out.
+ * Real gateway. Search and Preview hit `https://freesound.org/apiv2/...` with
+ * token auth (`Authorization: Token <key>`), NOT OAuth, so they work signed-out.
+ * Token exchange/refresh go to the Cloudflare token Worker; `getMe` goes to
+ * Freesound with the bearer access token.
  */
 export class HttpFreesoundGateway implements FreesoundGateway {
   readonly #apiKey: string
   readonly #baseUrl: string
+  readonly #tokenWorkerUrl: string | undefined
   readonly #fetch: typeof fetch
 
   constructor(config: HttpFreesoundGatewayConfig) {
     this.#apiKey = config.apiKey
     this.#baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
+    this.#tokenWorkerUrl = config.tokenWorkerUrl?.replace(/\/+$/, '')
     this.#fetch = config.fetchImpl ?? globalThis.fetch
   }
 
@@ -85,11 +118,97 @@ export class HttpFreesoundGateway implements FreesoundGateway {
     return Promise.reject(new NotImplemented('downloadOriginal'))
   }
 
-  exchangeToken(): Promise<never> {
-    return Promise.reject(new NotImplemented('exchangeToken'))
+  exchangeToken(code: string, redirectUri: string): Promise<TokenSet> {
+    return this.#tokenWorkerCall('/exchange', {
+      code,
+      redirect_uri: redirectUri,
+    })
   }
 
-  refreshToken(): Promise<never> {
-    return Promise.reject(new NotImplemented('refreshToken'))
+  refreshToken(refreshToken: string): Promise<TokenSet> {
+    return this.#tokenWorkerCall('/refresh', { refresh_token: refreshToken })
+  }
+
+  async getMe(accessToken: string): Promise<FreesoundProfile> {
+    const url = new URL('me/', this.#baseUrl)
+    let res: Response
+    try {
+      res = await this.#fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+    } catch (err) {
+      throw new NetworkError('Freesound profile request failed', err)
+    }
+    if (!res.ok) {
+      // A 401 here is deliberately a plain GatewayError(status 401): the core's
+      // authorized() wrapper keys off that to run its single refresh + retry.
+      throw new GatewayError(
+        `Freesound /me/ returned HTTP ${res.status}`,
+        res.status,
+      )
+    }
+    try {
+      const body = (await res.json()) as { username?: string }
+      return { username: body.username ?? '' }
+    } catch (err) {
+      throw new GatewayError(`Freesound /me/ returned an unreadable body: ${String(err)}`)
+    }
+  }
+
+  async #tokenWorkerCall(
+    path: '/exchange' | '/refresh',
+    body: Record<string, string>,
+  ): Promise<TokenSet> {
+    if (!this.#tokenWorkerUrl) {
+      throw new GatewayError(
+        'FREESOUND_TOKEN_WORKER_URL is not configured — OAuth sign-in is unavailable.',
+      )
+    }
+
+    let res: Response
+    try {
+      res = await this.#fetch(`${this.#tokenWorkerUrl}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    } catch (err) {
+      // Cannot even reach the Worker — always retryable (ADR-0004: if the Worker
+      // is down, every user is signed out within a day; it is infrastructure).
+      throw new RetryableTokenError(
+        err instanceof Error ? err.message : 'network error contacting the token Worker',
+      )
+    }
+
+    let parsed: WorkerTokenBody & WorkerErrorBody
+    try {
+      parsed = (await res.json()) as WorkerTokenBody & WorkerErrorBody
+    } catch {
+      parsed = {}
+    }
+
+    if (!res.ok) {
+      const detail = parsed.detail ?? parsed.hint ?? `token Worker HTTP ${res.status}`
+      if (parsed.error === 'reauthorize') {
+        throw new ReauthRequiredError(detail, parsed.upstream_status)
+      }
+      if (parsed.error === 'retry') {
+        throw new RetryableTokenError(detail, parsed.upstream_status)
+      }
+      // Malformed request, 404/405, unexpected 5xx from the Worker itself.
+      throw new GatewayError(`Token Worker ${path} failed: ${detail}`, res.status)
+    }
+
+    if (!parsed.access_token || !parsed.refresh_token) {
+      throw new GatewayError(`Token Worker ${path} returned an incomplete token set.`)
+    }
+
+    return {
+      accessToken: parsed.access_token,
+      refreshToken: parsed.refresh_token,
+      expiresIn: typeof parsed.expires_in === 'number' ? parsed.expires_in : 86_400,
+      scope: parsed.scope ?? '',
+      tokenType: parsed.token_type ?? 'Bearer',
+    }
   }
 }

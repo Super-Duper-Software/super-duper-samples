@@ -14,7 +14,7 @@ now tickets 10, 11 and 15.
 | 06 | Token-exchange Worker | done (not deployed — SETUP.md §3) | `f16f812` |
 | 07 | OAuth sign-in / sign-out | done (needs Worker + Freesound app to exercise) | `0a502cb` |
 | 08 | Staged download on audition | done | `4ed08ee` |
-| 09 | Real drag-out — **the milestone** | **done** — code + tests + macOS manual verification (`docs/findings/0002`); Windows §B still outstanding | `72fdf0d` |
+| 09 | Real drag-out — **the milestone** | **done** — code + tests + macOS manual verification (`docs/findings/0002`); Windows §B still outstanding | `0ee382b` |
 | 10–19 | eviction, Library, peaks, collections, manifest, packaging | not started | — |
 
 ## Test counts

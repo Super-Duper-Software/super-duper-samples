@@ -7,14 +7,22 @@
 
 import { mapRawSound } from './gateway/mapRawSound'
 import type { FreesoundGateway, RawSearchPage } from './gateway/index'
-import type { SearchOptions, SearchResult } from './types'
+import type { SearchOptions, SearchResult, Sound } from './types'
 import {
   DEFAULT_RETRY_AFTER_SECONDS,
   GatewayError,
   ThrottledError,
 } from './errors'
 import { openDb, type DB } from './db/index'
-import { getSoundsByIds, upsertSounds } from './db/sounds'
+import { getSoundsByIds, upsertSound, upsertSounds } from './db/sounds'
+import {
+  deleteLibraryEntry,
+  libraryMembership,
+  listLibrarySoundIds,
+  saveLibraryEntry,
+  type SortDir,
+} from './db/library'
+import { contentPaths, isOriginalOnDisk } from './staging/contentStore'
 import {
   cacheKey,
   readSearchCache,
@@ -47,6 +55,7 @@ import type { DragHost } from './staging/dragHost'
 import { createDragRegistry } from './staging/dragRegistry'
 import {
   DEFAULT_STAGING_BYTE_BUDGET,
+  removeContentFiles,
   type DiskUsage,
   type EvictionOutcome,
 } from './staging/eviction'
@@ -103,6 +112,7 @@ export {
   type DiskUsage,
   type EvictionOutcome,
 } from './staging/eviction'
+export type { LibrarySort, SortDir } from './db/library'
 
 const DEFAULT_PAGE_SIZE = 15
 const DEBOUNCE_MS = 250
@@ -310,6 +320,62 @@ export interface Core {
    * was spared (`skipped`).
    */
   clearStaged(): Promise<EvictionOutcome>
+
+  // ---- library (ticket 11) -----------------------------------------
+
+  /**
+   * Save a Sound to the Library — the user's statement of intent to KEEP it
+   * (CONTEXT.md § Library). This is a pure DB write: one `library_entries` row
+   * with `saved_at = now`, and — if the Sound was Staged — its `staged_entries`
+   * row is dropped in the same transaction. The Original is NEVER moved or
+   * copied; the bytes already on disk simply change owner, which is what makes
+   * saving instant (ADR-0003).
+   *
+   * IDEMPOTENT: saving an already-saved Sound keeps the original `saved_at` and
+   * never creates a duplicate — a harmless no-op, never a throw.
+   *
+   * A `sounds` row must exist. Pass the `Sound` (a search result or a Staged
+   * Sound always carries one) and it is upserted first; if none is passed and no
+   * row exists, this throws rather than saving a Sound with no metadata.
+   */
+  saveToLibrary(soundId: number, sound?: Sound): void
+
+  /**
+   * Batch "is this in the Library?" for search-result badging, so the user does
+   * not download the same thing twice. One cheap indexed query; every requested
+   * id appears in the result (`false` when absent).
+   */
+  getLibraryMembership(ids: number[]): Record<number, boolean>
+
+  /**
+   * The Library as `Sound[]`, ordered by the date each was saved. `dir` defaults
+   * to `desc` (newest-saved first — "what did I gather for this project"). Makes
+   * NO gateway call: it is served entirely from the local `sounds` +
+   * `library_entries` tables, so it works fully offline and while signed out.
+   */
+  listLibrary(opts?: { sort?: 'savedAt'; dir?: SortDir }): Sound[]
+
+  /**
+   * Remove a Sound from the Library: delete its `library_entries` row AND unlink
+   * its Original + sidecar to reclaim disk (Original first, so no orphan audio).
+   * The `sounds` metadata row is kept — the Sound may reappear as an ordinary
+   * search result, just without a Library badge. Makes NO gateway call.
+   */
+  deleteFromLibrary(soundId: number): Promise<void>
+
+  /**
+   * Absolute path to a Sound's Original in the content store, or `null` if it is
+   * not on disk. Pure data for the main process's `shell.showItemInFolder`
+   * ("reveal in Finder/Explorer") — the core cannot call `shell` itself.
+   */
+  getContentPath(soundId: number): string | null
+
+  /**
+   * A Sound's page on freesound.org, or `null` if the core has no metadata for
+   * it. Pure data for the main process's `shell.openExternal` ("open on
+   * freesound.org").
+   */
+  getFreesoundUrl(soundId: number): string | null
 
   /** Release the database handle and cancel any pending debounced/refresh timers. */
   close(): void
@@ -532,6 +598,31 @@ export function createCore(deps: CoreDeps): Core {
       dragRegistry.end(typeof soundIds === 'number' ? [soundIds] : soundIds),
     getDiskUsage: () => staging.getDiskUsage(),
     clearStaged: () => staging.clearStaged(),
+
+    saveToLibrary: (soundId, sound) => {
+      if (sound) upsertSound(db, sound)
+      if (!getSoundsByIds(db, [soundId])[0]) {
+        throw new Error(
+          `saveToLibrary: no metadata for sound ${soundId} — search or audition it first`,
+        )
+      }
+      saveLibraryEntry(db, soundId, Date.now())
+    },
+    getLibraryMembership: (ids) => libraryMembership(db, ids),
+    listLibrary: (opts) =>
+      getSoundsByIds(db, listLibrarySoundIds(db, opts?.dir ?? 'desc')),
+    deleteFromLibrary: async (soundId) => {
+      const sound = getSoundsByIds(db, [soundId])[0]
+      deleteLibraryEntry(db, soundId)
+      if (sound) await removeContentFiles(deps.dataDir, sound)
+    },
+    getContentPath: (soundId) => {
+      const sound = getSoundsByIds(db, [soundId])[0]
+      if (!sound || !isOriginalOnDisk(deps.dataDir, sound)) return null
+      return contentPaths(deps.dataDir, sound).original
+    },
+    getFreesoundUrl: (soundId) => getSoundsByIds(db, [soundId])[0]?.url ?? null,
+
     close: () => {
       controller.dispose()
       staging.close()

@@ -11,7 +11,8 @@ import type {
   StagingStatus,
   StagingStatusChange,
 } from '../core'
-import type { SearchOptions, SearchResult } from '../core/types'
+import type { SearchOptions, SearchResult, Sound } from '../core/types'
+import type { SortDir } from '../core'
 
 export type {
   AuthState,
@@ -88,6 +89,33 @@ export interface CoreApi {
    * Library is untouched; Sounds with a live Drag-Out are skipped.
    */
   clearStaged(): Promise<EvictionOutcome>
+
+  // ---- library (ticket 11) ----------------------------------------
+  /**
+   * Save a Sound to the Library (a single-keystroke action in the renderer).
+   * Instant: writes one DB row, never moves or copies the file. Idempotent.
+   * Pass the `Sound` so the core can persist its metadata if needed.
+   */
+  saveToLibrary(soundId: number, sound?: Sound): Promise<void>
+  /** Batch "already in the Library?" for search-result badges. */
+  getLibraryMembership(ids: number[]): Promise<Record<number, boolean>>
+  /** The Library as `Sound[]`, newest-saved first by default. No gateway call. */
+  listLibrary(opts?: { sort?: 'savedAt'; dir?: SortDir }): Promise<Sound[]>
+  /**
+   * Remove a Sound from the Library: drops its row AND deletes its Original +
+   * sidecar to reclaim disk. The renderer confirms with the user first.
+   */
+  deleteFromLibrary(soundId: number): Promise<void>
+  /**
+   * Reveal a Library Sound's Original in Finder / Explorer (main-process
+   * `shell.showItemInFolder`). No-op if the Original is not on disk.
+   */
+  revealInFinder(soundId: number): Promise<void>
+  /**
+   * Open a Sound's page on freesound.org in the system browser (main-process
+   * `shell.openExternal`).
+   */
+  openFreesoundPage(soundId: number): Promise<void>
 }
 
 const api: CoreApi = {
@@ -130,6 +158,20 @@ const api: CoreApi = {
 
   getDiskUsage: () => ipcRenderer.invoke('core:invoke', 'getDiskUsage', []),
   clearStaged: () => ipcRenderer.invoke('core:invoke', 'clearStaged', []),
+
+  saveToLibrary: (soundId, sound) =>
+    ipcRenderer.invoke('core:invoke', 'saveToLibrary', [soundId, sound]),
+  getLibraryMembership: (ids) =>
+    ipcRenderer.invoke('core:invoke', 'getLibraryMembership', [ids]),
+  listLibrary: (opts) =>
+    ipcRenderer.invoke('core:invoke', 'listLibrary', [opts]),
+  deleteFromLibrary: (soundId) =>
+    ipcRenderer.invoke('core:invoke', 'deleteFromLibrary', [soundId]),
+  // Named channels: these two need Electron `shell`, which cannot live in core.
+  revealInFinder: (soundId) =>
+    ipcRenderer.invoke('core:revealInFinder', soundId),
+  openFreesoundPage: (soundId) =>
+    ipcRenderer.invoke('core:openExternal', soundId),
 }
 
 contextBridge.exposeInMainWorld('core', api)

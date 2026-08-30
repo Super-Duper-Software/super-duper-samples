@@ -5,7 +5,7 @@
 
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import {
   createCore,
   createRealScheduler,
@@ -63,6 +63,18 @@ function registerIpc(core: Core): void {
   ipcMain.handle('core:search', (_event, query: string, opts?: unknown) =>
     core.search(query, opts as Parameters<Core['search']>[1]),
   )
+
+  // Two named channels for the ticket-11 actions that need Electron `shell` —
+  // which cannot live in the core. The core supplies pure data (a file path, a
+  // URL); `shell.*` is the only Electron-only step and happens here.
+  ipcMain.handle('core:revealInFinder', (_event, soundId: number) => {
+    const path = core.getContentPath(soundId)
+    if (path) shell.showItemInFolder(path)
+  })
+  ipcMain.handle('core:openExternal', (_event, soundId: number) => {
+    const url = core.getFreesoundUrl(soundId)
+    if (url) return shell.openExternal(url)
+  })
 
   // Generic passthrough so later commands need no main-process change. This
   // already covers `signIn` / `signOut` / `getAuthState`.

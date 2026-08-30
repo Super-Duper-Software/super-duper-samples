@@ -1,8 +1,9 @@
 # Progress
 
 Tracer-bullet backlog: `.scratch/freesound-desktop-v1/`. Ticket 09 (the milestone) is
-built and its macOS drag-out was manually verified by the user on 2026-08-30. Ticket 10
-(sidecars + LRU eviction) is done. Frontier is now tickets 11 and 15.
+built and its macOS drag-out was manually verified by the user on 2026-08-30. Tickets 10
+(sidecars + LRU eviction) and 11 (Library save / view / delete) are done. Frontier is now
+tickets 12 and 15.
 
 | # | Ticket | State | Commit |
 |---|---|---|---|
@@ -15,14 +16,89 @@ built and its macOS drag-out was manually verified by the user on 2026-08-30. Ti
 | 07 | OAuth sign-in / sign-out | done (needs Worker + Freesound app to exercise) | `0a502cb` |
 | 08 | Staged download on audition | done | `4ed08ee` |
 | 09 | Real drag-out — **the milestone** | **done** — code + tests + macOS manual verification (`docs/findings/0002`); Windows §B still outstanding | `0ee382b` |
-| 10 | Sidecars + LRU eviction | **done** — code + tests (`test/eviction.test.ts`) | _uncommitted_ |
-| 11–19 | Library, peaks, collections, manifest, packaging | not started | — |
+| 10 | Sidecars + LRU eviction | **done** — code + tests (`test/eviction.test.ts`) | `0fed16b` |
+| 11 | Library: save, view, delete | **done** — code + tests (`test/library.test.ts`) | _this commit_ |
+| 12–19 | Peaks, collections, manifest, packaging | not started | — |
 
 ## Test counts
 
-- `apps/desktop`: 105 vitest tests (+11 for ticket 10), `tsc --noEmit` clean, `electron-vite build` clean.
+- `apps/desktop`: 113 vitest tests (+8 for ticket 11), `tsc --noEmit` clean, `electron-vite build` clean.
 - `worker`: 30 vitest tests, `tsc --noEmit` clean.
 - `spike/drag-out`: syntax-checked only (throwaway).
+
+## Ticket 11 — what landed
+
+- **Save is a row, not a file move.** `src/core/db/library.ts` — `library_entries`
+  access:
+  - `saveLibraryEntry(db, id, now)` — `INSERT … ON CONFLICT DO NOTHING` (idempotent;
+    `saved_at` never moves, no duplicate) AND, in the same transaction, deletes any
+    `staged_entries` row for that id. The Original on disk is untouched — the bytes
+    just change intent-bucket (Staged → Library), which is why saving is instant
+    (ADR-0003). This also keeps `getDiskUsage`'s staged/library split correct.
+  - `deleteLibraryEntry`, `listLibrarySoundIds(db, dir)` (`ORDER BY saved_at`,
+    default `desc` = newest-saved first), `libraryMembership(db, ids)` (one indexed
+    `IN (…)` query → `{ [id]: boolean }` for every id asked about).
+- `src/core/staging/eviction.ts` — extracted `removeContentFiles(dataDir, sound)`
+  (Original first, then sidecar; touches no DB row) so `deleteFromLibrary` and
+  staging eviction share the same unlink pattern. Eviction's own `removeStaged` and
+  its tests are unchanged.
+- `src/core/index.ts` — new commands:
+  - `saveToLibrary(soundId, sound?)` — upserts the passed `Sound` metadata, then
+    `saveLibraryEntry`. Throws if there is no metadata and none was passed.
+  - `getLibraryMembership(ids)` → `Record<number, boolean>`.
+  - `listLibrary({ sort?: 'savedAt'; dir?: 'asc'|'desc' })` → `Sound[]`, served
+    entirely from `sounds` + `library_entries` — **no gateway call**, works offline
+    and signed out.
+  - `deleteFromLibrary(soundId)` — drops the row AND unlinks Original + sidecar;
+    keeps the `sounds` row so the Sound can reappear as a plain search result.
+  - `getContentPath(soundId)` / `getFreesoundUrl(soundId)` — pure data for the
+    main-process `shell` calls below.
+- `src/main/index.ts` — two **named** ipc handlers (mirroring `core:search`):
+  `core:revealInFinder` → `shell.showItemInFolder(core.getContentPath(id))`,
+  `core:openExternal` → `shell.openExternal(core.getFreesoundUrl(id))`. `shell`
+  cannot live in core; the core supplies only the path / URL.
+- `src/preload/index.ts` — `saveToLibrary` / `getLibraryMembership` / `listLibrary` /
+  `deleteFromLibrary` via the generic `core:invoke` passthrough; `revealInFinder` /
+  `openFreesoundPage` on the two named channels.
+- Renderer:
+  - `src/renderer/store/useLibrary.ts` — Zustand mirror of membership + `save` /
+    `remove` actions; `selectRowLibrary(id)` + `useShallow` so only the flipped row
+    re-renders (same pattern as `useStaging`).
+  - `src/renderer/hooks/useLibraryView.ts` — loads `listLibrary` for the Library
+    tab; re-fetches on tab-activate, on sort-dir change, and on `useLibrary.revision`
+    (a save/remove happened). No paging, no gateway.
+  - `src/renderer/components/ResultRow.tsx` — a `♥ saved` badge on search rows
+    already in the Library; a `variant="library"` mode with per-row **Reveal /
+    Page / Remove** buttons. Audition + drag behaviour is completely unchanged, so
+    Library rows play and drag out exactly like search rows.
+  - `src/renderer/components/ResultList.tsx` — `s` / `S` on the selected row saves
+    it; `Delete` / `Backspace` in the Library variant calls `onRemove` for the
+    selected row.
+  - `src/renderer/App.tsx` — a Search / Library tab toggle in the header; the
+    Library view reuses the same virtualized `ResultList`, with a Newest/Oldest
+    sort button and a `window.confirm` before every delete.
+- `test/library.test.ts` — 8 tests: save promotes a Staged Sound with the **same
+  inode + path** (nothing moved) and `staged_entries` → `library_entries`; save is
+  idempotent (one row, `saved_at` unchanged); save throws with no metadata;
+  `listLibrary` newest-first / `dir:'asc'`; membership true for saved + false for
+  the rest, every id present; delete removes the row AND Original + sidecar while
+  keeping the `sounds` row; the whole Library lists / serves paths for / deletes a
+  Sound with a **gateway whose every method rejects**, and survives a reopen.
+
+### Deferrals / judgement calls (ticket 11)
+
+- **No migration.** `library_entries` already exists from m001 with
+  `(sound_id, custom_name, custom_tags, saved_at)` — save/view/delete needs no
+  schema change. `MIGRATIONS` is still `[m001, m002]`.
+- **`custom_name` / `custom_tags` left NULL** — user-overlay names/tags are
+  **ticket 13**, not built here.
+- **Collections not built** — **ticket 16**.
+- **Delete confirm is `window.confirm`** — the ticket explicitly allows it for v1;
+  an inline affordance can come later.
+- **Multi-select delete / bulk save** not built — no multi-select UI until ticket
+  13 (matches the ticket-09 note).
+- **`s` keystroke chosen** for save (list-scoped handler, inert while the search
+  input is focused). Delete is `Delete`/`Backspace`, Library view only.
 
 ## Ticket 10 — what landed
 

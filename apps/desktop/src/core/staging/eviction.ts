@@ -25,6 +25,7 @@
 import { rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { DB } from '../db/index'
+import type { Sound } from '../types'
 import { getSoundsByIds } from '../db/sounds'
 import {
   hasLibraryEntry,
@@ -86,6 +87,23 @@ function pathsFor(
     original: join(dir, String(entry.soundId)),
     sidecar: join(dir, `${entry.soundId}.json`),
   }
+}
+
+/**
+ * Unlink a Sound's Original and its mandatory sidecar from the content store,
+ * Original FIRST so an interrupted call can only ever leave a harmless
+ * sidecar-without-audio. Missing files are not an error. Touches no DB row — the
+ * caller owns whichever row (`staged_entries` / `library_entries`) pointed at
+ * these files. Shared by staging eviction (below) and `core.deleteFromLibrary`
+ * (ticket 11).
+ */
+export async function removeContentFiles(
+  dataDir: string,
+  sound: Pick<Sound, 'id' | 'type'>,
+): Promise<void> {
+  const { original, sidecar } = contentPaths(dataDir, sound)
+  await rm(original, { force: true })
+  await rm(sidecar, { force: true })
 }
 
 /** Remove one staged Sound whole: Original, then sidecar, then the DB row. */

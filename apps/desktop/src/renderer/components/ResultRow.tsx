@@ -16,6 +16,7 @@ import type { Sound } from '../../core/types'
 import { useRowTransport } from '../hooks/useRowTransport'
 import { useTransport } from '../store/useTransport'
 import { selectRowStaging, useStaging } from '../store/useStaging'
+import { selectRowLibrary, useLibrary } from '../store/useLibrary'
 import { formatDuration } from '../lib/format'
 import { waveformIconDataUrl } from '../lib/dragIcon'
 import { LicenseChip } from './LicenseChip'
@@ -31,10 +32,35 @@ export interface ResultRowProps {
   /** Row height in pixels. */
   size: number
   onSelect: (index: number) => void
+  /**
+   * `'search'` (default) shows a "Saved" badge on Sounds already in the Library.
+   * `'library'` shows the per-row Library actions (reveal / open page / remove)
+   * and no badge — everything here is saved by definition.
+   */
+  variant?: 'search' | 'library'
+  /** Library variant only: remove this Sound (the caller confirms first). */
+  onRemove?: (sound: Sound) => void
 }
 
-function ResultRowImpl({ sound, index, selected, start, size, onSelect }: ResultRowProps) {
+function ResultRowImpl({
+  sound,
+  index,
+  selected,
+  start,
+  size,
+  onSelect,
+  variant = 'search',
+  onRemove,
+}: ResultRowProps) {
   const handleSelect = useCallback(() => onSelect(index), [onSelect, index])
+
+  // Ticket 11: Library membership for the "Saved" badge. Mirrors the staging
+  // pattern — a `useShallow` slice so only this row re-renders when it flips.
+  const { inLibrary } = useLibrary(useShallow(selectRowLibrary(sound.id)))
+  const ensureLibrary = useLibrary((s) => s.ensure)
+  useEffect(() => {
+    ensureLibrary([sound.id])
+  }, [sound.id, ensureLibrary])
 
   const { isCurrent, status, failed } = useRowTransport(sound.id)
   const isPlaying = isCurrent && status === 'playing'
@@ -169,6 +195,14 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
             </span>
           )}
           <StagingChip status={stagingStatus} />
+          {variant === 'search' && inLibrary && (
+            <span
+              className="shrink-0 rounded border border-emerald-800/70 bg-emerald-950/60 px-1 text-[10px] font-medium uppercase tracking-wide text-emerald-300"
+              title="Already in your Library"
+            >
+              ♥ saved
+            </span>
+          )}
           <span
             className="min-w-0 flex-1 truncate text-xs text-neutral-500"
             title={sound.tags.join(', ')}
@@ -177,6 +211,38 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
           </span>
         </div>
       </div>
+
+      {variant === 'library' && (
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => void window.core.revealInFinder(sound.id)}
+            className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+            title="Reveal the Original in Finder / Explorer"
+          >
+            Reveal
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => void window.core.openFreesoundPage(sound.id)}
+            className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+            title="Open this sound's page on freesound.org"
+          >
+            Page
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => onRemove?.(sound)}
+            className="rounded border border-red-900/70 px-1.5 py-0.5 text-[11px] text-red-300 hover:border-red-600 hover:text-red-100"
+            title="Remove from the Library and delete its files"
+          >
+            Remove
+          </button>
+        </div>
+      )}
 
       <LicenseChip name={sound.license.name} />
 

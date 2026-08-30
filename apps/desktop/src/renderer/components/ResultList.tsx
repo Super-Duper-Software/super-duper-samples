@@ -23,6 +23,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Sound } from '../../core/types'
 import { useResultSelection } from '../store/useResultSelection'
 import { useTransport } from '../store/useTransport'
+import { useLibrary } from '../store/useLibrary'
 import { ResultRow } from './ResultRow'
 
 const ROW_HEIGHT = 64
@@ -37,6 +38,13 @@ export interface ResultListProps {
   loadMore: () => void
   /** Return focus to the search input (bound to `/` and Esc). */
   onFocusSearch: () => void
+  /**
+   * `'search'` (default) or `'library'`. The Library variant shows per-row
+   * actions and binds Delete/Backspace to `onRemove` for the selected row.
+   */
+  variant?: 'search' | 'library'
+  /** Library variant only: remove a Sound (the caller confirms with the user). */
+  onRemove?: (sound: Sound) => void
 }
 
 export function ResultList({
@@ -45,6 +53,8 @@ export function ResultList({
   loadingMore,
   loadMore,
   onFocusSearch,
+  variant = 'search',
+  onRemove,
 }: ResultListProps) {
   const parentRef = useRef<HTMLDivElement>(null)
 
@@ -174,6 +184,23 @@ export function ResultList({
         else t.playSound(sound)
         break
       }
+      case 's':
+      case 'S': {
+        // Ticket 11: one keystroke saves the selected Sound to the Library.
+        // Instant and idempotent — pressing it again on a saved row is harmless.
+        e.preventDefault()
+        const sound = sounds[useResultSelection.getState().selectedIndex]
+        if (sound) void useLibrary.getState().save(sound)
+        break
+      }
+      case 'Backspace':
+      case 'Delete': {
+        if (variant !== 'library' || !onRemove) break
+        e.preventDefault()
+        const sound = sounds[useResultSelection.getState().selectedIndex]
+        if (sound) onRemove(sound)
+        break
+      }
       case '/':
       case 'Escape':
         e.preventDefault()
@@ -209,6 +236,8 @@ export function ResultList({
               start={vi.start}
               size={vi.size}
               onSelect={onSelect}
+              variant={variant}
+              onRemove={onRemove}
             />
           )
         })}

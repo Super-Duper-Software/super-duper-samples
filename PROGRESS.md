@@ -18,7 +18,7 @@ sort) are done. Frontier is now ticket 12.
 | 09 | Real drag-out — **the milestone** | **done** — code + tests + macOS manual verification (`docs/findings/0002`); Windows §B still outstanding | `0ee382b` |
 | 10 | Sidecars + LRU eviction | **done** — code + tests (`test/eviction.test.ts`) | `0fed16b` |
 | 11 | Library: save, view, delete | **done** — code + tests (`test/library.test.ts`) | `6406a57` |
-| 15 | Search filters and sort | **done** — code + tests (`test/search-filters.test.ts`) | `this commit` |
+| 15 | Search filters and sort | **done** — code + tests (`test/search-filters.test.ts`) | `eb78025` |
 | 12–14, 16–19 | Peaks, collections, manifest, packaging | not started | — |
 
 ## Test counts

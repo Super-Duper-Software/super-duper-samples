@@ -39,13 +39,34 @@ describe('database migrations', () => {
       'staged_entries',
       'peaks',
       'auth',
+      'app_meta',
       'schema_migrations',
     ]) {
       expect(tables).toContain(t)
     }
 
     // user_version tracks the highest applied migration id.
-    expect(db.pragma('user_version', { simple: true })).toBe(1)
+    expect(db.pragma('user_version', { simple: true })).toBe(2)
+    db.close()
+  })
+
+  it('migration 002 adds the staging content-store columns and app_meta', async () => {
+    const db = openDb(await tempDbPath())
+
+    const cols = (
+      db.prepare("PRAGMA table_info('staged_entries')").all() as { name: string }[]
+    ).map((r) => r.name)
+    for (const c of ['sound_id', 'byte_size', 'last_access_at', 'path', 'created_at']) {
+      expect(cols).toContain(c)
+    }
+
+    // app_meta is a plain key/value table.
+    db.prepare("INSERT INTO app_meta (key, value) VALUES ('k', 'v')").run()
+    expect(
+      (db.prepare("SELECT value FROM app_meta WHERE key = 'k'").get() as { value: string })
+        .value,
+    ).toBe('v')
+
     db.close()
   })
 
@@ -58,7 +79,7 @@ describe('database migrations', () => {
     const second = openDb(dbPath)
     const result = runMigrations(second)
     expect(result.applied).toEqual([])
-    expect(second.pragma('user_version', { simple: true })).toBe(1)
+    expect(second.pragma('user_version', { simple: true })).toBe(2)
     second.close()
   })
 

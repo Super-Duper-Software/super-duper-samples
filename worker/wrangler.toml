@@ -10,7 +10,7 @@ workers_dev = true
 # FREESOUND_CLIENT_SECRET is NOT here on purpose. It is a Worker secret:
 #   wrangler secret put FREESOUND_CLIENT_SECRET
 [vars]
-FREESOUND_CLIENT_ID = "replace-with-your-freesound-client-id"
+FREESOUND_CLIENT_ID = "LG4dytcex2rqKMzBZVkM"
 
 # Optional, soft abuse controls. Leave empty to disable.
 #   ALLOWED_ORIGINS      comma-separated Origin header values to allow

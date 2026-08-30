@@ -124,5 +124,37 @@ const m001: Migration = {
   `,
 }
 
+/**
+ * Migration 002 — staging (ticket 08).
+ *
+ * `staged_entries` was created empty by 001 with just `sound_id`, `byte_size`
+ * and `last_access_at`. Ticket 08 needs to know WHERE each staged Original sits
+ * and WHEN it was first staged, so eviction (ticket 10) can act on it without
+ * re-deriving paths. Two nullable columns are added (the table is empty, so no
+ * backfill is required); every row this ticket writes fills both.
+ *
+ *   - `path`       — absolute path to the staged Original in the content store.
+ *   - `created_at` — epoch ms the Original first landed. `last_access_at`
+ *                    (from 001) is bumped on every re-audition; `created_at` is not.
+ *
+ * `app_meta` is a tiny key/value table for one-off app flags. Ticket 08 stores
+ * `staging_consent_at` here — the epoch ms at which the user acknowledged that
+ * "auditioning downloads sounds against your Freesound account's record". Until
+ * that key is set, auditioning does NOT stage.
+ */
+const m002: Migration = {
+  id: 2,
+  name: 'staging-content-store',
+  up: /* sql */ `
+    ALTER TABLE staged_entries ADD COLUMN path       TEXT;
+    ALTER TABLE staged_entries ADD COLUMN created_at INTEGER;
+
+    CREATE TABLE app_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `,
+}
+
 /** The migration list, in application order. Append only. */
-export const MIGRATIONS: readonly Migration[] = [m001]
+export const MIGRATIONS: readonly Migration[] = [m001, m002]

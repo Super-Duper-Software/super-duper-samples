@@ -5,6 +5,8 @@ import {
 } from '../auth/errors'
 import {
   SEARCH_FIELDS,
+  type DownloadOriginalOptions,
+  type DownloadOriginalResult,
   type FreesoundGateway,
   type FreesoundProfile,
   type GatewaySearchParams,
@@ -114,8 +116,75 @@ export class HttpFreesoundGateway implements FreesoundGateway {
     return Promise.reject(new NotImplemented('getPreviewStream'))
   }
 
-  downloadOriginal(): Promise<never> {
-    return Promise.reject(new NotImplemented('downloadOriginal'))
+  async downloadOriginal(
+    soundId: number,
+    accessToken: string,
+    opts: DownloadOriginalOptions = {},
+  ): Promise<DownloadOriginalResult> {
+    const url = new URL(`sounds/${soundId}/download/`, this.#baseUrl)
+
+    let res: Response
+    try {
+      res = await this.#fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: opts.signal,
+      })
+    } catch (err) {
+      if (opts.signal?.aborted || (err as { name?: string }).name === 'AbortError') {
+        throw Object.assign(new Error('download aborted'), { name: 'AbortError' })
+      }
+      throw new NetworkError('Freesound download request failed', err)
+    }
+
+    if (!res.ok) {
+      // A 401 here is a plain GatewayError(401) so the core's `authorized()`
+      // wrapper runs its single refresh + retry (ticket 07), exactly like getMe.
+      throw new GatewayError(
+        `Freesound download of sound ${soundId} returned HTTP ${res.status}`,
+        res.status,
+        parseRetryAfter(res.headers?.get?.('retry-after') ?? null),
+      )
+    }
+
+    // Stream the body so a large Original is not buffered twice, and so an abort
+    // stops the transfer promptly.
+    const contentType = res.headers?.get?.('content-type') ?? null
+    const body = res.body
+    if (!body) {
+      const buf = new Uint8Array(await res.arrayBuffer())
+      return { bytes: buf, contentType }
+    }
+
+    const reader = body.getReader()
+    const chunks: Uint8Array[] = []
+    let total = 0
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (value) {
+          chunks.push(value)
+          total += value.byteLength
+        }
+        if (opts.signal?.aborted) {
+          await reader.cancel()
+          throw Object.assign(new Error('download aborted'), { name: 'AbortError' })
+        }
+      }
+    } catch (err) {
+      if (opts.signal?.aborted || (err as { name?: string }).name === 'AbortError') {
+        throw Object.assign(new Error('download aborted'), { name: 'AbortError' })
+      }
+      throw new NetworkError('Freesound download stream failed', err)
+    }
+
+    const bytes = new Uint8Array(total)
+    let offset = 0
+    for (const c of chunks) {
+      bytes.set(c, offset)
+      offset += c.byteLength
+    }
+    return { bytes, contentType }
   }
 
   exchangeToken(code: string, redirectUri: string): Promise<TokenSet> {

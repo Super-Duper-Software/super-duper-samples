@@ -5,13 +5,21 @@
 
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
-import { createCore, createRealScheduler, type AuthState, type Core } from '../core'
+import {
+  createCore,
+  createRealScheduler,
+  type AuthState,
+  type Core,
+  type StagingStatusChange,
+} from '../core'
 import { HttpFreesoundGateway } from '../core/gateway/http'
 import { createElectronAuthPlatform } from './authPlatform'
 import { loadConfig } from './config'
 
 /** Channel the renderer listens on for auth-state pushes (ticket 07). */
 const AUTH_STATE_CHANNEL = 'core:event:authState'
+/** Channel the renderer listens on for per-sound staging status pushes (ticket 08). */
+const STAGING_STATUS_CHANNEL = 'core:event:stagingStatus'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -59,6 +67,12 @@ function broadcastAuthState(state: AuthState): void {
   }
 }
 
+function broadcastStagingStatus(change: StagingStatusChange): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(STAGING_STATUS_CHANNEL, change)
+  }
+}
+
 void app.whenReady().then(() => {
   const config = loadConfig()
   const dataDir = app.getPath('userData')
@@ -76,6 +90,7 @@ void app.whenReady().then(() => {
     scheduler: createRealScheduler(),
     clientId: config.freesoundClientId,
     onAuthStateChange: broadcastAuthState,
+    onStagingStatusChange: broadcastStagingStatus,
   })
 
   registerIpc(core)

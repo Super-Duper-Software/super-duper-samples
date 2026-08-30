@@ -9,12 +9,15 @@
 // node inside <Waveform> by `audioController`, so it never re-renders this row.
 // A track change flips `isCurrent` for exactly the outgoing and incoming rows.
 
-import { memo, useCallback } from 'react'
+import { memo, useCallback, useEffect } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import type { Sound } from '../../core/types'
 import { useRowTransport } from '../hooks/useRowTransport'
 import { useTransport } from '../store/useTransport'
+import { selectRowStaging, useStaging } from '../store/useStaging'
 import { formatDuration } from '../lib/format'
 import { LicenseChip } from './LicenseChip'
+import { StagingChip } from './StagingChip'
 import { Waveform } from './Waveform'
 
 export interface ResultRowProps {
@@ -34,6 +37,14 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
   const { isCurrent, status, failed } = useRowTransport(sound.id)
   const isPlaying = isCurrent && status === 'playing'
   const isLoading = isCurrent && status === 'loading'
+
+  // Ticket 08: the staged-download indicator. Status is pushed from the core;
+  // seed it once for this row in case it changed before the row mounted.
+  const { status: stagingStatus } = useStaging(useShallow(selectRowStaging(sound.id)))
+  const ensureStaging = useStaging((s) => s.ensure)
+  useEffect(() => {
+    ensureStaging([sound.id])
+  }, [sound.id, ensureStaging])
 
   const onPlayPause = useCallback(() => {
     const t = useTransport.getState()
@@ -99,6 +110,7 @@ function ResultRowImpl({ sound, index, selected, start, size, onSelect }: Result
               preview failed
             </span>
           )}
+          <StagingChip status={stagingStatus} />
           <span
             className="min-w-0 flex-1 truncate text-xs text-neutral-500"
             title={sound.tags.join(', ')}

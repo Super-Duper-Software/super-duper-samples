@@ -58,3 +58,29 @@ export class NotImplemented extends Error {
     this.name = 'NotImplemented'
   }
 }
+
+/**
+ * A download was deliberately cancelled — the user moved past the Sound before
+ * its Original finished staging (ticket 08). Distinct from a failure: the
+ * download queue neither retries it nor marks the Sound `failed`. The gateway
+ * throws this (or any error whose `name` is `AbortError`) when the caller's
+ * `AbortSignal` fires mid-stream.
+ */
+export class DownloadCancelledError extends Error {
+  constructor(soundId?: number) {
+    super(
+      soundId == null
+        ? 'The download was cancelled.'
+        : `The download of sound ${soundId} was cancelled.`,
+    )
+    this.name = 'DownloadCancelledError'
+  }
+}
+
+/** True for both `DownloadCancelledError` and a stdlib `AbortError`. */
+export function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof DownloadCancelledError ||
+    (!!err && typeof err === 'object' && (err as { name?: unknown }).name === 'AbortError')
+  )
+}

@@ -24,10 +24,45 @@ describe('FakeFreesoundGateway', () => {
     expect(gateway.calls[0]).toEqual({ query: 'rain', page: 1, pageSize: 15 })
   })
 
-  it('later-ticket streaming/download methods still throw NotImplemented', async () => {
+  it('the ticket-04 preview stream still throws NotImplemented', async () => {
     const gateway = new FakeFreesoundGateway()
     await expect(gateway.getPreviewStream()).rejects.toBeInstanceOf(NotImplemented)
-    await expect(gateway.downloadOriginal()).rejects.toBeInstanceOf(NotImplemented)
+  })
+
+  it('downloadOriginal returns bytes, records the call, and tracks concurrency', async () => {
+    const gateway = new FakeFreesoundGateway({ downloadDelayMs: 20 })
+
+    const [a, b] = await Promise.all([
+      gateway.downloadOriginal(1, 'AT'),
+      gateway.downloadOriginal(2, 'AT'),
+    ])
+
+    expect(new TextDecoder().decode(a.bytes)).toBe('FAKE-ORIGINAL:1')
+    expect(new TextDecoder().decode(b.bytes)).toBe('FAKE-ORIGINAL:2')
+    expect(gateway.downloadCalls).toEqual([
+      { soundId: 1, accessToken: 'AT' },
+      { soundId: 2, accessToken: 'AT' },
+    ])
+    expect(gateway.downloadMaxConcurrent).toBe(2)
+    expect(gateway.downloadInFlight).toBe(0)
+  })
+
+  it('downloadOriginal rejects with an AbortError when the signal fires mid-flight', async () => {
+    const gateway = new FakeFreesoundGateway({ downloadDelayMs: 1000 })
+    const ac = new AbortController()
+    const p = gateway.downloadOriginal(7, 'AT', { signal: ac.signal })
+    ac.abort()
+    await expect(p).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('downloadOriginal can be armed for transient-then-success and permanent failure', async () => {
+    const transient = new FakeFreesoundGateway({ downloadTransientFailures: 2 })
+    await expect(transient.downloadOriginal(9, 'AT')).rejects.toMatchObject({ status: 503 })
+    await expect(transient.downloadOriginal(9, 'AT')).rejects.toMatchObject({ status: 503 })
+    expect((await transient.downloadOriginal(9, 'AT')).bytes.byteLength).toBeGreaterThan(0)
+
+    const permanent = new FakeFreesoundGateway({ downloadPermanentFail: true })
+    await expect(permanent.downloadOriginal(9, 'AT')).rejects.toMatchObject({ status: 500 })
   })
 
   it('implements the ticket-07 OAuth methods', async () => {
@@ -100,9 +135,50 @@ describe('HttpFreesoundGateway', () => {
     ).rejects.toBeInstanceOf(NetworkError)
   })
 
-  it('does not implement the later-ticket methods yet', async () => {
+  it('does not implement the ticket-04 preview stream yet', async () => {
     const gateway = new HttpFreesoundGateway({ apiKey: 'k' })
     await expect(gateway.getPreviewStream()).rejects.toBeInstanceOf(NotImplemented)
+  })
+
+  it('downloadOriginal GETs sounds/<id>/download/ with a Bearer token and streams the body', async () => {
+    const payload = new TextEncoder().encode('RIFF....realwav')
+    const fetchImpl = vi.fn(async (_url: URL) => ({
+      ok: true,
+      status: 200,
+      headers: { get: (h: string) => (h === 'content-type' ? 'audio/x-wav' : null) },
+      body: {
+        getReader() {
+          let sent = false
+          return {
+            read: async () =>
+              sent ? { done: true, value: undefined } : ((sent = true), { done: false, value: payload }),
+            cancel: async () => {},
+          }
+        },
+      },
+    })) as unknown as typeof fetch
+    const gateway = new HttpFreesoundGateway({ apiKey: 'k', fetchImpl })
+
+    const res = await gateway.downloadOriginal(442827, 'the-access-token')
+
+    const [url, init] = (fetchImpl as unknown as { mock: { calls: [URL, RequestInit][] } }).mock.calls[0]!
+    expect(url.toString()).toBe('https://freesound.org/apiv2/sounds/442827/download/')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer the-access-token')
+    expect(new TextDecoder().decode(res.bytes)).toBe('RIFF....realwav')
+    expect(res.contentType).toBe('audio/x-wav')
+  })
+
+  it('downloadOriginal surfaces a 401 as GatewayError(401) so authorized() can refresh + retry', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      headers: { get: () => null },
+    })) as unknown as typeof fetch
+    const gateway = new HttpFreesoundGateway({ apiKey: 'k', fetchImpl })
+    await expect(gateway.downloadOriginal(1, 'stale')).rejects.toMatchObject({
+      name: 'GatewayError',
+      status: 401,
+    })
   })
 
   // Keep GatewayError referenced for clarity of intent.

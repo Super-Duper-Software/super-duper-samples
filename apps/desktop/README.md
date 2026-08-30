@@ -175,6 +175,146 @@ The renderer's `useSearch` classifies errors into `throttled` / `network` /
 queries network-free; an extra in-memory layer would only duplicate it. If a
 purely-visual cache is wanted later it can be added without touching the core.
 
+## Staging — staged download on audition (ticket 08)
+
+Pressing play streams the [Preview](../../CONTEXT.md) (ticket 04, 100% in the
+renderer) **and** tells the core to speculatively download the
+[Original](../../CONTEXT.md) so the Sound is on disk and draggable a moment
+later. The downloaded file is [Staged](../../CONTEXT.md): a complete Original on
+disk with **no `library_entries` row** (ADR-0003).
+
+### Commands & events (what the renderer calls)
+
+| Command | Purpose |
+|---|---|
+| `core.stageOnAudition(soundId)` | Fire-and-forget. Enqueue a background download of the Original; cancel the previous audition's download first (see below). No-op while signed out, before consent, or for an unknown Sound. If already on disk, just bumps `last_access_at`. |
+| `core.cancelStaging(soundId)` | Cancel a sound's queued/in-flight staged download (the renderer calls this on Stop). |
+| `core.getStagingStatus(ids)` | `Record<number, StagingStatus>` for the row indicators. |
+| `core.getStagingConsent()` / `core.grantStagingConsent()` | The first-run consent gate (below). |
+| `core:event:stagingStatus` | Push (`{ soundId, status }`) on every status transition. Preload exposes it as `window.core.onStagingStatus(listener)`. |
+
+`useTransport.playSound` calls `stageOnAudition`; each result row shows a
+`<StagingChip>` fed from `useStaging` (a Zustand mirror of the push channel).
+
+### Staging status state machine
+
+```
+not-started ──stageOnAudition──▶ queued ──slot free──▶ downloading ──files written──▶ ready
+                                   ▲                        │  │
+                                   └──retry (backoff)───────┘  └──retries exhausted──▶ failed
+   cancel(soundId) / skip ────────────────────────────────────────────────────────▶ not-started
+```
+
+`ready` is also reported immediately for any Sound with a `staged_entries` **or**
+`library_entries` row. `failed` is sticky until the Sound is auditioned again
+(then it gets one fresh full run). The renderer shows `downloading` (slow) and
+`failed` → "unavailable" as visually distinct states.
+
+### The download queue
+
+`src/core/staging/downloadQueue.ts` — a standalone, injectable module:
+
+- **Concurrency cap** `DOWNLOAD_CONCURRENCY = 3` — never more than 3 downloads in
+  flight (test asserts the observed max ≤ 3 when many are enqueued).
+- **Retry** `DOWNLOAD_MAX_RETRIES = 3`, backoff `DOWNLOAD_RETRY_BACKOFF_MS =
+  [1000, 3000, 9000]` ms, scheduled through the injected `Scheduler` (ticket 07)
+  so tests advance it. During the backoff the concurrency slot is released.
+- **Permanent failure** — after retries are exhausted the Sound's status becomes
+  `failed` and the queue stops touching it.
+- **Cancel on skip (the design chosen):** the renderer calls `stageOnAudition(id)`
+  on every play. The core remembers the previous audition and, when a new one
+  arrives, **cancels the previous download unless it already finished or was
+  saved** (has a `library_entries` row). A queued job is dropped outright; an
+  in-flight one is aborted via `AbortSignal` (the gateway rejects with an
+  `AbortError`). Skimming a result list therefore never leaves more than one
+  speculative download alive.
+- **Already-on-disk is a no-op** — the queue and controller check the content
+  store + `staged_entries` / `library_entries` before enqueueing.
+
+`gateway.downloadOriginal(id, accessToken, { signal })` is the authenticated
+network call: `GET /apiv2/sounds/<id>/download/` with a Bearer token, run through
+`AuthController.authorized()` so a 401 refreshes **once** and retries **once**
+(never a loop). It streams the response body and honours `signal`.
+
+### Content store (ticket 14 depends on this shape)
+
+Originals are written to `<dataDir>/content/`, flat, named by Freesound sound id
+with the Sound's own extension: `321967.wav`. Next to each sits its **mandatory**
+sidecar `321967.json` (ADR-0002). Both files are written to a `*.part` temp name
+and atomically renamed — the sidecar first, the Original last — so an
+`<id>.<ext>` file always implies its sidecar is present.
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "soundId": 321967,
+  "freesoundUrl": "https://freesound.org/people/klankbeeld/sounds/321967/",
+  "downloadedAt": 1693267200000,           // epoch ms
+  "author":  { "username": "klankbeeld" },
+  "license": { "url": "http://creativecommons.org/licenses/by/4.0/", "name": "CC-BY" },
+  "file":    { "name": "321967.wav", "ext": "wav", "byteSize": 6127544 },
+  "sound":   { /* the full core `Sound` object, verbatim */ }
+}
+```
+
+`sound` + `author` + `license` + `freesoundUrl` are enough for ticket 14 to
+reconstruct a `sounds` row (and a `library_entries` row for saved files).
+
+### `staged_entries` (ticket 10 reads this)
+
+When an Original lands, the controller upserts a `staged_entries` row:
+`sound_id`, `byte_size`, `last_access_at` (epoch ms, bumped on **every**
+re-audition), `path` (absolute path in the content store), `created_at` (epoch ms,
+set once). It also upserts the `sounds` row. `last_access_at` is the column the
+ticket calls "last-accessed"; `path` and `created_at` are added by **migration
+002** (see below). Ticket 10's eviction must skip any Sound that also has a
+`library_entries` row (the spec: eviction never touches a Library Sound) — this
+ticket records the state, it does not evict.
+
+### Migration 002 (`staging-content-store`)
+
+Added because `staged_entries` from migration 001 lacked `path` / `created_at`,
+and consent needed somewhere to live:
+
+```sql
+ALTER TABLE staged_entries ADD COLUMN path       TEXT;
+ALTER TABLE staged_entries ADD COLUMN created_at INTEGER;
+CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+```
+
+`test/db.migrations.test.ts` is updated (`user_version` is now `2`).
+
+### First-run consent (spec story 52)
+
+Before staging takes effect the first time, the user is told "auditioning
+downloads sounds against your Freesound account's record". Stored as
+`app_meta.staging_consent_at` (epoch ms). `core.getStagingConsent()` returns
+`{ grantedAt }`; `core.grantStagingConsent()` sets it once (idempotent). Until
+granted, `stageOnAudition` does not download. The renderer shows a one-time
+`<StagingConsentBanner>` with an "OK, got it" button, only while signed in.
+
+### Signed out
+
+`stageOnAudition` is a silent no-op when `getAuthState().status !== 'signedIn'`.
+Auditioning (search + Preview) is unaffected — those are token-auth.
+
+### Manual GUI check
+
+Automated tests prove the core hands the right bytes to disk; only a person can
+watch it happen live:
+
+1. `pnpm --filter @freesound/desktop dev`, sign in (see Authentication above —
+   needs a deployed Worker + real Freesound credentials).
+2. Run a search. The amber consent banner appears once — click **OK, got it**.
+3. Press ▶ on a row. Within a second or two its chip goes
+   `downloading → ready`. Confirm a file appears at
+   `<userData>/content/<id>.<ext>` with a sibling `<id>.json`.
+4. Press ▶ rapidly down several rows (or hold **J**). Only the row you land on
+   ends at `ready`; the ones you skimmed past return to no chip, and no more
+   than 3 downloads ever run at once (watch the network panel).
+5. Kill wi-fi and press ▶ — after the retries the chip shows **unavailable**
+   (red), distinct from the blue **downloading**.
+
 ## The core / adapter / renderer rule
 
 From [`CONVENTIONS.md`](../../CONVENTIONS.md) — load-bearing, and easy to erode:

@@ -61,6 +61,28 @@ function previewUrl(sound: Sound): string | null {
   return sound.previewUrls.hqMp3 || sound.previewUrls.lqMp3 || null
 }
 
+/**
+ * Ticket 08: auditioning ALSO stages the Original — a background download owned
+ * entirely by the core. Fire-and-forget from here; Preview playback above is
+ * untouched. The core no-ops while signed out or before the first-run consent.
+ * Guarded so the store stays callable in unit tests (no `window.core`).
+ */
+function stageOnAudition(soundId: number): void {
+  try {
+    void window.core?.stageOnAudition?.(soundId)?.catch?.(() => {})
+  } catch {
+    /* no bridge (tests) — staging is a core concern, ignore here */
+  }
+}
+
+function cancelStaging(soundId: number): void {
+  try {
+    void window.core?.cancelStaging?.(soundId)?.catch?.(() => {})
+  } catch {
+    /* no bridge (tests) */
+  }
+}
+
 export interface TransportState {
   status: TransportStatus
   currentSoundId: number | null
@@ -107,6 +129,7 @@ export const useTransport = create<TransportState>((set, get) => ({
       return { status: 'loading', currentSoundId: sound.id, failedIds: next }
     })
     audio.load(sound.id, url, { loop: get().loop, volume: get().volume })
+    stageOnAudition(sound.id)
   },
 
   toggle: () => {
@@ -120,7 +143,9 @@ export const useTransport = create<TransportState>((set, get) => ({
   },
 
   stop: () => {
+    const { currentSoundId } = get()
     audio.stop()
+    if (currentSoundId != null) cancelStaging(currentSoundId)
     set({ status: 'idle', currentSoundId: null })
   },
 

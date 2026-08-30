@@ -77,6 +77,22 @@ export interface FreesoundProfile {
   username: string
 }
 
+/** Options for `downloadOriginal` — cancellation only, for now. */
+export interface DownloadOriginalOptions {
+  /** Aborted by the download queue when the user moves past the Sound. */
+  signal?: AbortSignal
+}
+
+/**
+ * The result of downloading a Sound's Original: the complete file bytes plus the
+ * `Content-Type` the server reported (advisory only — the on-disk extension comes
+ * from the Sound's `type`).
+ */
+export interface DownloadOriginalResult {
+  bytes: Uint8Array
+  contentType: string | null
+}
+
 /**
  * The network boundary. `search` is the only method implemented for ticket 02;
  * the rest are declared so later tickets extend one interface, and throw
@@ -88,8 +104,19 @@ export interface FreesoundGateway {
   /** ticket 04 — stream a Sound's Preview for auditioning. */
   getPreviewStream(soundId: number): Promise<never>
 
-  /** ticket 08 — download a Sound's Original as the signed-in user. */
-  downloadOriginal(soundId: number): Promise<never>
+  /**
+   * ticket 08 — download a Sound's Original as the signed-in user.
+   * `GET https://freesound.org/apiv2/sounds/<id>/download/` with
+   * `Authorization: Bearer <accessToken>`. This IS an authenticated call and MUST
+   * be invoked through the core's `authorized()` wrapper so a 401 refreshes once
+   * and retries once (ticket 07). Streams the response body; `opts.signal` aborts
+   * it mid-stream, in which case the promise rejects with an `AbortError`.
+   */
+  downloadOriginal(
+    soundId: number,
+    accessToken: string,
+    opts?: DownloadOriginalOptions,
+  ): Promise<DownloadOriginalResult>
 
   /**
    * ticket 07 — exchange an OAuth authorization code for tokens, via the token

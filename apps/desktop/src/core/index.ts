@@ -24,11 +24,19 @@ import {
 import { createSearchController, type SearchController } from './searchController'
 import {
   createAuthController,
+  createRealScheduler,
   type AuthController,
   type AuthPlatform,
   type AuthState,
   type Scheduler,
 } from './auth/index'
+import {
+  createStagingController,
+  type StagingController,
+  type StagingConsent,
+  type StagingStatus,
+  type StagingStatusChange,
+} from './staging/stagingController'
 
 export type { FreesoundGateway } from './gateway/index'
 export * from './types'
@@ -55,6 +63,16 @@ export {
   RetryableTokenError,
   SignInCancelledError,
 } from './auth/index'
+export {
+  DOWNLOAD_CONCURRENCY,
+  DOWNLOAD_MAX_RETRIES,
+  DOWNLOAD_RETRY_BACKOFF_MS,
+} from './staging/stagingController'
+export type {
+  StagingConsent,
+  StagingStatus,
+  StagingStatusChange,
+} from './staging/stagingController'
 
 const DEFAULT_PAGE_SIZE = 15
 const DEBOUNCE_MS = 250
@@ -83,6 +101,16 @@ export interface CoreDeps {
   clientId?: string
   /** Broadcast every auth-state transition (main forwards it to the renderer). */
   onAuthStateChange?: (state: AuthState) => void
+
+  // ---- staging (ticket 08) ---------------------------------------------
+  /** Broadcast every per-sound staging status change (main forwards it to the renderer). */
+  onStagingStatusChange?: (change: StagingStatusChange) => void
+  /** Cap on concurrent Original downloads. Defaults to `DOWNLOAD_CONCURRENCY` (3). Tests shrink it. */
+  stagingConcurrency?: number
+  /** Retry attempts after a transient download failure. Defaults to 3. */
+  stagingMaxRetries?: number
+  /** Backoff before each retry, ms. Defaults to `[1000, 3000, 9000]`. */
+  stagingBackoffMs?: readonly number[]
 }
 
 /** The command API. Later tickets add methods here; the bridge forwards them all. */
@@ -138,6 +166,44 @@ export interface Core {
    */
   subscribeAuthState(listener: (state: AuthState) => void): () => void
 
+  // ---- staging (ticket 08) ---------------------------------------------
+
+  /**
+   * The renderer's audition flow calls this on every play (fire-and-forget). The
+   * core streams the Preview elsewhere; here it enqueues a BACKGROUND download of
+   * the Original so the Sound is on disk and draggable a moment later. It first
+   * cancels the previous audition's download unless that one already finished or
+   * was saved, so skimming a list never leaves dozens of downloads running.
+   *
+   * A silent no-op while signed out, before the first-run consent is granted, or
+   * for a Sound the core has no metadata for. If the Original is already on disk
+   * it just refreshes the staged `last_access_at`.
+   */
+  stageOnAudition(soundId: number): void
+
+  /** Cancel a sound's queued/in-flight staged download (renderer calls this on Stop). */
+  cancelStaging(soundId: number): void
+
+  /**
+   * Per-sound staging status for the row indicator:
+   * `not-started | queued | downloading | ready | failed`.
+   */
+  getStagingStatus(ids: number[]): Record<number, StagingStatus>
+
+  /** Whether the first-run "auditioning downloads sounds" notice was acknowledged. */
+  getStagingConsent(): StagingConsent
+
+  /** Record that the user acknowledged the first-run notice. Idempotent. */
+  grantStagingConsent(): StagingConsent
+
+  /**
+   * Subscribe to per-sound staging status transitions. Returns an unsubscribe
+   * function. The main process forwards these over `core:event:stagingStatus`.
+   */
+  subscribeStagingStatus(
+    listener: (change: StagingStatusChange) => void,
+  ): () => void
+
   /** Release the database handle and cancel any pending debounced/refresh timers. */
   close(): void
 }
@@ -176,6 +242,8 @@ export function createCore(deps: CoreDeps): Core {
   const { gateway, dbPath, debounceMs = DEBOUNCE_MS } = deps
   const db: DB = openDb(dbPath)
 
+  const scheduler: Scheduler = deps.scheduler ?? createRealScheduler()
+
   const auth: AuthController =
     deps.authPlatform && deps.scheduler
       ? createAuthController({
@@ -187,6 +255,18 @@ export function createCore(deps: CoreDeps): Core {
           onStateChange: deps.onAuthStateChange,
         })
       : unconfiguredAuth(deps.onAuthStateChange)
+
+  const staging: StagingController = createStagingController({
+    db,
+    dataDir: deps.dataDir,
+    gateway,
+    auth,
+    scheduler,
+    onStatusChange: deps.onStagingStatusChange,
+    concurrency: deps.stagingConcurrency,
+    maxRetries: deps.stagingMaxRetries,
+    backoffMs: deps.stagingBackoffMs,
+  })
 
   // Keyed by cache key. Holds BOTH foreground searches and background prefetches,
   // so a real request for a page already being prefetched attaches to the same
@@ -308,8 +388,15 @@ export function createCore(deps: CoreDeps): Core {
     signOut: () => auth.signOut(),
     getAuthState: () => auth.getState(),
     subscribeAuthState: (listener) => auth.subscribe(listener),
+    stageOnAudition: (soundId) => staging.stageOnAudition(soundId),
+    cancelStaging: (soundId) => staging.cancelStaging(soundId),
+    getStagingStatus: (ids) => staging.getStagingStatus(ids),
+    getStagingConsent: () => staging.getStagingConsent(),
+    grantStagingConsent: () => staging.grantStagingConsent(),
+    subscribeStagingStatus: (listener) => staging.subscribe(listener),
     close: () => {
       controller.dispose()
+      staging.close()
       auth.close()
       db.close()
     },

@@ -3,13 +3,20 @@
 // extend `CoreApi` in lockstep with the core's `Core` interface.
 
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AuthState } from '../core'
+import type {
+  AuthState,
+  StagingConsent,
+  StagingStatus,
+  StagingStatusChange,
+} from '../core'
 import type { SearchOptions, SearchResult } from '../core/types'
 
-export type { AuthState } from '../core'
+export type { AuthState, StagingConsent, StagingStatus, StagingStatusChange } from '../core'
 
 /** Channel the main process pushes auth-state transitions on (ticket 07). */
 const AUTH_STATE_CHANNEL = 'core:event:authState'
+/** Channel the main process pushes per-sound staging status changes on (ticket 08). */
+const STAGING_STATUS_CHANNEL = 'core:event:stagingStatus'
 
 export interface CoreApi {
   search(query: string, opts?: SearchOptions): Promise<SearchResult>
@@ -28,6 +35,20 @@ export interface CoreApi {
    * function. Fires on every transition and once on window load.
    */
   onAuthState(listener: (state: AuthState) => void): () => void
+
+  // ---- staging (ticket 08) --------------------------------------------
+  /** Enqueue a background download of a Sound's Original (called on audition). Fire-and-forget. */
+  stageOnAudition(soundId: number): Promise<void>
+  /** Cancel a sound's queued/in-flight staged download. */
+  cancelStaging(soundId: number): Promise<void>
+  /** Per-sound staging status for the row indicators. */
+  getStagingStatus(ids: number[]): Promise<Record<number, StagingStatus>>
+  /** Whether the first-run staging notice was acknowledged. */
+  getStagingConsent(): Promise<StagingConsent>
+  /** Record acknowledgement of the first-run staging notice. */
+  grantStagingConsent(): Promise<StagingConsent>
+  /** Subscribe to per-sound staging status pushes. Returns an unsubscribe function. */
+  onStagingStatus(listener: (change: StagingStatusChange) => void): () => void
 }
 
 const api: CoreApi = {
@@ -42,6 +63,23 @@ const api: CoreApi = {
     const handler = (_e: unknown, state: AuthState): void => listener(state)
     ipcRenderer.on(AUTH_STATE_CHANNEL, handler)
     return () => ipcRenderer.removeListener(AUTH_STATE_CHANNEL, handler)
+  },
+
+  stageOnAudition: (soundId) =>
+    ipcRenderer.invoke('core:invoke', 'stageOnAudition', [soundId]),
+  cancelStaging: (soundId) =>
+    ipcRenderer.invoke('core:invoke', 'cancelStaging', [soundId]),
+  getStagingStatus: (ids) =>
+    ipcRenderer.invoke('core:invoke', 'getStagingStatus', [ids]),
+  getStagingConsent: () =>
+    ipcRenderer.invoke('core:invoke', 'getStagingConsent', []),
+  grantStagingConsent: () =>
+    ipcRenderer.invoke('core:invoke', 'grantStagingConsent', []),
+  onStagingStatus: (listener) => {
+    const handler = (_e: unknown, change: StagingStatusChange): void =>
+      listener(change)
+    ipcRenderer.on(STAGING_STATUS_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(STAGING_STATUS_CHANNEL, handler)
   },
 }
 

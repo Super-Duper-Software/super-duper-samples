@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { AuthBar } from './components/AuthBar'
 import { ResultList } from './components/ResultList'
+import { StagingConsentBanner } from './components/StagingConsentBanner'
 import { TransportBar } from './components/TransportBar'
 import { useSearch } from './hooks/useSearch'
 import { formatResultCount } from './lib/format'
@@ -56,6 +57,8 @@ export default function App() {
           autoFocus
         />
       </header>
+
+      <StagingConsentBanner />
 
       <section className="min-h-0 flex-1">
         {status === 'loading' && (

@@ -1,6 +1,8 @@
 import { GatewayError, NotImplemented } from '../errors'
 import { ReauthRequiredError, RetryableTokenError } from '../auth/errors'
 import type {
+  DownloadOriginalOptions,
+  DownloadOriginalResult,
   FreesoundGateway,
   FreesoundProfile,
   GatewaySearchParams,
@@ -49,6 +51,35 @@ export interface FakeFreesoundGatewayConfig {
    * succeeding — drives the "exactly one refresh + one retry" interceptor test.
    */
   getMeUnauthorizedTimes?: number
+
+  // ---- Original download (ticket 08) -----------------------------------
+
+  /**
+   * Bytes handed back by a successful `downloadOriginal`. When a function, it is
+   * called per sound id. Defaults to a small deterministic buffer derived from
+   * the id.
+   */
+  downloadBytes?: Uint8Array | ((soundId: number) => Uint8Array)
+  /** `Content-Type` a successful `downloadOriginal` reports. Defaults to `audio/x-wav`. */
+  downloadContentType?: string
+  /**
+   * Simulated transfer latency in ms. During this wait the call is abort-aware:
+   * if `opts.signal` fires it rejects with an `AbortError`. Defaults to 0.
+   */
+  downloadDelayMs?: number
+  /**
+   * Per-sound count of leading `downloadOriginal` calls that throw a transient
+   * `GatewayError(503)` before finally succeeding — drives the retry test.
+   */
+  downloadTransientFailures?: number
+  /** When set, every `downloadOriginal` throws a `GatewayError(500)` — the permanent-failure path. */
+  downloadPermanentFail?: boolean
+  /**
+   * Per-sound count of leading `downloadOriginal` calls that throw
+   * `GatewayError(401)` before succeeding — drives the authenticated-401 →
+   * one-refresh-one-retry test.
+   */
+  downloadUnauthorizedTimes?: number
 }
 
 /**
@@ -65,10 +96,20 @@ export class FakeFreesoundGateway implements FreesoundGateway {
   readonly refreshCalls: string[] = []
   /** The access token passed to every `getMe` call, in order. */
   readonly getMeCalls: string[] = []
+  /** `{ soundId, accessToken }` for every `downloadOriginal` call, in order. */
+  readonly downloadCalls: Array<{ soundId: number; accessToken: string }> = []
+
+  /** Downloads currently executing (between call and settle). */
+  downloadInFlight = 0
+  /** The high-water mark of `downloadInFlight` across the fake's lifetime. */
+  downloadMaxConcurrent = 0
 
   #config: FakeFreesoundGatewayConfig
   #refreshSeq = 0
   #getMe401Left: number
+  /** Per-sound remaining transient failures / 401s. */
+  #dlTransientLeft = new Map<number, number>()
+  #dl401Left = new Map<number, number>()
 
   constructor(config: FakeFreesoundGatewayConfig = {}) {
     this.#config = config
@@ -77,6 +118,11 @@ export class FakeFreesoundGateway implements FreesoundGateway {
 
   get searchCallCount(): number {
     return this.calls.length
+  }
+
+  /** How many `downloadOriginal` calls have been made. */
+  get downloadCallCount(): number {
+    return this.downloadCalls.length
   }
 
   /** Change the refresh behaviour mid-test (e.g. after a successful sign-in). */
@@ -119,8 +165,72 @@ export class FakeFreesoundGateway implements FreesoundGateway {
     return Promise.reject(new NotImplemented('getPreviewStream'))
   }
 
-  downloadOriginal(): Promise<never> {
-    return Promise.reject(new NotImplemented('downloadOriginal'))
+  async downloadOriginal(
+    soundId: number,
+    accessToken: string,
+    opts: DownloadOriginalOptions = {},
+  ): Promise<DownloadOriginalResult> {
+    this.downloadCalls.push({ soundId, accessToken })
+    this.downloadInFlight += 1
+    this.downloadMaxConcurrent = Math.max(
+      this.downloadMaxConcurrent,
+      this.downloadInFlight,
+    )
+    try {
+      const delay = this.#config.downloadDelayMs ?? 0
+      if (delay > 0) await this.#abortableDelay(delay, opts.signal)
+      if (opts.signal?.aborted) {
+        throw Object.assign(new Error('download aborted'), { name: 'AbortError' })
+      }
+
+      if (this.#config.downloadPermanentFail) {
+        throw new GatewayError(`fake: permanent download failure for ${soundId}`, 500)
+      }
+
+      const n401 =
+        this.#dl401Left.get(soundId) ??
+        this.#config.downloadUnauthorizedTimes ??
+        0
+      if (n401 > 0) {
+        this.#dl401Left.set(soundId, n401 - 1)
+        throw new GatewayError(`fake: download 401 for ${soundId}`, 401)
+      }
+
+      const nTransient =
+        this.#dlTransientLeft.get(soundId) ??
+        this.#config.downloadTransientFailures ??
+        0
+      if (nTransient > 0) {
+        this.#dlTransientLeft.set(soundId, nTransient - 1)
+        throw new GatewayError(`fake: transient download failure for ${soundId}`, 503)
+      }
+
+      const b = this.#config.downloadBytes
+      const bytes =
+        typeof b === 'function'
+          ? b(soundId)
+          : b ?? new TextEncoder().encode(`FAKE-ORIGINAL:${soundId}`)
+      return {
+        bytes,
+        contentType: this.#config.downloadContentType ?? 'audio/x-wav',
+      }
+    } finally {
+      this.downloadInFlight -= 1
+    }
+  }
+
+  #abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(Object.assign(new Error('download aborted'), { name: 'AbortError' }))
+        return
+      }
+      const timer = setTimeout(resolve, ms)
+      signal?.addEventListener('abort', () => {
+        clearTimeout(timer)
+        reject(Object.assign(new Error('download aborted'), { name: 'AbortError' }))
+      })
+    })
   }
 
   async exchangeToken(code: string, redirectUri: string): Promise<TokenSet> {

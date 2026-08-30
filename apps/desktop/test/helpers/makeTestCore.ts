@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createCore, type Core } from '../../src/core'
+import { createCore, type Core, type StagingStatusChange } from '../../src/core'
 import { FakeFreesoundGateway } from '../../src/core/gateway/fake'
 import type { FreesoundGateway, RawSearchPage } from '../../src/core/gateway/index'
 import { FakeAuthPlatform } from './fakeAuthPlatform'
@@ -61,6 +61,11 @@ export async function makeTestCore(
     debounceMs?: number
     authPlatform?: FakeAuthPlatform
     scheduler?: FakeScheduler
+    /** Ticket 08 — shrink the concurrency cap / backoff for staging tests. */
+    stagingConcurrency?: number
+    stagingMaxRetries?: number
+    stagingBackoffMs?: readonly number[]
+    onStagingStatusChange?: (change: StagingStatusChange) => void
   } = {},
 ): Promise<TestCore> {
   const dataDir = await mkdtemp(join(tmpdir(), 'freesound-desktop-test-'))
@@ -76,6 +81,10 @@ export async function makeTestCore(
     authPlatform,
     scheduler,
     clientId: 'test-client-id',
+    stagingConcurrency: opts.stagingConcurrency,
+    stagingMaxRetries: opts.stagingMaxRetries,
+    stagingBackoffMs: opts.stagingBackoffMs,
+    onStagingStatusChange: opts.onStagingStatusChange,
   })
   return { core, gateway, authPlatform, scheduler, dataDir, dbPath }
 }

@@ -50,7 +50,10 @@ afterEach(() => {
 const sleep = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms))
 
-async function waitUntil(pred: () => boolean, ms = 3000): Promise<void> {
+// Eviction fires on `setImmediate` + real async `node:fs`, and this polls with
+// real timers, so the ceiling has to absorb CPU contention when the whole suite
+// runs its files in parallel — a true failure still trips it, just later.
+async function waitUntil(pred: () => boolean, ms = 8000): Promise<void> {
   const start = Date.now()
   while (!pred()) {
     if (Date.now() - start > ms) throw new Error('waitUntil timed out')
@@ -242,7 +245,13 @@ describe('core.stageOnAudition — a stage over budget triggers LRU eviction', (
     await stageReady(core, RAIN_ID)
     await stageReady(core, DRIZZLE_ID) // completing this trips eviction of RAIN
 
-    await waitUntil(() => !existsSync(join(dataDir, 'content', `${RAIN_ID}.wav`)))
+    // Eviction removes the Original then the sidecar in two awaited steps; wait
+    // for BOTH so this poll can't win the race against the second unlink.
+    await waitUntil(
+      () =>
+        !existsSync(join(dataDir, 'content', `${RAIN_ID}.wav`)) &&
+        !existsSync(join(dataDir, 'content', `${RAIN_ID}.json`)),
+    )
     expect(existsSync(join(dataDir, 'content', `${RAIN_ID}.json`))).toBe(false)
     expect(existsSync(join(dataDir, 'content', `${DRIZZLE_ID}.flac`))).toBe(true)
     expect(existsSync(join(dataDir, 'content', `${DRIZZLE_ID}.json`))).toBe(true)
@@ -267,7 +276,9 @@ describe('core.stageOnAudition — a stage over budget triggers LRU eviction', (
     await stageReady(core, THUNDER_ID) // now over budget → eviction runs
 
     await waitUntil(
-      () => !existsSync(join(dataDir, 'content', `${DRIZZLE_ID}.flac`)),
+      () =>
+        !existsSync(join(dataDir, 'content', `${DRIZZLE_ID}.flac`)) &&
+        !existsSync(join(dataDir, 'content', `${DRIZZLE_ID}.json`)),
     )
     // RAIN survived despite being the LRU, because a drag still references it;
     // eviction took the next-oldest (DRIZZLE) instead.
@@ -277,8 +288,15 @@ describe('core.stageOnAudition — a stage over budget triggers LRU eviction', (
     // once the drag ends, RAIN is evictable again
     core.endDrag(RAIN_ID)
     await stageReady(core, DRIZZLE_ID)
-    await waitUntil(() => !existsSync(join(dataDir, 'content', `${RAIN_ID}.wav`)))
-  })
+    await waitUntil(
+      () =>
+        !existsSync(join(dataDir, 'content', `${RAIN_ID}.wav`)) &&
+        !existsSync(join(dataDir, 'content', `${RAIN_ID}.json`)),
+    )
+    // This case drives four real download+poll cycles and two eviction passes
+    // through real timers/fs; under full-suite parallelism that can exceed the
+    // 5s default. The assertions above still fail fast if the behaviour breaks.
+  }, 20000)
 })
 
 // ───────────────────── getDiskUsage / clearStaged ─────────────────────

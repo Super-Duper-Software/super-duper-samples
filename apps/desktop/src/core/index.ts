@@ -47,17 +47,22 @@ export function createCore(deps: CoreDeps): Core {
       const trimmed = query.trim()
 
       if (trimmed === '') {
-        return { query, totalCount: 0, page, pageSize, sounds: [] }
+        return { query, totalCount: 0, page, pageSize, sounds: [], hasMore: false }
       }
 
       const raw = await gateway.search({ query: trimmed, page, pageSize })
+      const sounds = raw.results.map(mapRawSound)
 
       return {
         query,
         totalCount: raw.count,
         page,
         pageSize,
-        sounds: raw.results.map(mapRawSound),
+        sounds,
+        // A further page exists only if this one was non-empty AND the pages seen
+        // so far do not yet cover the total. Derived from the count Freesound
+        // reports, not from `raw.next`, so it stays correct for any page size.
+        hasMore: sounds.length > 0 && page * pageSize < raw.count,
       }
     },
   }

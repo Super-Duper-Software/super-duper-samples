@@ -9,6 +9,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 
 const WAV = path.join(__dirname, "asset", "sample.wav");
+const ICON = path.join(__dirname, "asset", "icon.png");
 
 // A second real file for the multi-file drag test. Just copy the wav.
 const WAV_2 = path.join(os.tmpdir(), "freesound-spike-sample-2.wav");
@@ -18,16 +19,18 @@ try {
   console.error("could not stage second file:", err.message);
 }
 
-// A tiny drag icon. On macOS startDrag() THROWS if the icon is empty/invalid,
-// so we always hand it a real bitmap. 1x1 transparent PNG is enough to not throw,
-// but we build a small visible square so the drag image is observable.
+// A tiny drag icon. On macOS startDrag() THROWS if the icon is empty/invalid.
+// NOTE: an inline hand-forged base64 PNG was tried first and decoded to a 0x0
+// EMPTY image under Electron's nativeImage — which silently disabled the whole
+// spike. The icon is now a real PNG on disk, produced by `node make-icon.mjs`
+// (run automatically by the `start` script). Load it from a path and trust it.
 function dragIcon() {
-  // 32x32 solid-ish square, encoded as a data URL PNG.
-  const png =
-    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAP0lEQVR42u3PMQ0AAAgDMOZf" +
-    "9BvAA7pJq2Tt2gEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8G0BES0AAWfC" +
-    "yV8AAAAASUVORK5CYII=";
-  const img = nativeImage.createFromDataURL("data:image/png;base64," + png);
+  const img = nativeImage.createFromPath(ICON);
+  if (img.isEmpty()) {
+    throw new Error(
+      `drag icon at ${ICON} loaded EMPTY — run \`node make-icon.mjs\` to regenerate it`,
+    );
+  }
   return img;
 }
 
@@ -97,18 +100,8 @@ ipcMain.on("ondragstart", (event, opts) => {
     cleanupTargets = [WAV];
   }
 
-  const icon = dragIcon();
-  if (icon.isEmpty()) {
-    // Would throw on macOS. Report it instead of crashing the spike.
-    event.reply("dragstatus", {
-      ok: false,
-      mode,
-      error: "drag icon is empty — startDrag would throw on macOS",
-    });
-    return;
-  }
-
   try {
+    const icon = dragIcon();
     if (files.length === 1) {
       event.sender.startDrag({ file: files[0], icon });
     } else {

@@ -1,7 +1,18 @@
 # 0001 — Drag-out platform spike (ticket 01)
 
 **Status:** programmatic verification complete; manual GUI verification pending (user).
-**Date:** 2026-08-29
+**Date:** 2026-08-29 (icon-bug correction added same day)
+
+> **Correction (post-review).** The first cut of this spike shipped its drag icon as an
+> inline hand-forged base64 PNG. Under Electron's `nativeImage` that string decodes to a
+> **0×0 empty image**, so `dragIcon()` failed `isEmpty()`, the handler returned
+> `{ok:false, error:"drag icon is empty — startDrag would throw on macOS"}`, and
+> **`startDrag` was never actually called** — every drag attempt no-opped. The "app
+> boots" result below was real but did not exercise drag-out at all. Fixed: the icon is
+> now a real PNG written by `node make-icon.mjs` (IHDR + zlib IDAT + IEND, CRC32s),
+> loaded via `nativeImage.createFromPath`, verified non-empty under Electron
+> (`64×64`, `isEmpty() === false`). `npm start` regenerates assets first (`prestart`).
+> The manual checklist in §3 is now the real test and has not yet been run.
 **Spike code:** `spike/drag-out/` (throwaway — discard after this doc is accepted).
 **Gates:** the whole backlog. See [ADR-0001](../adr/0001-electron-over-tauri.md).
 
@@ -24,10 +35,14 @@ Environment: macOS 14 (Darwin 24.6.0), Node 24.6.0, Electron 32.3.3, pnpm 10.15.
 electron exit=0
 ```
 
-`node --check` passes on `main.js`, `preload.js`, `renderer.js`, `generate-wav.mjs`.
-`pnpm --filter @freesound/spike-drag-out start` is wired (`"start": "electron ."`).
+`node --check` passes on `main.js`, `preload.js`, `renderer.js`, `generate-wav.mjs`,
+`make-icon.mjs`. `pnpm --filter @freesound/spike-drag-out start` is wired
+(`prestart` regenerates `asset/sample.wav` + `asset/icon.png`, then `electron .`).
 
-**Result: PASS.** The Electron shell launches and the IPC/preload wiring loads.
+**Result: PASS (shell only).** The Electron shell launches and the IPC/preload wiring
+loads. This does **not** prove drag-out works — see the Correction at the top of this
+doc. `startDrag` cannot be smoke-tested headlessly: called outside a real OS drag
+gesture it blocks in the platform drag loop. Drag-out is verified only by §3.
 
 ### 1.2 WAV validity
 
@@ -140,9 +155,11 @@ multi-select drag should fall back to single-file or be disabled.
 The `icon` field is **mandatory and must be non-empty**. On macOS, `startDrag` throws
 synchronously if the icon is missing, empty, or an invalid `nativeImage`
 ("Must specify non-empty 'icon' option"). On Windows an empty icon is more forgiving
-but still unsupported. The spike always passes a real 32×32 PNG `nativeImage` and
-guards with `icon.isEmpty()` before calling `startDrag`, reporting the error to the
-renderer instead of crashing.
+but still unsupported. The spike passes a real 64×64 PNG `nativeImage` loaded from
+`asset/icon.png` and throws loudly from `dragIcon()` if it ever loads empty. **This is
+exactly the bug the first cut of the spike hit** (see Correction at top): an invalid
+icon does not warn — it silently produces an empty `nativeImage` and the drag never
+starts. Validate the icon at load and treat empty as fatal.
 
 **Consequence for ticket 09:** ship a bundled drag icon asset (e.g. a small waveform
 glyph) and treat "icon failed to load" as a hard error, not a warning. Never call
@@ -236,7 +253,7 @@ target, complete the drop within 3 seconds, then wait.
 | # | Check | Expected | Result |
 |---|---|---|---|
 | E1 | While dragging (any mode), watch the cursor | a small drag image / thumbnail follows the cursor (the 32×32 PNG from `main.js`) | |
-| E2 | macOS: temporarily edit `dragIcon()` in `main.js` to `return nativeImage.createEmpty()` and drag | `startDrag` throws / the spike logs `dragstatus {ok:false, error:"...icon is empty..."}`; **revert the edit after** | |
+| E2 | macOS: temporarily `rm asset/icon.png` (or point `ICON` at a missing path) and drag | `dragIcon()` throws; the spike logs `dragstatus {ok:false, error:"...loaded EMPTY..."}` and no drag starts; **restore with `node make-icon.mjs` after** | |
 | E3 | Windows: same empty-icon edit | note the behaviour (Windows is more lenient); revert | |
 
 ---

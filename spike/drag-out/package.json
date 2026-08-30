@@ -5,9 +5,10 @@
   "description": "Throwaway spike (ticket 01): drag an audio file out of an Electron window.",
   "main": "main.js",
   "scripts": {
+    "prestart": "node generate-wav.mjs && node make-icon.mjs",
     "start": "electron .",
-    "gen-wav": "node generate-wav.mjs",
-    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check generate-wav.mjs"
+    "gen-assets": "node generate-wav.mjs && node make-icon.mjs",
+    "check": "node --check main.js && node --check preload.js && node --check renderer.js && node --check generate-wav.mjs && node --check make-icon.mjs"
   },
   "devDependencies": {
     "electron": "^32.0.0"

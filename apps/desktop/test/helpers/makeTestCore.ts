@@ -25,6 +25,10 @@ export function makeFakeGateway(
       rain: loadFixture('search-rain.json'),
       thunder: loadFixture('search-thunder.json'),
     },
+    pagedPages: {
+      // A two-page fixture (count 6): use with `{ pageSize: 3 }` to walk pages.
+      loops: [loadFixture('search-loops-p1.json'), loadFixture('search-loops-p2.json')],
+    },
     defaultPage: loadFixture('search-empty.json'),
     ...overrides,
   })

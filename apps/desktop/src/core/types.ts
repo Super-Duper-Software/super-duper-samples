@@ -75,4 +75,11 @@ export interface SearchResult {
   page: number
   pageSize: number
   sounds: Sound[]
+  /**
+   * Whether at least one more page exists after this one — i.e. whether calling
+   * `search(query, { page: page + 1 })` would return further Sounds. Lets the
+   * renderer drive "load more on scroll" without re-deriving it from arithmetic
+   * that the core owns. `false` on an empty result set and on the last page.
+   */
+  hasMore: boolean
 }

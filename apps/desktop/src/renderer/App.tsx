@@ -1,78 +1,89 @@
-import { useEffect, useState } from 'react'
-import type { SearchResult } from '../core/types'
-
-type Status = 'idle' | 'loading' | 'ok' | 'error'
+import { useCallback, useRef, useState } from 'react'
+import type { KeyboardEvent } from 'react'
+import { ResultList } from './components/ResultList'
+import { useSearch } from './hooks/useSearch'
+import { formatResultCount } from './lib/format'
+import { useResultSelection } from './store/useResultSelection'
 
 export default function App() {
   const [query, setQuery] = useState('')
-  const [status, setStatus] = useState<Status>('idle')
-  const [result, setResult] = useState<SearchResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    const q = query.trim()
-    if (q === '') {
-      setStatus('idle')
-      setResult(null)
-      setError(null)
-      return
+  const { status, error, sounds, totalCount, hasMore, loadingMore, loadMore } =
+    useSearch(query)
+
+  const focusSearch = useCallback(() => {
+    const el = inputRef.current
+    el?.focus()
+    el?.select()
+  }, [])
+
+  // ArrowDown from the search box drops into the list at the first row.
+  const onInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' && sounds.length > 0) {
+      e.preventDefault()
+      useResultSelection.getState().select(0, sounds[0]?.id ?? null)
     }
+  }
 
-    setStatus('loading')
-    // Real debounce/prefetch is ticket 05; a small timer is enough here.
-    const timer = setTimeout(() => {
-      window.core
-        .search(q)
-        .then((r) => {
-          setResult(r)
-          setError(null)
-          setStatus('ok')
-        })
-        .catch((e: unknown) => {
-          setError(e instanceof Error ? e.message : String(e))
-          setResult(null)
-          setStatus('error')
-        })
-    }, 250)
-
-    return () => clearTimeout(timer)
-  }, [query])
+  const showResults = status === 'ok' && sounds.length > 0
 
   return (
-    <main className="p-4">
-      <h1 className="mb-3 text-lg font-semibold">Freesound</h1>
+    <main className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
+      <header className="shrink-0 border-b border-neutral-800 p-4">
+        <div className="mb-3 flex items-baseline justify-between">
+          <h1 className="text-lg font-semibold">Freesound</h1>
+          {showResults && (
+            <span className="text-xs text-neutral-400" aria-live="polite">
+              {formatResultCount(totalCount)}
+            </span>
+          )}
+        </div>
 
-      <input
-        type="search"
-        className="w-full border px-2 py-1"
-        placeholder="Search sounds…"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        autoFocus
-      />
+        <input
+          ref={inputRef}
+          type="search"
+          className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-600 focus:outline-none"
+          placeholder="Search sounds…  (press / to return here)"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onInputKeyDown}
+          autoFocus
+        />
+      </header>
 
-      <div className="mt-3">
-        {status === 'loading' && <p>Searching…</p>}
+      <section className="min-h-0 flex-1">
+        {status === 'loading' && (
+          <p className="p-4 text-sm text-neutral-400" aria-live="polite">
+            Searching…
+          </p>
+        )}
 
         {status === 'error' && (
-          <p role="alert">Search failed: {error}</p>
+          <p className="p-4 text-sm text-red-400" role="alert">
+            Search failed: {error}
+          </p>
         )}
 
-        {status === 'ok' && result && result.sounds.length === 0 && (
-          <p>Nothing matched. Try a looser query.</p>
+        {status === 'ok' && sounds.length === 0 && (
+          <div className="p-4 text-sm text-neutral-400">
+            <p className="font-medium text-neutral-300">Nothing matched “{query.trim()}”.</p>
+            <p className="mt-1">
+              Try fewer or more general words, check the spelling, or drop a filter.
+            </p>
+          </div>
         )}
 
-        {status === 'ok' && result && result.sounds.length > 0 && (
-          <>
-            <p className="mb-2">{result.totalCount} results</p>
-            <ul>
-              {result.sounds.map((s) => (
-                <li key={s.id}>{s.name}</li>
-              ))}
-            </ul>
-          </>
+        {showResults && (
+          <ResultList
+            sounds={sounds}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+            loadMore={loadMore}
+            onFocusSearch={focusSearch}
+          />
         )}
-      </div>
+      </section>
     </main>
   )
 }

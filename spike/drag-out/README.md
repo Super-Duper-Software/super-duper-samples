@@ -19,9 +19,13 @@ Or from this directory:
 
 ```
 pnpm install
-node generate-wav.mjs   # (re)generate asset/sample.wav
-pnpm start              # electron .
+pnpm start              # `prestart` regenerates asset/sample.wav + asset/icon.png, then electron .
 ```
+
+`node generate-wav.mjs` and `node make-icon.mjs` (or `npm run gen-assets`) regenerate
+the two assets by hand. The drag **icon must be a real PNG** — an invalid one decodes
+to an empty `nativeImage` and `startDrag` silently never fires (that bug bit the first
+cut of this spike; see the Correction in the findings doc).
 
 If `pnpm install` prints "Ignored build scripts: electron", run
 `pnpm approve-builds` (or `node node_modules/electron/install.js`) once so the

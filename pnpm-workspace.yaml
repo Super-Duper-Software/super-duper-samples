@@ -3,3 +3,10 @@ packages:
   - worker
   - spike/*
 
+allowBuilds:
+  electron: true
+  esbuild: true
+
+onlyBuiltDependencies:
+  - electron
+  - esbuild

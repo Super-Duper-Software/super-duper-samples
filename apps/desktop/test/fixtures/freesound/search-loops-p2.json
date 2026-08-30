@@ -1,0 +1,94 @@
+{
+  "count": 6,
+  "next": null,
+  "previous": "https://freesound.org/apiv2/search/text/?query=loops&page=1&page_size=3",
+  "results": [
+    {
+      "id": 500004,
+      "name": "synth arp loop.wav",
+      "username": "modular",
+      "license": "http://creativecommons.org/licenses/by/3.0/",
+      "duration": 8.0,
+      "tags": ["synth", "arp", "loop", "sequence"],
+      "filesize": 1411200,
+      "type": "wav",
+      "samplerate": 44100.0,
+      "channels": 2,
+      "bitdepth": 16,
+      "num_downloads": 221,
+      "avg_rating": 3.8,
+      "created": "2021-01-05T12:00:00.000",
+      "url": "https://freesound.org/people/modular/sounds/500004/",
+      "previews": {
+        "preview-hq-mp3": "https://cdn.freesound.org/previews/500/500004_4-hq.mp3",
+        "preview-lq-mp3": "https://cdn.freesound.org/previews/500/500004_4-lq.mp3",
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/500/500004_4-hq.ogg",
+        "preview-lq-ogg": "https://cdn.freesound.org/previews/500/500004_4-lq.ogg"
+      },
+      "images": {
+        "waveform_m": "https://cdn.freesound.org/displays/500/500004_4_wave_M.png",
+        "waveform_l": "https://cdn.freesound.org/displays/500/500004_4_wave_L.png",
+        "spectral_m": "https://cdn.freesound.org/displays/500/500004_4_spec_M.jpg",
+        "spectral_l": "https://cdn.freesound.org/displays/500/500004_4_spec_L.jpg"
+      }
+    },
+    {
+      "id": 500005,
+      "name": "shaker loop.mp3",
+      "username": "perc",
+      "license": "http://creativecommons.org/licenses/by-nc-sa/3.0/",
+      "duration": 4.0,
+      "tags": ["shaker", "percussion", "loop"],
+      "filesize": 160000,
+      "type": "mp3",
+      "samplerate": 44100.0,
+      "channels": 2,
+      "bitdepth": 0,
+      "num_downloads": 97,
+      "avg_rating": 3.5,
+      "created": "2022-09-18T16:40:00.000",
+      "url": "https://freesound.org/people/perc/sounds/500005/",
+      "previews": {
+        "preview-hq-mp3": "https://cdn.freesound.org/previews/500/500005_5-hq.mp3",
+        "preview-lq-mp3": "https://cdn.freesound.org/previews/500/500005_5-lq.mp3",
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/500/500005_5-hq.ogg",
+        "preview-lq-ogg": "https://cdn.freesound.org/previews/500/500005_5-lq.ogg"
+      },
+      "images": {
+        "waveform_m": "https://cdn.freesound.org/displays/500/500005_5_wave_M.png",
+        "waveform_l": "https://cdn.freesound.org/displays/500/500005_5_wave_L.png",
+        "spectral_m": "https://cdn.freesound.org/displays/500/500005_5_spec_M.jpg",
+        "spectral_l": "https://cdn.freesound.org/displays/500/500005_5_spec_L.jpg"
+      }
+    },
+    {
+      "id": 500006,
+      "name": "tape hiss loop.flac",
+      "username": "dustandnoise",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "duration": 32.0,
+      "tags": ["tape", "hiss", "loop", "noise", "texture"],
+      "filesize": 5644800,
+      "type": "flac",
+      "samplerate": 44100.0,
+      "channels": 2,
+      "bitdepth": 16,
+      "num_downloads": 640,
+      "avg_rating": 4.1,
+      "created": "2017-05-02T11:11:11.000",
+      "url": "https://freesound.org/people/dustandnoise/sounds/500006/",
+      "previews": {
+        "preview-hq-mp3": "https://cdn.freesound.org/previews/500/500006_6-hq.mp3",
+        "preview-lq-mp3": "https://cdn.freesound.org/previews/500/500006_6-lq.mp3",
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/500/500006_6-hq.ogg",
+        "preview-lq-ogg": "https://cdn.freesound.org/previews/500/500006_6-lq.ogg"
+      },
+      "images": {
+        "waveform_m": "https://cdn.freesound.org/displays/500/500006_6_wave_M.png",
+        "waveform_l": "https://cdn.freesound.org/displays/500/500006_6_wave_L.png",
+        "spectral_m": "https://cdn.freesound.org/displays/500/500006_6_spec_M.jpg",
+        "spectral_l": "https://cdn.freesound.org/displays/500/500006_6_spec_L.jpg"
+      }
+    }
+  ]
+}

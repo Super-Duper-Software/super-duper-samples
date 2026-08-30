@@ -1,3 +1,36 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: theme('colors.neutral.950');
+    color: theme('colors.neutral.100');
+  }
+}
+
+/*
+ * Waveform recolouring: the Freesound PNG is used as a mask over a themed-colour
+ * element (see components/Waveform.tsx). Only `mask-image` is set inline — the
+ * size / repeat / position are static here so React never rewrites them and the
+ * compositor is not thrashed on scroll.
+ */
+.waveform-mask {
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-position: center;
+  mask-position: center;
+}

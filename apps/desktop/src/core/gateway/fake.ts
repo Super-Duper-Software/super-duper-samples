@@ -8,6 +8,13 @@ import type {
 export interface FakeFreesoundGatewayConfig {
   /** Recorded pages keyed by exact query string. */
   pages?: Record<string, RawSearchPage>
+  /**
+   * Multi-page fixtures keyed by exact query string: `pagedPages[query][n]` is
+   * the response for `page: n + 1`. A request past the end of the array yields an
+   * empty page carrying the same `count`, matching how Freesound behaves once the
+   * caller pages beyond the last result. Takes precedence over `pages`.
+   */
+  pagedPages?: Record<string, RawSearchPage[]>
   /** Page returned for any query with no entry in `pages`. */
   defaultPage?: RawSearchPage
   /** If set, every `search` call rejects with this error instead of returning. */
@@ -36,6 +43,13 @@ export class FakeFreesoundGateway implements FreesoundGateway {
     this.calls.push({ ...params })
 
     if (this.#config.failWith) throw this.#config.failWith
+
+    const paged = this.#config.pagedPages?.[params.query]
+    if (paged) {
+      const hit = paged[params.page - 1]
+      if (hit) return hit
+      return { count: paged[0]?.count ?? 0, next: null, previous: null, results: [] }
+    }
 
     const page =
       this.#config.pages?.[params.query] ?? this.#config.defaultPage

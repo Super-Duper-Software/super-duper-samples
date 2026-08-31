@@ -52,12 +52,16 @@ Next frontier: 18; 19 last.
   published name, not the user's custom name — attribution names the work),
   author, `licenseName` + `licenseUrl`, `freesoundUrl`, and the two obligation
   booleans. `summary` pre-counts total / attributionRequired / noAttribution /
-  nonCommercial. `text` is the pasteable plain-text document: NON-COMMERCIAL
-  section first (own list, prominent), then ATTRIBUTION REQUIRED (NC members
-  repeated here with an inline `[NON-COMMERCIAL]` marker), then NO ATTRIBUTION
-  REQUIRED (CC0). Empty Collection → a clear message, never a blank document.
-  `generatedAt` is rendered as a locale-independent `YYYY-MM-DD` so the snapshot
-  is byte-stable.
+  nonCommercial. `text` is **only the credit lines** — no document title, no
+  "generated on" date, no instructional prose — so it pastes straight into a
+  game's credits screen or a track description. Layout: the credit lines
+  (`"Title" by author — CC-BY`, then the Freesound URL; NC marked inline
+  `(non-commercial use only)`), then `CC0 (public domain, no attribution
+  required):` with the CC0 Sounds one-per-line, then `Non-commercial licenses —
+  not cleared for commercial use:` recapping the NC Sounds on their own (the
+  prominent separate flag the spec wants). Empty Collection → a one-line
+  message. `generatedAt` stays on the `Manifest` object for the panel's snapshot
+  note but is not in `text`.
 - **Core command API** (`src/core/index.ts`): `generateManifest(collectionId)` —
   looks up the name (`getCollectionName`, new in `db/collections.ts`; throws on
   unknown id), reads members with the same DB-only `readCollectionSounds` the

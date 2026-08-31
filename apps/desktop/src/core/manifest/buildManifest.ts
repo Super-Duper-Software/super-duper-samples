@@ -5,18 +5,21 @@
 // Nothing is stored; the value the caller holds is frozen in time and does not
 // change when the Collection is edited afterwards (CONTEXT.md § Attribution Manifest).
 //
-// The `text` field is the whole point — a plain-text credits document a user
-// pastes verbatim into a video description, a README or a client deliverable. It
-// must read correctly with no renderer: fixed-width friendly, ASCII rules, one
-// blank line between blocks.
+// The `text` field is the whole point — the actual credits a user pastes into a
+// game's credits screen, a track description or a video's notes. So it is JUST
+// the credit lines: no document title, no "generated on" date, no instructional
+// prose ("credit each of these…", "this project uses…"). Whatever chrome the
+// caller wants goes around it, not in it.
 //
-// Grouping mirrors the spec:
-//   1. NON-COMMERCIAL sounds first, flagged prominently and listed on their own,
-//      because building paid work on them is the expensive mistake.
-//   2. ATTRIBUTION REQUIRED — everything that is not CC0. NC sounds appear here
-//      too (they still need crediting) with an inline [NON-COMMERCIAL] marker.
-//   3. NO ATTRIBUTION REQUIRED — the CC0 material, kept separate so it does not
-//      pad the credits.
+// Grouping (still) mirrors the spec, using the shortest labels that read fine
+// pasted as-is:
+//   1. The credit lines — every Sound that needs crediting. An NC Sound is
+//      marked inline "(non-commercial use only)".
+//   2. `CC0 (public domain, no attribution required):` — the CC0 Sounds, so
+//      they do not pad the credits but are still accounted for.
+//   3. `Non-commercial licenses — not cleared for commercial use:` — the NC
+//      Sounds listed again on their own, the prominent separate flag the spec
+//      asks for. A user shipping paid work deletes this block after acting on it.
 
 import type { Sound } from '../types'
 import { requiresAttribution, restrictsCommercialUse } from './obligations'
@@ -73,27 +76,22 @@ export interface ManifestInput {
   sounds: readonly ManifestSourceSound[]
 }
 
-const RULE_WIDTH = 60
+const EMPTY_MESSAGE = 'This collection is empty — nothing to attribute yet.'
 
-/** `── LABEL ─────────` padded to `RULE_WIDTH`. */
-function heading(label: string): string {
-  const prefix = `── ${label} `
-  const pad = Math.max(3, RULE_WIDTH - prefix.length)
-  return prefix + '─'.repeat(pad)
+/** `"Title" by author — CC-BY` (+ inline NC note), then the Freesound URL. */
+function creditLines(e: ManifestEntry): string {
+  const nc = e.restrictsCommercialUse ? ' (non-commercial use only)' : ''
+  return `"${e.title}" by ${e.author} — ${e.licenseName}${nc}\n${e.freesoundUrl}`
 }
 
-function entryBlock(e: ManifestEntry, opts: { markNc: boolean } = { markNc: false }): string {
-  const ncMark = opts.markNc && e.restrictsCommercialUse ? '  [NON-COMMERCIAL]' : ''
-  return [
-    `  • "${e.title}" by ${e.author}${ncMark}`,
-    `    ${e.licenseName} — ${e.licenseUrl}`,
-    `    ${e.freesoundUrl}`,
-  ].join('\n')
+/** `"Title" by author — https://freesound.org/s/…` — one line, for CC0. */
+function creditLineShort(e: ManifestEntry): string {
+  return `"${e.title}" by ${e.author} — ${e.freesoundUrl}`
 }
 
-/** `2026-08-30` — locale-independent so the snapshot is byte-stable. */
-function isoDate(epochMs: number): string {
-  return new Date(epochMs).toISOString().slice(0, 10)
+/** `"Title" by author — CC-BY-NC — https://freesound.org/s/…` — the NC recap. */
+function creditLineWithLicense(e: ManifestEntry): string {
+  return `"${e.title}" by ${e.author} — ${e.licenseName} — ${e.freesoundUrl}`
 }
 
 function toEntry(s: ManifestSourceSound): ManifestEntry {
@@ -112,8 +110,6 @@ function toEntry(s: ManifestSourceSound): ManifestEntry {
 export function buildManifest(input: ManifestInput): Manifest {
   const { collectionId, collectionName, generatedAt } = input
   const entries = input.sounds.map(toEntry)
-  const title = `Attribution Manifest — "${input.collectionName}"`
-  const dateLine = `Generated ${isoDate(input.generatedAt)}`
 
   const attributed = entries.filter((e) => e.requiresAttribution)
   const cc0 = entries.filter((e) => !e.requiresAttribution)
@@ -126,62 +122,27 @@ export function buildManifest(input: ManifestInput): Manifest {
     nonCommercial: nc.length,
   }
 
-  // Empty Collection: a clear message, never a blank document.
+  const blocks: string[] = []
+
   if (entries.length === 0) {
-    const text = [
-      title,
-      dateLine,
-      '',
-      'This collection has no sounds, so there is nothing to attribute yet.',
-      'Add sounds to the collection and generate the manifest again.',
-    ].join('\n')
-    return { collectionId, collectionName, generatedAt, entries, summary, text }
-  }
-
-  const sn = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
-
-  const intro: string[] = [`This project uses ${sn(entries.length, 'sound', 'sounds')} from Freesound.`]
-  if (attributed.length > 0 && cc0.length > 0) {
-    intro.push(
-      `${sn(attributed.length, 'sound requires', 'sounds require')} attribution; ` +
-        `${sn(cc0.length, 'is', 'are')} CC0 and ${cc0.length === 1 ? 'needs' : 'need'} none.`,
-    )
-  } else if (cc0.length === 0) {
-    intro.push(`All of them require attribution.`)
-  } else {
-    intro.push(`All of them are CC0 — no attribution is required.`)
-  }
-  if (nc.length > 0) {
-    intro.push(
-      `${sn(nc.length, 'sound is', 'sounds are')} licensed for NON-COMMERCIAL use ` +
-        `only — see the warning below.`,
-    )
-  }
-
-  const blocks: string[] = [title, dateLine, '', intro.join('\n')]
-
-  if (nc.length > 0) {
-    blocks.push(
-      heading('NON-COMMERCIAL — NOT CLEARED FOR PAID WORK'),
-      '  These sounds forbid commercial use. Do NOT ship them in paid work.\n' +
-        "  Remove them, or get the author's written permission, before delivery.",
-      nc.map((e) => entryBlock(e)).join('\n\n'),
-    )
+    blocks.push(EMPTY_MESSAGE)
   }
 
   if (attributed.length > 0) {
-    blocks.push(
-      heading('ATTRIBUTION REQUIRED'),
-      '  Credit each of these wherever you publish the work.',
-      attributed.map((e) => entryBlock(e, { markNc: true })).join('\n\n'),
-    )
+    blocks.push(attributed.map(creditLines).join('\n\n'))
   }
 
   if (cc0.length > 0) {
     blocks.push(
-      heading('NO ATTRIBUTION REQUIRED (CC0)'),
-      '  Public-domain dedication — crediting is welcome but not required.',
-      cc0.map((e) => entryBlock(e)).join('\n\n'),
+      'CC0 (public domain, no attribution required):\n' +
+        cc0.map(creditLineShort).join('\n'),
+    )
+  }
+
+  if (nc.length > 0) {
+    blocks.push(
+      'Non-commercial licenses — not cleared for commercial use:\n' +
+        nc.map(creditLineWithLicense).join('\n'),
     )
   }
 

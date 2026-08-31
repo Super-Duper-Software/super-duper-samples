@@ -130,7 +130,28 @@ describe('license obligations', () => {
 // ───────────────────────── pure buildManifest ──────────────────────────
 
 describe('buildManifest (pure text renderer)', () => {
-  it('lists every Sound with title, author, License name + URL and Freesound URL', () => {
+  it('is just the credit lines — no document title, no "generated" date, no prose', () => {
+    const m = buildManifest({
+      collectionId: 1,
+      collectionName: 'Ferry Ad',
+      generatedAt: Date.parse('2026-08-30T12:00:00Z'),
+      sounds: [
+        fakeSound(10, { name: 'Rain on tin', username: 'fieldrec', license: LICENSES.by }),
+      ],
+    })
+
+    expect(m.text).toBe(
+      '"Rain on tin" by fieldrec — CC-BY\nhttps://freesound.org/s/10/',
+    )
+    // none of the removed chrome
+    expect(m.text).not.toMatch(/manifest/i)
+    expect(m.text).not.toMatch(/generated/i)
+    expect(m.text).not.toMatch(/this project uses/i)
+    expect(m.text).not.toMatch(/credit each/i)
+    expect(m.text).not.toContain('Ferry Ad') // the collection name is not in the payload
+  })
+
+  it('lists every Sound with title, author, License name and Freesound URL', () => {
     const m = buildManifest({
       collectionId: 1,
       collectionName: 'Ferry Ad',
@@ -153,13 +174,9 @@ describe('buildManifest (pure text renderer)', () => {
       restrictsCommercialUse: false,
     })
 
-    // every field shows up in the pasteable text
-    expect(m.text).toContain('Attribution Manifest — "Ferry Ad"')
-    expect(m.text).toContain('Generated 2026-08-30')
-    expect(m.text).toContain('"Rain on tin" by fieldrec')
-    expect(m.text).toContain('CC-BY — http://creativecommons.org/licenses/by/4.0/')
+    expect(m.text).toContain('"Rain on tin" by fieldrec — CC-BY')
     expect(m.text).toContain('https://freesound.org/s/10/')
-    expect(m.text).toContain('https://freesound.org/s/11/')
+    expect(m.text).toContain('"Room tone" by quiet — https://freesound.org/s/11/')
   })
 
   it('separates attribution-required Sounds from CC0', () => {
@@ -168,7 +185,7 @@ describe('buildManifest (pure text renderer)', () => {
       collectionName: 'Mix',
       generatedAt: Date.now(),
       sounds: [
-        fakeSound(1, { license: LICENSES.by }),
+        fakeSound(1, { name: 'Needs credit', license: LICENSES.by }),
         fakeSound(2, { license: LICENSES.cc0 }),
         fakeSound(3, { license: LICENSES.cc0 }),
       ],
@@ -180,13 +197,13 @@ describe('buildManifest (pure text renderer)', () => {
       noAttribution: 2,
       nonCommercial: 0,
     })
-    const attrIdx = m.text.indexOf('ATTRIBUTION REQUIRED')
-    const cc0Idx = m.text.indexOf('NO ATTRIBUTION REQUIRED (CC0)')
-    expect(attrIdx).toBeGreaterThan(-1)
-    expect(cc0Idx).toBeGreaterThan(attrIdx) // CC0 section comes after, on its own
+    const creditIdx = m.text.indexOf('"Needs credit" by')
+    const cc0Idx = m.text.indexOf('CC0 (public domain, no attribution required):')
+    expect(creditIdx).toBeGreaterThan(-1)
+    expect(cc0Idx).toBeGreaterThan(creditIdx) // CC0 listed after, on its own
   })
 
-  it('flags non-commercial Sounds prominently and lists them apart', () => {
+  it('flags non-commercial Sounds inline and lists them apart', () => {
     const m = buildManifest({
       collectionId: 1,
       collectionName: 'Paid job',
@@ -198,13 +215,19 @@ describe('buildManifest (pure text renderer)', () => {
     })
 
     expect(m.summary.nonCommercial).toBe(1)
-    // its own section, above the ordinary credits
-    const ncIdx = m.text.indexOf('NON-COMMERCIAL — NOT CLEARED FOR PAID WORK')
-    const attrIdx = m.text.indexOf('ATTRIBUTION REQUIRED')
-    expect(ncIdx).toBeGreaterThan(-1)
-    expect(ncIdx).toBeLessThan(attrIdx)
-    // inline marker where it also appears under attribution-required
-    expect(m.text).toContain('"Thunder" by sky  [NON-COMMERCIAL]')
+    // inline flag in the credit line
+    expect(m.text).toContain(
+      '"Thunder" by sky — CC-BY-NC (non-commercial use only)',
+    )
+    // and a dedicated block, after the ordinary credits
+    const ncIdx = m.text.indexOf(
+      'Non-commercial licenses — not cleared for commercial use:',
+    )
+    const creditIdx = m.text.indexOf('"Thunder" by sky — CC-BY-NC (non-commercial')
+    expect(ncIdx).toBeGreaterThan(creditIdx)
+    expect(m.text).toContain(
+      '"Thunder" by sky — CC-BY-NC — https://freesound.org/s/1/',
+    )
   })
 
   it('handles an empty Collection with a message, not a blank document', () => {
@@ -216,9 +239,7 @@ describe('buildManifest (pure text renderer)', () => {
     })
     expect(m.entries).toEqual([])
     expect(m.summary.total).toBe(0)
-    expect(m.text).toContain('Attribution Manifest — "Nothing yet"')
-    expect(m.text).toMatch(/no sounds/i)
-    expect(m.text.trim().length).toBeGreaterThan(40)
+    expect(m.text).toMatch(/nothing to attribute/i)
   })
 })
 
@@ -297,8 +318,8 @@ describe('core.generateManifest', () => {
       noAttribution: 1,
       nonCommercial: 1,
     })
-    expect(m.text).toMatch(/NON-COMMERCIAL/)
-    expect(m.text).toMatch(/NO ATTRIBUTION REQUIRED \(CC0\)/)
+    expect(m.text).toMatch(/non-commercial/i)
+    expect(m.text).toContain('CC0 (public domain, no attribution required):')
   })
 
   it('generates a clear message for an empty Collection', async () => {
@@ -306,6 +327,6 @@ describe('core.generateManifest', () => {
     const c = core.createCollection('Empty')
     const m = core.generateManifest(c.id)
     expect(m.entries).toEqual([])
-    expect(m.text).toMatch(/no sounds/i)
+    expect(m.text).toMatch(/nothing to attribute/i)
   })
 })

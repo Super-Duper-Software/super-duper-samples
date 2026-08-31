@@ -3,7 +3,8 @@
 Tracer-bullet backlog: `.scratch/freesound-desktop-v1/`. Ticket 09 (the milestone) is
 built and its macOS drag-out was manually verified by the user on 2026-08-30. Tickets 10
 (sidecars + LRU eviction), 11 (Library save / view / delete), 15 (search filters +
-sort) and 12 (computed peaks + canvas waveform) are done. Next frontier: 13, 14, 16, 18.
+sort), 12 (computed peaks + canvas waveform) and 13 (library organisation) are
+done. Next frontier: 14, 16, 18; then 17 after 16; 19 last.
 
 | # | Ticket | State | Commit |
 |---|---|---|---|
@@ -20,13 +21,170 @@ sort) and 12 (computed peaks + canvas waveform) are done. Next frontier: 13, 14,
 | 11 | Library: save, view, delete | **done** — code + tests (`test/library.test.ts`) | `6406a57` |
 | 15 | Search filters and sort | **done** — code + tests (`test/search-filters.test.ts`) | `eb78025` |
 | 12 | Computed peaks + canvas waveform | **done** — code + tests (`test/peaks.test.ts`, `test/waveform-peaks.test.ts`) | `9a9febc` |
-| 13, 14, 16–19 | Overlays, sidecar rebuild, collections, manifest, packaging | not started | — |
+| 13 | Library organisation | **done** — code + tests (`test/library-organisation.test.ts`) | `8eea6e1` |
+| 14, 16–19 | Sidecar rebuild, collections, manifest, overlays, packaging | not started | — |
 
 ## Test counts
 
-- `apps/desktop`: 160 vitest tests (+21 for ticket 12), `tsc --noEmit` clean, `electron-vite build` clean.
+- `apps/desktop`: 171 vitest tests (+11 for ticket 13), `tsc --noEmit` clean, `electron-vite build` clean.
 - `worker`: 30 vitest tests, `tsc --noEmit` clean.
 - `spike/drag-out`: syntax-checked only (throwaway).
+
+## Ticket 13 — what landed
+
+- **Overlay storage — no migration.** `library_entries.custom_name` /
+  `custom_tags` were created by **m001** (NULL, explicitly for this ticket).
+  `MIGRATIONS` stays `[m001, m002]`. `src/core/db/library.ts` gains:
+  - `LibraryOverlay { soundId, customName, customTags, savedAt }` +
+    `rowToOverlay` — `custom_tags` is a JSON array serialised exactly like
+    `sounds.tags`; a corrupt blob degrades to `[]`, never throws.
+  - `getLibraryOverlay` / `listLibraryOverlays(db, dir)` (ordered by
+    `saved_at`, mirrors `listLibrarySoundIds`).
+  - `setCustomName(db, id, string | null)` — writes ONLY
+    `library_entries.custom_name`; the `sounds` row (author, License,
+    Freesound name + URL) is never touched, so a rename cannot sever the
+    link to the original.
+  - `setCustomTags(db, id, tags)` — replaces the list; `[]` stored as NULL.
+- **New domain types** (`src/core/types.ts`, exported):
+  - `LibrarySound extends Sound` — adds `customName: string | null`,
+    `effectiveName` (`customName ?? name` — what a Drag-Out delivers),
+    `customTags: string[]`, `savedAt: number`.
+  - `LibraryFilter` — all optional: `tags[]`, `license` (reuses
+    `LicenseFilter`), `durationMin`/`durationMax`, `fileType`, `text`.
+- **Pure filter predicate** (`src/core/library/libraryFilter.ts`, no I/O,
+  unit-tested directly):
+  - `matchesLibraryFilter(sound, filter)` — dimensions compose with **AND**.
+    `tags` matches a Sound carrying **ANY** listed tag, inherited **or**
+    custom, case-insensitively. `text` is a case-insensitive substring
+    match across custom name + Freesound name + author + every tag.
+    `fileType` is a case-insensitive exact match on `sound.type`. Duration
+    is an inclusive range.
+  - `LICENSE_FILTER_NAMES` maps each `LicenseFilter` to the
+    `sounds.license_name` values it admits; `'commercial'` →
+    `['CC0', 'CC-BY']` — the same "usable in commercial work" inclusion
+    semantics ticket 15 established, applied to the local `license_name`
+    labels from `gateway/mapRawSound`.
+  - `normaliseTags` (trim / de-dupe case-insensitively / drop empties),
+    `hasLibraryFilter`, `normaliseLibraryFilter` (mirrors ticket 15's
+    `normalizeFilter` — an all-empty filter round-trips as `{}`).
+- **Core command API** (`src/core/index.ts`):
+  - `listLibrary(opts?)` now returns `LibrarySound[]` — a new module-level
+    `readLibrary(db, dir, filter?)` reads `listLibraryOverlays` +
+    `getSoundsByIds` and merges them (a lost `sounds` row is skipped, not
+    thrown). Still **zero gateway calls**.
+  - `filterLibrary(filter, opts?)` — `readLibrary` with the predicate
+    applied in-process. The Library is a small per-device table, so a
+    linear pass after one indexed read is instant; **no network request,
+    ever** (a test asserts `gateway.searchCallCount === 0` across every
+    dimension).
+  - `setCustomName(id, name | null)` / `setLibraryTags(id, tags)` — both
+    guard with `hasLibraryEntry` and **throw** for a Sound not in the
+    Library; `setCustomName` trims and treats `''` as "clear".
+  - `getLibraryFilter()` / `setLibraryFilter(filter)` — JSON blob in
+    `app_meta` under `library_filter`, exactly the ticket-15
+    `getSearchPrefs`/`setSearchPrefs` pattern. `setLibraryFilter` runs no
+    query.
+- **Drag-out routes the custom name** (`src/core/staging/dragController.ts`):
+  `startDrag` now computes `effectiveDragName(sound)` — the custom Library
+  name when set (non-blank), else `sound.name` — and feeds it through the
+  **unchanged** `sanitiseStem` (illegal-char stripping) + ` (2)`/` (3)`
+  collision disambiguation from ticket 09. A custom name with unsafe
+  characters is sanitised identically; re-dragging the same renamed
+  Original still reuses its one hardlink.
+- **preload**: `filterLibrary` / `setCustomName` / `setLibraryTags` /
+  `getLibraryFilter` / `setLibraryFilter` on the `core:invoke` passthrough
+  (no `src/main` change); `LibrarySound` / `LibraryFilter` re-exported;
+  `listLibrary` return type widened to `LibrarySound[]`.
+- **Renderer**:
+  - `src/renderer/store/useLibraryFilter.ts` — Zustand mirror of the
+    persisted Library filter (same shape as `useSearchPrefs`): `load()` on
+    startup, every mutation writes through to `core.setLibraryFilter`.
+    `addTag` / `removeTag` / `setFilter` / `removeFilter` / `clearFilter`,
+    plus `pruneLibraryFilter` / `hasLibraryFilter` helpers.
+  - `src/renderer/components/LibraryFilterBar.tsx` — free-text box, a
+    tag-add input (Enter / comma / blur commits), duration min/max, file
+    type + license `<select>`s (reusing `filterLabels` option lists), then
+    a row of removable chips (one per tag, plus text / duration / type /
+    license) and a "Clear all". Mounted under the Library header in
+    `App.tsx`.
+  - `src/renderer/hooks/useLibraryView.ts` — takes the filter, calls
+    `window.core.filterLibrary(filter, { sort: 'savedAt', dir })`,
+    re-fetches on tab-activate, sort-dir change, `useLibrary.revision`
+    (save/remove/**rename/retag**) and a real filter change
+    (`JSON.stringify` key). Returns `LibrarySound[]`.
+  - `src/renderer/store/useLibrary.ts` — `rename(id, name | null)` /
+    `setTags(id, tags)` actions that call the core then bump `revision`.
+  - `src/renderer/components/ResultRow.tsx` — the `variant="library"` row
+    shows `effectiveName` (with an "aka <Freesound name>" hint when
+    renamed), a **Rename** button (`window.prompt`, blank = revert to the
+    Freesound name — matching the ticket-11 `window.confirm` precedent),
+    the user's own tags as removable **emerald** chips visually distinct
+    from the inherited Freesound tags (muted grey text), and a `+ tag`
+    button. Search rows are unchanged.
+  - `src/renderer/App.tsx` — loads the Library filter once on mount, mounts
+    `<LibraryFilterBar/>`, and shows a "No Library sounds match this
+    filter" panel with a Clear-all button, distinct from the empty-Library
+    message.
+- **Tests** (`test/library-organisation.test.ts`, 11): a custom name flows
+  through to the exact path handed to `DragHost` (basename = sanitised
+  custom name, still the Original's bytes); clearing it falls back to the
+  Freesound name; unsafe characters in a custom name are sanitised and the
+  ` (2)` scheme stays reserved for real collisions (idempotent re-drag);
+  renaming + retagging leaves `sounds` (author / License / URL / Freesound
+  name) untouched while `customName` / `customTags` take effect; inherited
+  and own tags coexist; `setCustomName` / `setLibraryTags` throw off-Library;
+  custom name + tags survive a `createCore` restart; `filterLibrary` returns
+  the right rows for file format, License (incl. `commercial` = CC0+CC-BY),
+  duration range, tag (inherited + custom, ANY-of), free text (custom name /
+  Freesound name / author / tag) and every combination — with
+  `gateway.searchCallCount === 0` throughout; the persisted filter
+  round-trips through a fresh core; `setLibraryFilter` runs no search; the
+  pure `matchesLibraryFilter` predicate.
+
+### Deferrals / judgement calls (ticket 13)
+
+- **No migration.** `library_entries.custom_name` / `custom_tags` exist
+  from m001 (NULL until now, by design). `app_meta` (m002) already backs
+  the `library_filter` blob. `MIGRATIONS` stays `[m001, m002]`.
+- **`filterLibrary` filters in-process after one full-table read, not in
+  SQL.** The tag / free-text dimensions span a JSON column and a
+  `library_entries`↔`sounds` join; a JS predicate over the Library (a
+  small, per-device table) is simpler, has less bug surface, and is still
+  "served from the database with no network request and feels instant" —
+  which is what the ticket asks. If a Library ever grows to many thousands
+  of rows, push the cheap dimensions (duration / type / license via
+  `license_name`) into a `WHERE` and keep the predicate for tags + text.
+- **License filter matches the local `license_name` label**
+  (`'CC0'` / `'CC-BY'` / …) from `gateway/mapRawSound`, not the Freesound
+  Solr license string used by the ticket-15 *search* filter. Same
+  `LicenseFilter` type and the same `'commercial'` = CC0 + CC-BY
+  inclusion; the two just resolve against different stored representations.
+- **Rename / add-tag use `window.prompt`.** Consistent with ticket 11's
+  `window.confirm` for delete ("enough for v1"); an inline editor is a
+  clean follow-up and needs no core change.
+- **`setLibraryTags` replaces the whole custom-tag list** (the core
+  primitive); the renderer computes add/remove against the current list.
+  Keeps the command surface minimal and the DB write a single UPDATE.
+- **No renderer component tests** (spec 0001: none exist). The filter bar,
+  the rename prompt and the chip styling need the Electron GUI — see
+  "Needs manual verification".
+- **`test/eviction.test.ts` pre-existing flake** (ticket 10, timing-based)
+  still trips occasionally under full-suite CPU contention — green in
+  isolation (5/5) and across repeated full runs (3/3 after the new file
+  landed). The 11 new tests add no timers that race: the only `sleep`s
+  just space out `saved_at` for a deterministic sort order.
+
+### Needs manual verification (ticket 13)
+
+- In the GUI: rename a Library Sound, drag it into a DAW, confirm the
+  region arrives under the custom name; clear the name and confirm it
+  reverts to the Freesound name on the next drag.
+- Add / remove your own tags on a Library row and confirm they read
+  distinctly from the inherited Freesound tags.
+- Exercise every Library filter control (tag, license, duration, file
+  type, free text) and combinations; confirm results update instantly with
+  no network activity, the active-filter chips are visible, and "Clear
+  all" empties them.
 
 ## Ticket 12 — what landed
 

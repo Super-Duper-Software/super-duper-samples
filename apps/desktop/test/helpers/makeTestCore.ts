@@ -7,6 +7,7 @@ import {
   createCore,
   type Core,
   type DragHost,
+  type LogSink,
   type PeakRunner,
   type PeaksStatusChange,
   type RebuildProgress,
@@ -109,6 +110,8 @@ export async function makeTestCore(
     rebuildRunner?: RebuildRunner
     rebuildWorkerPath?: string
     onRebuildProgress?: (progress: RebuildProgress) => void
+    /** Ticket 18 — capture the app log in memory so tests can assert on it. */
+    logSink?: LogSink
   } = {},
 ): Promise<TestCore> {
   const dataDir =
@@ -138,6 +141,7 @@ export async function makeTestCore(
     rebuildRunner: opts.rebuildRunner,
     rebuildWorkerPath: opts.rebuildWorkerPath,
     onRebuildProgress: opts.onRebuildProgress,
+    logSink: opts.logSink,
   })
   return {
     core,

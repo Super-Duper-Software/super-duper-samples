@@ -10,6 +10,10 @@ import { TransportBar } from './components/TransportBar'
 import { CollectionsPanel } from './components/CollectionsPanel'
 import { ManifestPanel } from './components/ManifestPanel'
 import { AddToCollectionBar } from './components/AddToCollectionBar'
+import { NotificationHost } from './components/NotificationHost'
+import { ShortcutsDialog } from './components/ShortcutsDialog'
+import { LogViewerDialog } from './components/LogViewerDialog'
+import { useNotifications } from './store/useNotifications'
 import { useSearch } from './hooks/useSearch'
 import { useLibraryView } from './hooks/useLibraryView'
 import { useCollectionView } from './hooks/useCollectionView'
@@ -31,8 +35,56 @@ export default function App() {
     null,
   )
   const [showManifest, setShowManifest] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const [showLogs, setShowLogs] = useState(false)
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Ticket 18 — resume where the user left off. `uiReady` gates the first search
+  // so a restored query does not flash an empty "search" state first, matching
+  // how `prefsReady` gates the sort/filter restore.
+  const [uiReady, setUiReady] = useState(false)
+  const restore = useRef<{
+    openCollectionId?: number | null
+    selectedSoundId?: number | null
+  }>({})
+  useEffect(() => {
+    let cancelled = false
+    void window.core
+      .getUiState()
+      .then((s) => {
+        if (cancelled) return
+        if (s.view) setView(s.view as View)
+        if (typeof s.query === 'string') setQuery(s.query)
+        restore.current = {
+          openCollectionId: s.openCollectionId ?? null,
+          selectedSoundId: s.selectedSoundId ?? null,
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setUiReady(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Persist the shell state (debounced — `view`/`query`/open collection/selection
+  // all funnel here). `setUiState` merges, so this never disturbs `window`.
+  const selectedSoundId = useResultSelection((s) => s.selectedId)
+  useEffect(() => {
+    if (!uiReady) return
+    const t = setTimeout(() => {
+      void window.core.setUiState({
+        view,
+        query,
+        openCollectionId: openCollection?.id ?? null,
+        selectedSoundId: selectedSoundId ?? null,
+      })
+    }, 400)
+    return () => clearTimeout(t)
+  }, [uiReady, view, query, openCollection, selectedSoundId])
 
   const sort = useSearchPrefs((s) => s.sort)
   const filter = useSearchPrefs((s) => s.filter)
@@ -48,7 +100,7 @@ export default function App() {
   }, [])
 
   const { status, error, sounds, totalCount, hasMore, loadingMore, loadMore } =
-    useSearch(query, sort, filter, prefsReady)
+    useSearch(query, sort, filter, prefsReady && uiReady)
   const library = useLibraryView(view === 'library', libraryFilter)
   const libraryFiltered = hasLibraryFilter(libraryFilter)
 
@@ -65,6 +117,68 @@ export default function App() {
     else if (fresh.name !== openCollection.name || fresh.count !== openCollection.count)
       setOpenCollection(fresh)
   }, [collectionsList, openCollection, collectionsRevision])
+
+  // Ticket 18 — restore the Collection that was open last session, once the
+  // list has loaded. One-shot: the restore ref is cleared after the attempt.
+  useEffect(() => {
+    if (!uiReady) return
+    const want = restore.current.openCollectionId
+    if (want == null) return
+    if (collectionsList.length === 0) return
+    const match = collectionsList.find((c) => c.id === want)
+    if (match) setOpenCollection(match)
+    restore.current.openCollectionId = null
+  }, [uiReady, collectionsList])
+
+  // Ticket 18 — put the row cursor back on the sound it was on. Best-effort:
+  // attempted once per view's list as soon as that sound is present.
+  const restoreListSounds =
+    view === 'search'
+      ? sounds
+      : view === 'library'
+        ? library.sounds
+        : collection.sounds
+  useEffect(() => {
+    const want = restore.current.selectedSoundId
+    if (want == null) return
+    const idx = restoreListSounds.findIndex((s) => s.id === want)
+    if (idx >= 0) {
+      useResultSelection.getState().select(idx, want)
+      restore.current.selectedSoundId = null
+    }
+  }, [restoreListSounds])
+
+  // Ticket 18 — a search failure is not only inline text; it is also a
+  // notification, so it reads the same as every other failure in the app and
+  // lands in the log.
+  useEffect(() => {
+    if (status !== 'error' || !error) return
+    useNotifications.getState().push(
+      {
+        kind:
+          error.kind === 'throttled'
+            ? 'throttled'
+            : error.kind === 'network'
+              ? 'network'
+              : 'download',
+        title:
+          error.kind === 'throttled'
+            ? 'Freesound rate limit hit'
+            : error.kind === 'network'
+              ? 'No connection to Freesound'
+              : 'Search failed',
+        detail:
+          error.kind === 'throttled'
+            ? `Too many requests. Try again in about ${error.retryAfter ?? 60}s.`
+            : error.kind === 'network'
+              ? 'Check your internet connection, then search again. Your Library still works offline.'
+              : 'Freesound returned an error. This is on their side — try again later.',
+        actionable: error.kind !== 'generic',
+        retryAfter: error.retryAfter,
+      },
+      'search',
+    )
+  }, [status, error])
 
   const removeFromOpenCollection = useCallback(
     (sound: Sound) => {
@@ -103,6 +217,25 @@ export default function App() {
       useMultiSelect.getState().set(sound.id, false)
       void useLibrary.getState().remove(sound.id)
     }
+  }, [])
+
+  // Ticket 18 — `?` opens the shortcut reference from anywhere except while
+  // typing into a field. Esc closes whichever dialog is open.
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      const el = e.target as HTMLElement | null
+      const typing =
+        !!el &&
+        (el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.isContentEditable)
+      if (e.key === '?' && !typing) {
+        e.preventDefault()
+        setShowShortcuts((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   const showResults = view === 'search' && status === 'ok' && sounds.length > 0
@@ -162,6 +295,15 @@ export default function App() {
                 </span>
               )}
             <AuthBar />
+            <button
+              type="button"
+              onClick={() => setShowShortcuts(true)}
+              title="Keyboard shortcuts (?)"
+              aria-label="Keyboard shortcuts"
+              className="rounded border border-neutral-700 px-1.5 py-0.5 text-xs text-neutral-400 hover:border-neutral-500 hover:text-neutral-100"
+            >
+              ?
+            </button>
           </div>
         </div>
 
@@ -444,6 +586,18 @@ export default function App() {
       </section>
 
       <TransportBar />
+
+      <NotificationHost />
+      {showShortcuts && (
+        <ShortcutsDialog
+          onClose={() => setShowShortcuts(false)}
+          onOpenLogs={() => {
+            setShowShortcuts(false)
+            setShowLogs(true)
+          }}
+        />
+      )}
+      {showLogs && <LogViewerDialog onClose={() => setShowLogs(false)} />}
     </main>
   )
 }

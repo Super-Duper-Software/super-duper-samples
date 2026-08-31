@@ -26,7 +26,7 @@ import type {
   SearchResult,
   Sound,
 } from '../core/types'
-import type { SortDir } from '../core'
+import type { LogLevel, SortDir, UiState } from '../core'
 
 export type {
   CollectionRef,
@@ -43,8 +43,11 @@ export type {
 
 export type {
   AuthState,
+  ClassifiedError,
   DiskUsage,
+  ErrorKind,
   EvictionOutcome,
+  LogLevel,
   Manifest,
   ManifestEntry,
   ManifestSummary,
@@ -52,9 +55,12 @@ export type {
   PeaksStatusChange,
   RebuildProgress,
   RebuildReport,
+  ShellView,
   StagingConsent,
   StagingStatus,
   StagingStatusChange,
+  UiState,
+  WindowBounds,
 } from '../core'
 
 /**
@@ -91,6 +97,24 @@ export interface CoreApi {
   getSearchPrefs(): Promise<SearchPrefs>
   /** Persist the active sort + filter state. Does not run a search. */
   setSearchPrefs(prefs: SearchPrefs): Promise<SearchPrefs>
+
+  // ---- shell polish (ticket 18) ----------------------------------------
+  /** The persisted shell state — window bounds + last view / search / selection. */
+  getUiState(): Promise<UiState>
+  /** Persist a patch of shell state. Merges onto what is stored; runs no query. */
+  setUiState(patch: Partial<UiState>): Promise<UiState>
+  /** Path to the app's own log file, or `null` when logging is not wired. */
+  getLogPath(): Promise<string | null>
+  /** The most recent lines of the app log, oldest first (default 500). */
+  readLog(opts?: { maxLines?: number }): Promise<string[]>
+  /** Append a line to the app log — the renderer calls this for every surfaced error. */
+  log(
+    level: LogLevel,
+    message: string,
+    meta?: Record<string, unknown>,
+  ): Promise<void>
+  /** Reveal the log file in Finder / Explorer (main-process `shell`). */
+  showLogs(): Promise<void>
 
   // ---- auth (ticket 07) --------------------------------------------------
   /** Start interactive sign-in via the system browser. Resolves to the new state. */
@@ -310,6 +334,16 @@ const api: CoreApi = {
   getSearchPrefs: () => ipcRenderer.invoke('core:invoke', 'getSearchPrefs', []),
   setSearchPrefs: (prefs) =>
     ipcRenderer.invoke('core:invoke', 'setSearchPrefs', [prefs]),
+
+  getUiState: () => ipcRenderer.invoke('core:invoke', 'getUiState', []),
+  setUiState: (patch) =>
+    ipcRenderer.invoke('core:invoke', 'setUiState', [patch]),
+  getLogPath: () => ipcRenderer.invoke('core:invoke', 'getLogPath', []),
+  readLog: (opts) => ipcRenderer.invoke('core:invoke', 'readLog', [opts]),
+  log: (level, message, meta) =>
+    ipcRenderer.invoke('core:invoke', 'log', [level, message, meta]),
+  // Named channel: needs Electron `shell`, which cannot live in core.
+  showLogs: () => ipcRenderer.invoke('core:showLogs'),
 
   signIn: () => ipcRenderer.invoke('core:invoke', 'signIn', []),
   signOut: () => ipcRenderer.invoke('core:invoke', 'signOut', []),

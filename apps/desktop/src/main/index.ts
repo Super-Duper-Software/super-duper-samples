@@ -6,16 +6,20 @@
 import { existsSync, renameSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
 import {
   assessStartup,
   createCore,
+  createFileLogSink,
   createRealScheduler,
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
   type AuthState,
   type Core,
   type PeaksStatusChange,
   type RebuildProgress,
   type StagingStatusChange,
+  type WindowBounds,
 } from '../core'
 import { HttpFreesoundGateway } from '../core/gateway/http'
 import { createElectronAuthPlatform } from './authPlatform'
@@ -46,16 +50,96 @@ const REBUILD_OFFER_CHANNEL = 'core:event:rebuildOffer'
 /** Channel the main process pushes sidecar-scan progress on during a rebuild (ticket 14). */
 const REBUILD_PROGRESS_CHANNEL = 'core:event:rebuildProgress'
 
-function createWindow(): void {
+const DEFAULT_WINDOW = { width: 960, height: 720 }
+
+/**
+ * Clamp stored bounds to something visible: at least the minimum size, and with
+ * the top-left corner on some currently-attached display (a monitor that was
+ * unplugged since last run must not strand the window offscreen).
+ */
+function usableBounds(stored: WindowBounds | undefined): WindowBounds {
+  if (!stored) return { ...DEFAULT_WINDOW }
+  const width = Math.max(MIN_WINDOW_WIDTH, stored.width)
+  const height = Math.max(MIN_WINDOW_HEIGHT, stored.height)
+  if (stored.x === undefined || stored.y === undefined) {
+    return { width, height, maximized: stored.maximized }
+  }
+  const onScreen = screen.getAllDisplays().some((d) => {
+    const wa = d.workArea
+    return (
+      stored.x! >= wa.x - 8 &&
+      stored.y! >= wa.y - 8 &&
+      stored.x! < wa.x + wa.width - 40 &&
+      stored.y! < wa.y + wa.height - 40
+    )
+  })
+  return onScreen
+    ? { width, height, x: stored.x, y: stored.y, maximized: stored.maximized }
+    : { width, height, maximized: stored.maximized }
+}
+
+function createWindow(core: Core): void {
+  const bounds = usableBounds(core.getUiState().window)
+
   const win = new BrowserWindow({
-    width: 960,
-    height: 720,
+    width: bounds.width,
+    height: bounds.height,
+    ...(bounds.x !== undefined && bounds.y !== undefined
+      ? { x: bounds.x, y: bounds.y }
+      : {}),
+    // Ticket 18 — no white flash and no blank frame while the renderer boots:
+    // paint on the app's own dark ground and only reveal the window once React
+    // has something to show.
+    show: false,
+    backgroundColor: '#0a0a0a',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
+  })
+
+  if (bounds.maximized) win.maximize()
+  win.once('ready-to-show', () => win.show())
+
+  // Persist size/position as the user leaves them. Debounced so a drag-resize
+  // does not write on every frame; `setUiState` merges, so this only ever
+  // touches the `window` key.
+  let saveTimer: NodeJS.Timeout | undefined
+  const persistBounds = (): void => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      if (win.isDestroyed()) return
+      const b = win.getBounds()
+      core.setUiState({
+        window: {
+          width: b.width,
+          height: b.height,
+          x: b.x,
+          y: b.y,
+          maximized: win.isMaximized(),
+        },
+      })
+    }, 400)
+  }
+  win.on('resize', persistBounds)
+  win.on('move', persistBounds)
+  win.on('maximize', persistBounds)
+  win.on('unmaximize', persistBounds)
+  win.on('close', () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    if (win.isDestroyed()) return
+    const b = win.getBounds()
+    core.setUiState({
+      window: {
+        width: b.width,
+        height: b.height,
+        x: b.x,
+        y: b.y,
+        maximized: win.isMaximized(),
+      },
+    })
   })
 
   const devUrl = process.env['ELECTRON_RENDERER_URL']
@@ -82,6 +166,14 @@ function registerIpc(core: Core): void {
   ipcMain.handle('core:openExternal', (_event, soundId: number) => {
     const url = core.getFreesoundUrl(soundId)
     if (url) return shell.openExternal(url)
+  })
+
+  // Ticket 18 — reveal the app's own log file so a user filing a bug can attach
+  // it. `shell` cannot live in core; the core supplies only the path.
+  ipcMain.handle('core:showLogs', () => {
+    const path = core.getLogPath()
+    if (path && existsSync(path)) shell.showItemInFolder(path)
+    else void shell.openPath(join(app.getPath('userData'), 'logs'))
   })
 
   // Ticket 17 — write an Attribution Manifest to a file the user picks. The core
@@ -173,6 +265,9 @@ void app.whenReady().then(() => {
     gateway,
     dataDir,
     dbPath,
+    // Ticket 18 — the app's own log, under <userData>/logs/app.log. Every error
+    // the renderer surfaces is also written here for bug reports.
+    logSink: createFileLogSink(join(dataDir, 'logs')),
     authPlatform: createElectronAuthPlatform(),
     scheduler: createRealScheduler(),
     clientId: config.freesoundClientId,
@@ -213,10 +308,10 @@ void app.whenReady().then(() => {
     })
   })
 
-  createWindow()
+  createWindow(core)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(core)
   })
 
   app.on('will-quit', () => core.close())

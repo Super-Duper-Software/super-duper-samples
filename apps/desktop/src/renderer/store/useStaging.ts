@@ -8,6 +8,7 @@
 
 import { create } from 'zustand'
 import type { StagingStatus } from '../../preload'
+import { useNotifications } from './useNotifications'
 
 export type { StagingStatus } from '../../preload'
 
@@ -40,9 +41,26 @@ export const useStaging = create<StagingState>((set, get) => ({
 
 // Mirror the core's pushes. Wired once, at module load.
 try {
-  window.core?.onStagingStatus?.((change) =>
-    useStaging.getState().note(change.soundId, change.status),
-  )
+  window.core?.onStagingStatus?.((change) => {
+    const prev = useStaging.getState().byId[change.soundId]
+    useStaging.getState().note(change.soundId, change.status)
+    // Ticket 18 — a download that fails is surfaced, not just marked on the row:
+    // a "downloading" chip that silently turns to "failed" is exactly the
+    // slow-vs-broken ambiguity this ticket removes.
+    if (change.status === 'failed' && prev !== 'failed') {
+      useNotifications.getState().push(
+        {
+          kind: 'download',
+          title: 'Download failed',
+          detail:
+            'A sound’s Original could not be downloaded. Check your connection or sign-in, then play it again to retry.',
+          actionable: true,
+          retryAfter: null,
+        },
+        'staging',
+      )
+    }
+  })
 } catch {
   /* no bridge (tests) */
 }

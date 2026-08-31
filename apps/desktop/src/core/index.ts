@@ -5,6 +5,8 @@
 // contextBridge preload surface forwards those methods verbatim — the core's
 // command API *is* the IPC contract (CONVENTIONS.md, spec 0001).
 
+import { readdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { mapRawSound } from './gateway/mapRawSound'
 import type { FreesoundGateway, RawSearchPage } from './gateway/index'
 import type {
@@ -24,6 +26,19 @@ import {
   GatewayError,
   ThrottledError,
 } from './errors'
+import {
+  createLogger,
+  NULL_LOG_SINK,
+  type LogLevel,
+  type LogSink,
+  type Logger,
+} from './logging/logger'
+import {
+  EMPTY_UI_STATE,
+  mergeUiState,
+  normaliseUiState,
+  type UiState,
+} from './uiState'
 import { openDb, type DB } from './db/index'
 import { assessStartup, type StartupAssessment } from './startup/assessStartup'
 import {
@@ -33,7 +48,7 @@ import {
   type RebuildRunner,
   type RebuildService,
 } from './rebuild/rebuildService'
-import { getMeta, setMeta } from './db/appMeta'
+import { getMeta, setMeta, UI_STATE_KEY } from './db/appMeta'
 import { getSoundsByIds, upsertSound, upsertSounds } from './db/sounds'
 import {
   deleteLibraryEntry,
@@ -118,12 +133,32 @@ import {
 export type { FreesoundGateway } from './gateway/index'
 export * from './types'
 export {
+  AuthError,
+  DiskError,
   GatewayError,
   NetworkError,
   NotImplemented,
   ThrottledError,
   DEFAULT_RETRY_AFTER_SECONDS,
+  classifyError,
 } from './errors'
+export type { ClassifiedError, ErrorKind } from './errors'
+export {
+  createFileLogSink,
+  createLogger,
+  formatLogLine,
+  NULL_LOG_SINK,
+  LOG_ROTATE_BYTES,
+} from './logging/logger'
+export type { Logger, LogLevel, LogSink } from './logging/logger'
+export {
+  EMPTY_UI_STATE,
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
+  mergeUiState,
+  normaliseUiState,
+} from './uiState'
+export type { ShellView, UiState, WindowBounds } from './uiState'
 export type {
   AuthPlatform,
   AuthState,
@@ -288,6 +323,46 @@ function readLibraryFilter(db: DB): LibraryFilter {
 }
 
 /**
+ * Read the persisted shell state (ticket 18) from `app_meta`. Absence or a
+ * corrupt blob falls back to `EMPTY_UI_STATE` — a bad stored value must never
+ * stop the app opening.
+ */
+function readUiState(db: DB): UiState {
+  const raw = getMeta(db, UI_STATE_KEY)
+  if (!raw) return { ...EMPTY_UI_STATE }
+  try {
+    return normaliseUiState(JSON.parse(raw))
+  } catch {
+    return { ...EMPTY_UI_STATE }
+  }
+}
+
+/**
+ * Empty `<userData>/drag/` of stale hardlinks (ticket 09 left this to 18). The
+ * links only matter for the lifetime of an active OS drag; anything still there
+ * at startup is from a previous run and safe to unlink. Best-effort and silent.
+ */
+function sweepDragDir(dataDir: string, logger: Logger): void {
+  const dir = join(dataDir, 'drag')
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return // no drag dir yet — nothing to sweep
+  }
+  let removed = 0
+  for (const name of entries) {
+    try {
+      rmSync(join(dir, name), { force: true, recursive: false })
+      removed += 1
+    } catch {
+      // A link the OS still holds open from a drag that outlived us — leave it.
+    }
+  }
+  if (removed > 0) logger.info('swept stale drag hardlinks', { removed })
+}
+
+/**
  * The Library as `LibrarySound[]` — every `sounds` row that has a
  * `library_entries` row, merged with the user's overlay (custom name + tags),
  * ordered by date saved, and optionally narrowed by a structured filter. Served
@@ -365,6 +440,15 @@ export interface CoreDeps {
   dbPath: string
   /** Debounce window for `searchDebounced`, ms. Defaults to 250. Tests shrink it. */
   debounceMs?: number
+
+  // ---- shell polish (ticket 18) --------------------------------------------
+  /**
+   * Where the app's own log is written. `src/main` wires a file sink under
+   * `<userData>/logs/`; tests inject a memory sink or omit this (→ `NULL_LOG_SINK`,
+   * so `getLogPath()` is `null` and nothing is written). Errors that reach the
+   * user are also recorded here so a bug report has something behind it.
+   */
+  logSink?: LogSink
 
   // ---- auth (ticket 07) --------------------------------------------------
   /**
@@ -492,6 +576,40 @@ export interface Core {
    * query itself with the new options.
    */
   setSearchPrefs(prefs: SearchPrefs): SearchPrefs
+
+  // ---- shell polish (ticket 18) --------------------------------------------
+
+  /**
+   * The persisted shell state — window bounds plus the last view, search text,
+   * open Collection and selected Sound. `src/main` reads `window` before it
+   * creates the BrowserWindow so the app opens at the size and place it was left;
+   * the renderer reads the rest on mount to resume where the user was. Returns
+   * `EMPTY_UI_STATE` when nothing has been saved or the blob is unreadable.
+   */
+  getUiState(): UiState
+
+  /**
+   * Persist a patch of shell state into `app_meta`. Keys left `undefined` keep
+   * their stored value; an id key set to `null` clears it. Runs no query and
+   * never throws on a bad patch — it is normalised first.
+   */
+  setUiState(patch: Partial<UiState>): UiState
+
+  /**
+   * The path to the app's own log file, or `null` when logging is not wired
+   * (tests). The renderer offers "reveal in file manager" so a user filing a bug
+   * can attach it.
+   */
+  getLogPath(): string | null
+
+  /** The most recent `maxLines` (default 500) lines of the log, oldest first. */
+  readLog(opts?: { maxLines?: number }): string[]
+
+  /**
+   * Append one line to the app log. The renderer calls this for every error it
+   * shows the user, so what was on screen is also on disk for a bug report.
+   */
+  log(level: LogLevel, message: string, meta?: Record<string, unknown>): void
 
   /**
    * Sign in through the system browser (ticket 07). Opens Freesound's authorize
@@ -903,6 +1021,12 @@ export function createCore(deps: CoreDeps): Core {
 
   const db: DB = openDb(dbPath)
 
+  // The app's own log (ticket 18). No sink wired → a silent no-op logger.
+  const logger: Logger = createLogger(deps.logSink ?? NULL_LOG_SINK)
+
+  // Clear last run's leftover drag hardlinks (ticket 09 deferred this to 18).
+  sweepDragDir(deps.dataDir, logger)
+
   const scheduler: Scheduler = deps.scheduler ?? createRealScheduler()
 
   const auth: AuthController =
@@ -947,7 +1071,14 @@ export function createCore(deps: CoreDeps): Core {
     gateway,
     auth,
     scheduler,
-    onStatusChange: deps.onStagingStatusChange,
+    onStatusChange: (change) => {
+      // Ticket 18 — a failed download is surfaced in the UI (a row chip and a
+      // notification); record it here too so a bug report has a trail.
+      if (change.status === 'failed') {
+        logger.warn('staged download failed', { soundId: change.soundId })
+      }
+      deps.onStagingStatusChange?.(change)
+    },
     onOriginalReady: (soundId) => peakService.requestPeaks(soundId),
     byteBudget: deps.stagingByteBudget ?? DEFAULT_STAGING_BYTE_BUDGET,
     inFlightDrags: dragRegistry,
@@ -1019,7 +1150,14 @@ export function createCore(deps: CoreDeps): Core {
     } catch (err) {
       // A failure on a MISS propagates as a typed error and writes NOTHING —
       // no empty cache row, so a later retry still reaches the gateway.
-      throw asTypedError(err)
+      const typed = asTypedError(err)
+      logger.warn('search failed', {
+        query: query.trim(),
+        page,
+        error: typed instanceof Error ? typed.name : String(typed),
+        message: typed instanceof Error ? typed.message : undefined,
+      })
+      throw typed
     }
 
     const sounds = raw.results.map(mapRawSound)
@@ -1139,6 +1277,16 @@ export function createCore(deps: CoreDeps): Core {
       setMeta(db, SEARCH_PREFS_KEY, JSON.stringify(clean))
       return clean
     },
+
+    getUiState: () => readUiState(db),
+    setUiState: (patch) => {
+      const next = mergeUiState(readUiState(db), patch ?? {})
+      setMeta(db, UI_STATE_KEY, JSON.stringify(next))
+      return next
+    },
+    getLogPath: () => logger.path(),
+    readLog: (opts) => logger.read(opts?.maxLines ?? 500),
+    log: (level, message, meta) => logger[level]?.(message, meta),
     signIn: () => auth.signIn(),
     signOut: () => auth.signOut(),
     getAuthState: () => auth.getState(),

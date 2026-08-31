@@ -4,8 +4,8 @@ Tracer-bullet backlog: `.scratch/freesound-desktop-v1/`. Ticket 09 (the mileston
 built and its macOS drag-out was manually verified by the user on 2026-08-30. Tickets 10
 (sidecars + LRU eviction), 11 (Library save / view / delete), 15 (search filters +
 sort), 12 (computed peaks + canvas waveform), 13 (library organisation), 14
-(rebuild from sidecars), 16 (Collections) and 17 (Attribution Manifest) are done.
-Next frontier: 18; 19 last.
+(rebuild from sidecars), 16 (Collections), 17 (Attribution Manifest) and 18 (shell
+polish) are done. Next: 19 (package / sign / notarize / update) — the last ticket.
 
 | # | Ticket | State | Commit |
 |---|---|---|---|
@@ -26,13 +26,125 @@ Next frontier: 18; 19 last.
 | 14 | Rebuild from sidecars | **done** — code + tests (`test/rebuild.test.ts`) | `261b47d` |
 | 16 | Collections | **done** — code + tests (`test/collections.test.ts`) | `6dfad08` |
 | 17 | Attribution Manifest | **done** — code + tests (`test/manifest.test.ts`) | `ac2f80f` |
-| 18–19 | Shell polish, packaging | not started | — |
+| 18 | Shell polish | **done** — code + tests (`test/shell-polish.test.ts`); renderer pieces need the GUI (see below) | _pending_ |
+| 19 | Package, sign, notarize, update | not started | — |
 
 ## Test counts
 
-- `apps/desktop`: 212 vitest tests (+11 for ticket 17), `tsc --noEmit` clean, `electron-vite build` clean.
+- `apps/desktop`: 227 vitest tests (+14 for ticket 18), `tsc --noEmit` clean, `electron-vite build` clean.
 - `worker`: 30 vitest tests, `tsc --noEmit` clean.
 - `spike/drag-out`: syntax-checked only (throwaway).
+
+## Ticket 18 — what landed
+
+- **Persisted shell state — no migration.** `src/core/uiState.ts` is a pure
+  value module: `UiState { window?, view?, query?, openCollectionId?,
+  selectedSoundId? }`, `normaliseUiState` (drops unknown keys, whitelists the
+  view, rejects a sub-640×480 or offscreen-authored window, total over garbage),
+  `mergeUiState` (a patch touches only the keys it names; `window` replaces
+  wholesale). Stored as one JSON blob in `app_meta` under `ui_state` (m002 table)
+  — exactly the ticket-15 `search_prefs` pattern. `MIGRATIONS` stays `[m001,
+  m002]`.
+- **Core command API** (`src/core/index.ts`): `getUiState()` →
+  `EMPTY_UI_STATE` on absence / corrupt blob; `setUiState(patch)` merges onto
+  the stored value and runs no query; `getLogPath()`; `readLog({ maxLines? })`
+  (default 500, oldest-first); `log(level, message, meta?)`.
+- **The app log** (`src/core/logging/logger.ts`): `Logger` over a `LogSink`
+  boundary so the core stays Electron-free. `createFileLogSink(dir)` writes
+  `<dir>/app.log`, creates the dir lazily, appends synchronously (volume is a
+  line per surfaced error), rotates to `app.log.1` past `LOG_ROTATE_BYTES`
+  (1 MiB). `NULL_LOG_SINK` is the default — no sink wired ⇒ `getLogPath()` is
+  `null`, `readLog()` is `[]`, `log()` is a no-op. `src/main` wires
+  `createFileLogSink(join(userData, 'logs'))`. The core logs: a failed search
+  (with the typed error name), a `failed` staged-download transition, and the
+  drag-dir sweep.
+- **Error classification** (`src/core/errors.ts`): new `AuthError` /
+  `DiskError`; `classifyError(e): ClassifiedError { kind, title, detail,
+  actionable, retryAfter }` with `kind` ∈ `network | throttled | auth |
+  download | disk | unknown`. It reads `name` + `message` off a plain object
+  too, so it still classifies an error that lost its prototype crossing IPC. A
+  Freesound 5xx is `download` + `actionable:false` ("nothing you can fix");
+  `ENOSPC` is `disk` + `actionable:true`. This is the single classifier the
+  renderer uses everywhere.
+- **Drag-dir sweep** (ticket 09 deferral): `createCore` empties
+  `<userData>/drag/` of last run's stale hardlinks on startup (best-effort,
+  logged). A link the OS still holds open is left alone.
+- **Window** (`src/main/index.ts`): `createWindow(core)` restores bounds from
+  `core.getUiState().window` (clamped to ≥ min size and to a corner on some
+  attached display — an unplugged monitor cannot strand the window), re-maximises
+  if it was, and persists bounds (debounced) on `resize` / `move` / `maximize` /
+  `unmaximize` / `close` via `core.setUiState({ window })` (which merges, so it
+  never disturbs the renderer's keys). `show: false` + `backgroundColor:
+  '#0a0a0a'` + `win.once('ready-to-show', …)` — no white flash, no blank frame.
+- **`core:showLogs`** named ipc channel → `shell.showItemInFolder(getLogPath())`
+  (falls back to opening the `logs` dir).
+- **preload**: `getUiState` / `setUiState` / `getLogPath` / `readLog` / `log`
+  on the `core:invoke` passthrough; `showLogs` on the named channel; `UiState`,
+  `ClassifiedError`, `ErrorKind`, `LogLevel`, `ShellView`, `WindowBounds`
+  re-exported.
+- **Renderer**:
+  - `src/renderer/store/useNotifications.ts` — the in-app error surface.
+    `report(error)` classifies and shows; `push(classified)` for an error
+    derived from a status push. Collapses a repeat of the same kind+title
+    already on screen; `network` / `throttled` / `auth` / `download` auto-dismiss
+    (9–12 s), `disk` / `unknown` stay until dismissed. Every notification is
+    also `window.core.log('error', …)`.
+  - `src/renderer/components/NotificationHost.tsx` — the stack, bottom-right
+    above the transport bar, one colour per kind, and an italic "Nothing you
+    need to do here." line when `actionable === false`.
+  - `src/renderer/lib/shortcuts.ts` + `components/ShortcutsDialog.tsx` — the
+    canonical shortcut list and its `?`-opened reference. The "Result list"
+    group's note states search / Library / Collection lists respond identically
+    (they do — `ResultList` binds one handler for every variant).
+  - `src/renderer/components/LogViewerDialog.tsx` — in-app tail of the log
+    (`readLog`), with Refresh and "Reveal file" (`showLogs`). Reached from the
+    shortcut dialog's "View logs".
+  - `src/renderer/store/useStaging.ts` — a `not-failed → failed` transition
+    pushes a `download` notification (the row chip alone was the slow-vs-broken
+    ambiguity this ticket removes).
+  - `src/renderer/App.tsx` — `uiReady` gates the first search (like
+    `prefsReady`) while `core.getUiState()` loads; restores `view` / `query`,
+    then the open Collection once the list loads, then the row selection once
+    that sound is present; persists the four keys (debounced) on any change. `?`
+    toggles the shortcut dialog (inert while typing); a header `?` button; a
+    search failure also raises a notification.
+
+### Deferrals / judgement calls (ticket 18)
+
+- **No new migration.** `ui_state` is one more `app_meta` key. `MIGRATIONS`
+  stays `[m001, m002]`.
+- **No byte-level download progress bar.** Staging is designed to be invisible
+  (CONTEXT § Staged); the in-flight state is the spinning "downloading" row chip
+  and the only thing the user acts on is a `failed`, which now also raises a
+  notification. `search` ("Searching…"), rebuild (`done/total`) and peaks keep
+  their existing progress. Adding per-byte progress means threading a stream
+  callback through `downloadQueue` — more surface than this ticket needs.
+- **Selection restore is best-effort.** It re-selects the stored `selectedSoundId`
+  as soon as that sound appears in the active view's list; if the sound is not in
+  the restored view (e.g. it was a search result and the query changed) nothing
+  is selected. The view / query / open-Collection restore is exact.
+- **No renderer component tests** (spec 0001: none exist). `NotificationHost`,
+  the two dialogs, the window-bounds wiring and the "no blank window" behaviour
+  need the Electron GUI — see "Needs manual verification".
+- **`classifyError` lives in `src/core/errors.ts`** and the renderer imports it
+  directly (as it already imports `../core/types`), not through a preload
+  re-export of the value — keeps the preload bundle types-only.
+
+### Needs manual verification (ticket 18)
+
+- Launch: confirm the window appears at its last size/position with no white
+  flash, and that after a resize + quit + relaunch it comes back where it was
+  (and maximised if it was).
+- Reopen: confirm the last view, the last search text, an open Collection and the
+  selected row are all restored.
+- Press `?` (and the header `?`): the shortcut list opens; every binding in it
+  works the same in Search, Library and a Collection.
+- Pull the network cable mid-search: an amber "No connection" notification
+  appears (not just the inline line) and clears when back online; hit the rate
+  limit and confirm the throttled copy with the retry seconds; sign out and try
+  to drag an unstaged sound and confirm the sky "Sign-in needed" notification.
+- Open the shortcut dialog → "View logs": the tail shows the logged failures;
+  "Reveal file" opens `<userData>/logs/` in Finder/Explorer.
 
 ## Ticket 17 — what landed
 

@@ -26,7 +26,7 @@ polish) are done. Next: 19 (package / sign / notarize / update) — the last tic
 | 14 | Rebuild from sidecars | **done** — code + tests (`test/rebuild.test.ts`) | `261b47d` |
 | 16 | Collections | **done** — code + tests (`test/collections.test.ts`) | `6dfad08` |
 | 17 | Attribution Manifest | **done** — code + tests (`test/manifest.test.ts`) | `ac2f80f` |
-| 18 | Shell polish | **done** — code + tests (`test/shell-polish.test.ts`); renderer pieces need the GUI (see below) | _pending_ |
+| 18 | Shell polish | **done** — code + tests (`test/shell-polish.test.ts`); renderer pieces need the GUI (see below) | `6ab94f2` |
 | 19 | Package, sign, notarize, update | not started | — |
 
 ## Test counts

@@ -113,27 +113,35 @@ function ResultRowImpl({
   const customTags = overlay.customTags ?? []
   const displayName = customName ?? sound.name
 
-  const onRename = useCallback(() => {
-    const next = window.prompt(
-      `Rename “${sound.name}” in your Library.\n\n` +
-        'This is the name the file gets when you drag it into a DAW. ' +
-        'Leave it blank to go back to the Freesound name.',
-      customName ?? sound.name,
-    )
-    if (next === null) return // cancelled
-    void useLibrary
-      .getState()
-      .rename(sound.id, next.trim() === '' ? null : next)
-  }, [sound.id, sound.name, customName])
+  // Electron's renderer has no window.prompt, so rename / add-tag are inline
+  // <input>s that appear in place (Enter commits, Escape / blur cancels).
+  const [renaming, setRenaming] = useState(false)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [addingTag, setAddingTag] = useState(false)
+  const [tagDraft, setTagDraft] = useState('')
 
-  const onAddTag = useCallback(() => {
-    const raw = window.prompt('Add one of your own tags to this sound:')
-    if (!raw) return
-    const t = raw.trim()
-    if (!t || customTags.some((x) => x.toLowerCase() === t.toLowerCase()))
-      return
+  const startRename = useCallback(() => {
+    setRenameDraft(customName ?? sound.name)
+    setRenaming(true)
+  }, [customName, sound.name])
+
+  const commitRename = useCallback(() => {
+    const next = renameDraft.trim()
+    setRenaming(false)
+    void useLibrary.getState().rename(sound.id, next === '' ? null : next)
+  }, [sound.id, renameDraft])
+
+  const startAddTag = useCallback(() => {
+    setTagDraft('')
+    setAddingTag(true)
+  }, [])
+
+  const commitAddTag = useCallback(() => {
+    const t = tagDraft.trim()
+    setAddingTag(false)
+    if (!t || customTags.some((x) => x.toLowerCase() === t.toLowerCase())) return
     void useLibrary.getState().setTags(sound.id, [...customTags, t])
-  }, [sound.id, customTags])
+  }, [sound.id, customTags, tagDraft])
 
   const onRemoveTag = useCallback(
     (tag: string) => {
@@ -271,16 +279,38 @@ function ResultRowImpl({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span
-            className="truncate text-sm font-medium text-neutral-100"
-            title={
-              customName
-                ? `${customName}  (Freesound: ${sound.name})`
-                : sound.name
-            }
-          >
-            {displayName}
-          </span>
+          {renaming ? (
+            <input
+              type="text"
+              autoFocus
+              value={renameDraft}
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  commitRename()
+                } else if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setRenaming(false)
+                }
+              }}
+              placeholder="blank = Freesound name"
+              className="min-w-0 flex-1 rounded border border-emerald-600 bg-neutral-900 px-1.5 py-0.5 text-sm text-neutral-100 placeholder:text-neutral-600 focus:outline-none"
+            />
+          ) : (
+            <span
+              className="truncate text-sm font-medium text-neutral-100"
+              title={
+                customName
+                  ? `${customName}  (Freesound: ${sound.name})`
+                  : sound.name
+              }
+            >
+              {displayName}
+            </span>
+          )}
           {isLibraryVariant && customName && (
             <span
               className="shrink-0 truncate text-[11px] italic text-neutral-500"
@@ -347,15 +377,37 @@ function ResultRowImpl({
                   <span aria-hidden>×</span>
                 </button>
               ))}
-              <button
-                type="button"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={onAddTag}
-                className="shrink-0 rounded border border-neutral-700 px-1 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
-                title="Add your own tag"
-              >
-                + tag
-              </button>
+              {addingTag ? (
+                <input
+                  type="text"
+                  autoFocus
+                  value={tagDraft}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onChange={(e) => setTagDraft(e.target.value)}
+                  onBlur={commitAddTag}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      commitAddTag()
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      setAddingTag(false)
+                    }
+                  }}
+                  placeholder="tag + Enter"
+                  className="w-28 shrink-0 rounded border border-emerald-600 bg-neutral-900 px-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:outline-none"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={startAddTag}
+                  className="shrink-0 rounded border border-neutral-700 px-1 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
+                  title="Add your own tag"
+                >
+                  + tag
+                </button>
+              )}
               {sound.tags.length > 0 && (
                 <span
                   className="min-w-0 truncate text-[11px] text-neutral-600"
@@ -381,7 +433,7 @@ function ResultRowImpl({
           <button
             type="button"
             onMouseDown={(e) => e.stopPropagation()}
-            onClick={onRename}
+            onClick={startRename}
             className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
             title="Give this sound your own name (used on drag-out)"
           >

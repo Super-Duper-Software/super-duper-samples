@@ -160,6 +160,18 @@ export function ResultList({
   }, [selectedIndex, virtualizer, virtualItems])
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    // Don't let list shortcuts fire while the user is typing in an inline
+    // editor inside a row (rename / add-tag). The row's own <input> handles
+    // Enter / Escape.
+    const el = e.target as HTMLElement
+    if (
+      el.isContentEditable ||
+      el.tagName === 'INPUT' ||
+      el.tagName === 'TEXTAREA' ||
+      el.tagName === 'SELECT'
+    ) {
+      return
+    }
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()

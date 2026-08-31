@@ -4,8 +4,9 @@
 // Library uses.
 //
 //   - "New collection" field at the top (Enter or the button creates).
-//   - Each row: name + count, Rename (window.prompt), Delete (window.confirm —
-//     consistent with the Library delete), and the row itself opens it.
+//   - Each row: name + count, Rename (inline input — Electron has no
+//     window.prompt), Delete (window.confirm — consistent with the Library
+//     delete), and the row itself opens it.
 
 import { useCallback, useEffect, useState } from 'react'
 import type { CollectionSummary } from '../../preload'
@@ -21,6 +22,8 @@ export function CollectionsPanel({ onOpen }: CollectionsPanelProps) {
   const load = useCollections((s) => s.load)
   const create = useCollections((s) => s.create)
   const [newName, setNewName] = useState('')
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editDraft, setEditDraft] = useState('')
 
   useEffect(() => {
     void load()
@@ -32,11 +35,26 @@ export function CollectionsPanel({ onOpen }: CollectionsPanelProps) {
     setNewName('')
   }, [create, newName])
 
-  const onRename = useCallback((c: CollectionSummary) => {
-    const next = window.prompt(`Rename the collection “${c.name}”.`, c.name)
-    if (next === null || next.trim() === '' || next.trim() === c.name) return
-    void useCollections.getState().rename(c.id, next)
+  const startRename = useCallback((c: CollectionSummary) => {
+    setEditingId(c.id)
+    setEditDraft(c.name)
   }, [])
+
+  const cancelRename = useCallback(() => {
+    setEditingId(null)
+    setEditDraft('')
+  }, [])
+
+  const commitRename = useCallback(
+    (c: CollectionSummary) => {
+      const next = editDraft.trim()
+      setEditingId(null)
+      setEditDraft('')
+      if (next === '' || next === c.name) return
+      void useCollections.getState().rename(c.id, next)
+    },
+    [editDraft],
+  )
 
   const onDelete = useCallback((c: CollectionSummary) => {
     const ok = window.confirm(
@@ -84,21 +102,41 @@ export function CollectionsPanel({ onOpen }: CollectionsPanelProps) {
         {collections.map((c) => (
           <li key={c.id}>
             <div className="flex items-center gap-2 rounded border border-neutral-800 px-3 py-2 hover:border-neutral-700">
+              {editingId === c.id ? (
+                <input
+                  type="text"
+                  autoFocus
+                  value={editDraft}
+                  onChange={(e) => setEditDraft(e.target.value)}
+                  onBlur={() => commitRename(c)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      commitRename(c)
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault()
+                      cancelRename()
+                    }
+                  }}
+                  className="min-w-0 flex-1 rounded border border-emerald-600 bg-neutral-900 px-2 py-1 text-sm text-neutral-100 focus:outline-none"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onOpen(c)}
+                  className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
+                >
+                  <span className="truncate text-sm font-medium text-neutral-100">
+                    {c.name}
+                  </span>
+                  <span className="shrink-0 text-xs tabular-nums text-neutral-500">
+                    {c.count} {c.count === 1 ? 'sound' : 'sounds'}
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => onOpen(c)}
-                className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
-              >
-                <span className="truncate text-sm font-medium text-neutral-100">
-                  {c.name}
-                </span>
-                <span className="shrink-0 text-xs tabular-nums text-neutral-500">
-                  {c.count} {c.count === 1 ? 'sound' : 'sounds'}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onRename(c)}
+                onClick={() => startRename(c)}
                 className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
               >
                 Rename

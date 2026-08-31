@@ -25,7 +25,7 @@ Next frontier: 18; 19 last.
 | 13 | Library organisation | **done** — code + tests (`test/library-organisation.test.ts`) | `8eea6e1` |
 | 14 | Rebuild from sidecars | **done** — code + tests (`test/rebuild.test.ts`) | `261b47d` |
 | 16 | Collections | **done** — code + tests (`test/collections.test.ts`) | `6dfad08` |
-| 17 | Attribution Manifest | **done** — code + tests (`test/manifest.test.ts`) | _pending_ |
+| 17 | Attribution Manifest | **done** — code + tests (`test/manifest.test.ts`) | `ac2f80f` |
 | 18–19 | Shell polish, packaging | not started | — |
 
 ## Test counts

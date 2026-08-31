@@ -7,6 +7,8 @@ import type {
   AuthState,
   DiskUsage,
   EvictionOutcome,
+  PeaksPayload,
+  PeaksStatusChange,
   StagingConsent,
   StagingStatus,
   StagingStatusChange,
@@ -32,6 +34,8 @@ export type {
   AuthState,
   DiskUsage,
   EvictionOutcome,
+  PeaksPayload,
+  PeaksStatusChange,
   StagingConsent,
   StagingStatus,
   StagingStatusChange,
@@ -41,6 +45,8 @@ export type {
 const AUTH_STATE_CHANNEL = 'core:event:authState'
 /** Channel the main process pushes per-sound staging status changes on (ticket 08). */
 const STAGING_STATUS_CHANNEL = 'core:event:stagingStatus'
+/** Channel the main process pushes per-sound computed-peaks status changes on (ticket 12). */
+const PEAKS_STATUS_CHANNEL = 'core:event:peaksStatus'
 
 export interface CoreApi {
   search(query: string, opts?: SearchOptions): Promise<SearchResult>
@@ -91,7 +97,11 @@ export interface CoreApi {
   startDrag(
     soundIds: number | number[],
     opts?: { iconDataUrl?: string },
-  ): Promise<{ filePath: string; extraFilePaths: string[]; soundIds: number[] }>
+  ): Promise<{
+    filePath: string
+    extraFilePaths: string[]
+    soundIds: number[]
+  }>
   /** Whether the UI may offer multi-Sound drag on this platform (macOS only for now). */
   getDragCapabilities(): Promise<{ multiSound: boolean }>
   /**
@@ -136,14 +146,31 @@ export interface CoreApi {
    * `shell.openExternal`).
    */
   openFreesoundPage(soundId: number): Promise<void>
+
+  // ---- computed peaks & canvas waveform (ticket 12) ---------------
+  /**
+   * Cached waveform peaks for a Sound, or `null` when there are none yet (not on
+   * disk, undecodable, or still computing). The renderer draws a sharp <canvas>
+   * from these and otherwise falls back to the Freesound waveform image.
+   */
+  getPeaks(soundId: number): Promise<PeaksPayload | null>
+  /**
+   * Ensure peaks get computed for a Sound (off-thread, once ever). Returns as
+   * soon as the work is scheduled; listen on `onPeaks` for the outcome.
+   */
+  requestPeaks(soundId: number): Promise<void>
+  /**
+   * Subscribe to per-sound peaks status pushes (`ready` / `unavailable`).
+   * Returns an unsubscribe function.
+   */
+  onPeaks(listener: (change: PeaksStatusChange) => void): () => void
 }
 
 const api: CoreApi = {
   search: (query, opts) => ipcRenderer.invoke('core:search', query, opts),
   searchDebounced: (query, opts) =>
     ipcRenderer.invoke('core:invoke', 'searchDebounced', [query, opts]),
-  getSearchPrefs: () =>
-    ipcRenderer.invoke('core:invoke', 'getSearchPrefs', []),
+  getSearchPrefs: () => ipcRenderer.invoke('core:invoke', 'getSearchPrefs', []),
   setSearchPrefs: (prefs) =>
     ipcRenderer.invoke('core:invoke', 'setSearchPrefs', [prefs]),
 
@@ -196,6 +223,17 @@ const api: CoreApi = {
     ipcRenderer.invoke('core:revealInFinder', soundId),
   openFreesoundPage: (soundId) =>
     ipcRenderer.invoke('core:openExternal', soundId),
+
+  getPeaks: (soundId) =>
+    ipcRenderer.invoke('core:invoke', 'getPeaks', [soundId]),
+  requestPeaks: (soundId) =>
+    ipcRenderer.invoke('core:invoke', 'requestPeaks', [soundId]),
+  onPeaks: (listener) => {
+    const handler = (_e: unknown, change: PeaksStatusChange): void =>
+      listener(change)
+    ipcRenderer.on(PEAKS_STATUS_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(PEAKS_STATUS_CHANNEL, handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('core', api)

@@ -11,7 +11,12 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: { index: resolve(__dirname, 'src/main/index.ts') },
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // Ticket 12: the peak-computation Worker. A separate entry so it lands
+          // at `out/main/peakWorker.js` and can be spawned via `worker_threads`.
+          peakWorker: resolve(__dirname, 'src/core/peaks/peakWorker.ts'),
+        },
       },
     },
   },

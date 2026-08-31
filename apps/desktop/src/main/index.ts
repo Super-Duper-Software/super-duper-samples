@@ -11,6 +11,7 @@ import {
   createRealScheduler,
   type AuthState,
   type Core,
+  type PeaksStatusChange,
   type StagingStatusChange,
 } from '../core'
 import { HttpFreesoundGateway } from '../core/gateway/http'
@@ -26,9 +27,7 @@ import { loadConfig } from './config'
 function resolveDragIconPath(): string {
   const candidates = [
     join(__dirname, '../../resources/drag-icon.png'),
-    process.resourcesPath
-      ? join(process.resourcesPath, 'drag-icon.png')
-      : '',
+    process.resourcesPath ? join(process.resourcesPath, 'drag-icon.png') : '',
   ].filter(Boolean)
   return candidates.find((p) => existsSync(p)) ?? candidates[0]!
 }
@@ -37,6 +36,8 @@ function resolveDragIconPath(): string {
 const AUTH_STATE_CHANNEL = 'core:event:authState'
 /** Channel the renderer listens on for per-sound staging status pushes (ticket 08). */
 const STAGING_STATUS_CHANNEL = 'core:event:stagingStatus'
+/** Channel the renderer listens on for per-sound computed-peaks status pushes (ticket 12). */
+const PEAKS_STATUS_CHANNEL = 'core:event:peaksStatus'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -102,6 +103,12 @@ function broadcastStagingStatus(change: StagingStatusChange): void {
   }
 }
 
+function broadcastPeaksStatus(change: PeaksStatusChange): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(PEAKS_STATUS_CHANNEL, change)
+  }
+}
+
 void app.whenReady().then(() => {
   const config = loadConfig()
   const dataDir = app.getPath('userData')
@@ -121,6 +128,10 @@ void app.whenReady().then(() => {
     clientId: config.freesoundClientId,
     onAuthStateChange: broadcastAuthState,
     onStagingStatusChange: broadcastStagingStatus,
+    onPeaksStatusChange: broadcastPeaksStatus,
+    // The peak Worker is built as a second `main` entry (electron.vite.config.ts),
+    // so it sits next to this compiled bundle at `out/main/peakWorker.js`.
+    peakWorkerPath: join(__dirname, 'peakWorker.js'),
     dragHost: createElectronDragHost({
       getWindow: () => BrowserWindow.getAllWindows()[0] ?? null,
       fallbackIconPath: dragIconFallbackPath,

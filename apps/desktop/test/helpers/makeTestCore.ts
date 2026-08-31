@@ -7,10 +7,15 @@ import {
   createCore,
   type Core,
   type DragHost,
+  type PeakRunner,
+  type PeaksStatusChange,
   type StagingStatusChange,
 } from '../../src/core'
 import { FakeFreesoundGateway } from '../../src/core/gateway/fake'
-import type { FreesoundGateway, RawSearchPage } from '../../src/core/gateway/index'
+import type {
+  FreesoundGateway,
+  RawSearchPage,
+} from '../../src/core/gateway/index'
 import { FakeAuthPlatform } from './fakeAuthPlatform'
 import { FakeScheduler } from './fakeScheduler'
 
@@ -28,12 +33,16 @@ const fixturesDir = fileURLToPath(
 
 /** Load a recorded gateway fixture by filename. */
 export function loadFixture(name: string): RawSearchPage {
-  return JSON.parse(readFileSync(join(fixturesDir, name), 'utf8')) as RawSearchPage
+  return JSON.parse(
+    readFileSync(join(fixturesDir, name), 'utf8'),
+  ) as RawSearchPage
 }
 
 /** A fake gateway pre-loaded with the committed fixtures. */
 export function makeFakeGateway(
-  overrides: Partial<ConstructorParameters<typeof FakeFreesoundGateway>[0]> = {},
+  overrides: Partial<
+    ConstructorParameters<typeof FakeFreesoundGateway>[0]
+  > = {},
 ): FakeFreesoundGateway {
   return new FakeFreesoundGateway({
     pages: {
@@ -42,7 +51,10 @@ export function makeFakeGateway(
     },
     pagedPages: {
       // A two-page fixture (count 6): use with `{ pageSize: 3 }` to walk pages.
-      loops: [loadFixture('search-loops-p1.json'), loadFixture('search-loops-p2.json')],
+      loops: [
+        loadFixture('search-loops-p1.json'),
+        loadFixture('search-loops-p2.json'),
+      ],
     },
     defaultPage: loadFixture('search-empty.json'),
     ...overrides,
@@ -85,6 +97,10 @@ export async function makeTestCore(
     onStagingStatusChange?: (change: StagingStatusChange) => void
     /** Ticket 09 — a recording `DragHost` so a test can see what is dragged. */
     dragHost?: DragHost
+    /** Ticket 12 — in-process peak runner so tests never spawn a real Worker. */
+    computePeaksRunner?: PeakRunner
+    peakWorkerPath?: string
+    onPeaksStatusChange?: (change: PeaksStatusChange) => void
   } = {},
 ): Promise<TestCore> {
   const dataDir = await mkdtemp(join(tmpdir(), 'freesound-desktop-test-'))
@@ -107,6 +123,9 @@ export async function makeTestCore(
     onStagingStatusChange: opts.onStagingStatusChange,
     dragHost: opts.dragHost,
     dragIconFallbackPath: DRAG_ICON_FALLBACK,
+    computePeaksRunner: opts.computePeaksRunner,
+    peakWorkerPath: opts.peakWorkerPath,
+    onPeaksStatusChange: opts.onPeaksStatusChange,
   })
   return {
     core,

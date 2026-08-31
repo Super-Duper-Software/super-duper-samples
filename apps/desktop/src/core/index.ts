@@ -31,13 +31,24 @@ import {
   type SortDir,
 } from './db/library'
 import { contentPaths, isOriginalOnDisk } from './staging/contentStore'
+import { deletePeaksRecord } from './db/peaks'
+import {
+  createPeakService,
+  type PeakRunner,
+  type PeakService,
+  type PeaksPayload,
+  type PeaksStatusChange,
+} from './peaks/peakService'
 import {
   cacheKey,
   readSearchCache,
   writeSearchCache,
   type SearchCacheParams,
 } from './db/searchCache'
-import { createSearchController, type SearchController } from './searchController'
+import {
+  createSearchController,
+  type SearchController,
+} from './searchController'
 import {
   createAuthController,
   createRealScheduler,
@@ -121,6 +132,19 @@ export {
   type EvictionOutcome,
 } from './staging/eviction'
 export type { LibrarySort, SortDir } from './db/library'
+export {
+  createPeakService,
+  workerRunner as createPeakWorkerRunner,
+} from './peaks/peakService'
+export type {
+  PeakRunner,
+  PeaksPayload,
+  PeaksStatus,
+  PeaksStatusChange,
+} from './peaks/peakService'
+export { BASE_BUCKET_COUNT } from './peaks/computePeaks'
+export { decodeAudioBuffer, UndecodableAudioError } from './peaks/decodeAudio'
+export { computePeaks } from './peaks/computePeaks'
 
 const DEFAULT_PAGE_SIZE = 15
 const DEBOUNCE_MS = 250
@@ -237,6 +261,21 @@ export interface CoreDeps {
    * Guarantees `startDrag` never hands the OS an empty icon.
    */
   dragIconFallbackPath?: string
+
+  // ---- computed peaks (ticket 12) ----------------------------------
+  /**
+   * Absolute path to the built `peakWorker.js`. When set, waveform-peak
+   * computation runs on a `node:worker_threads` thread — off both the Electron
+   * main process and the renderer. `src/main` passes `out/main/peakWorker.js`.
+   */
+  peakWorkerPath?: string
+  /**
+   * Test seam: replace the peak computation runner entirely (run it in-process,
+   * synchronously or behind a controllable promise). Wins over `peakWorkerPath`.
+   */
+  computePeaksRunner?: PeakRunner
+  /** Broadcast every per-sound peaks status change (main forwards it to the renderer). */
+  onPeaksStatusChange?: (change: PeaksStatusChange) => void
 }
 
 /** The command API. Later tickets add methods here; the bridge forwards them all. */
@@ -453,6 +492,38 @@ export interface Core {
    */
   getFreesoundUrl(soundId: number): string | null
 
+  // ---- computed peaks & canvas waveform (ticket 12) ----------------
+
+  /**
+   * Cached waveform peaks for a Sound, or `null` when there are none — the
+   * Original is not on disk, or it could not be decoded, or computation has not
+   * finished yet. The renderer draws a sharp <canvas> waveform from these and
+   * falls back to the Freesound waveform image on `null` (no discontinuity when
+   * peaks later arrive). Reads the SQLite cache only — never computes — so it is
+   * instant on every revisit.
+   */
+  getPeaks(soundId: number): PeaksPayload | null
+
+  /**
+   * Ensure peaks exist for a Sound. Returns immediately: if peaks are cached the
+   * status is announced synchronously, otherwise — when the Original is on disk —
+   * decoding + the min/max sweep run OFF this thread (a `worker_threads` Worker
+   * in production) and the outcome is announced when done. Deduped per Sound and
+   * computed at most once ever (an undecodable Original is remembered as such).
+   * The long computation of a long recording never blocks this call or any other
+   * command.
+   */
+  requestPeaks(soundId: number): void
+
+  /**
+   * Subscribe to per-sound peaks status transitions (`ready` / `unavailable`).
+   * Returns an unsubscribe function. The main process forwards these over
+   * `core:event:peaksStatus`; the renderer re-reads `getPeaks` on `ready`.
+   */
+  subscribePeaksStatus(
+    listener: (change: PeaksStatusChange) => void,
+  ): () => void
+
   /** Release the database handle and cancel any pending debounced/refresh timers. */
   close(): void
 }
@@ -509,6 +580,16 @@ export function createCore(deps: CoreDeps): Core {
   // drag controller (which marks drags in-flight) and staging (which evicts).
   const dragRegistry = createDragRegistry()
 
+  // Computed waveform peaks (ticket 12). Decoding + the min/max sweep run off
+  // this thread; results are cached in the `peaks` table and served instantly.
+  const peakService: PeakService = createPeakService({
+    db,
+    dataDir: deps.dataDir,
+    peakWorkerPath: deps.peakWorkerPath,
+    runner: deps.computePeaksRunner,
+    onStatusChange: deps.onPeaksStatusChange,
+  })
+
   const staging: StagingController = createStagingController({
     db,
     dataDir: deps.dataDir,
@@ -516,6 +597,7 @@ export function createCore(deps: CoreDeps): Core {
     auth,
     scheduler,
     onStatusChange: deps.onStagingStatusChange,
+    onOriginalReady: (soundId) => peakService.requestPeaks(soundId),
     byteBudget: deps.stagingByteBudget ?? DEFAULT_STAGING_BYTE_BUDGET,
     inFlightDrags: dragRegistry,
     concurrency: deps.stagingConcurrency,
@@ -633,7 +715,13 @@ export function createCore(deps: CoreDeps): Core {
     // `sort` / `filter` are part of the params object, so `cacheKey` (a hash of
     // the canonical JSON) puts a differently-sorted or differently-filtered
     // query on its own row — cached and served independently, no collision.
-    const params: SearchCacheParams = { query: trimmed, page, pageSize, sort, filter }
+    const params: SearchCacheParams = {
+      query: trimmed,
+      page,
+      pageSize,
+      sort,
+      filter,
+    }
     const ck = cacheKey(params)
 
     const cached = readSearchCache(db, ck.key)
@@ -734,8 +822,13 @@ export function createCore(deps: CoreDeps): Core {
     deleteFromLibrary: async (soundId) => {
       const sound = getSoundsByIds(db, [soundId])[0]
       deleteLibraryEntry(db, soundId)
+      // Cached peaks (ticket 12) die with the Original.
+      deletePeaksRecord(db, soundId)
       if (sound) await removeContentFiles(deps.dataDir, sound)
     },
+    getPeaks: (soundId) => peakService.getPeaks(soundId),
+    requestPeaks: (soundId) => peakService.requestPeaks(soundId),
+    subscribePeaksStatus: (listener) => peakService.subscribe(listener),
     getContentPath: (soundId) => {
       const sound = getSoundsByIds(db, [soundId])[0]
       if (!sound || !isOriginalOnDisk(deps.dataDir, sound)) return null
@@ -746,6 +839,7 @@ export function createCore(deps: CoreDeps): Core {
     close: () => {
       controller.dispose()
       staging.close()
+      peakService.close()
       auth.close()
       dragRegistry.clear()
       db.close()

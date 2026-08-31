@@ -102,6 +102,12 @@ export interface StagingControllerDeps {
   /** Broadcast every status change (main forwards it to the renderer). */
   onStatusChange?: (change: StagingStatusChange) => void
   /**
+   * Called once a Sound's Original has just landed on disk (ticket 12). The core
+   * wires this to the peak service so waveform peaks are computed off-thread the
+   * moment the audio is available, not only when the user first looks at it.
+   */
+  onOriginalReady?: (soundId: number) => void
+  /**
    * Total-bytes budget for Staged Originals. Exceeding it after a stage triggers
    * an LRU eviction. See `DEFAULT_STAGING_BYTE_BUDGET`.
    */
@@ -146,7 +152,8 @@ export function createStagingController(
       ),
     onComplete: async (soundId, result) => {
       const sound = soundById(soundId)
-      if (!sound) throw new Error(`staging: sound ${soundId} vanished from the DB`)
+      if (!sound)
+        throw new Error(`staging: sound ${soundId} vanished from the DB`)
       const now = Date.now()
       const { byteSize, paths } = await writeOriginal(
         dataDir,
@@ -161,6 +168,13 @@ export function createStagingController(
       // A fresh Original just landed — the staging area may now be over budget.
       // Evict LRU-first, off the hot path, silently (ticket 10).
       scheduleEviction()
+      // …and kick off off-thread waveform-peak computation (ticket 12). Never
+      // blocks this completion; failures are the peak service's own concern.
+      try {
+        deps.onOriginalReady?.(soundId)
+      } catch {
+        /* peak scheduling is best-effort */
+      }
     },
     onStatusChange: (soundId, status) => emit({ soundId, status }),
   })
@@ -236,7 +250,8 @@ export function createStagingController(
   }
 
   function statusOf(soundId: number): StagingStatus {
-    if (hasLibraryEntry(db, soundId) || hasStagedEntry(db, soundId)) return 'ready'
+    if (hasLibraryEntry(db, soundId) || hasStagedEntry(db, soundId))
+      return 'ready'
     return queue.status(soundId)
   }
 

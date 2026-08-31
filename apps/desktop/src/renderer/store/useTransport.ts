@@ -86,6 +86,12 @@ function cancelStaging(soundId: number): void {
 export interface TransportState {
   status: TransportStatus
   currentSoundId: number | null
+  /**
+   * The full Sound now loaded into the transport, for views that need more than
+   * its id — the ticket-12 zoomable waveform in the transport bar. Coarse state,
+   * flips only on a track change; never on a playhead frame.
+   */
+  currentSound: Sound | null
   loop: boolean
   autoAdvance: boolean
   volume: number
@@ -109,6 +115,7 @@ export interface TransportState {
 export const useTransport = create<TransportState>((set, get) => ({
   status: 'idle',
   currentSoundId: null,
+  currentSound: null,
   loop: false,
   autoAdvance: readBool(AUTOADVANCE_KEY, false),
   volume: readNumber(VOLUME_KEY, DEFAULT_VOLUME),
@@ -123,10 +130,20 @@ export const useTransport = create<TransportState>((set, get) => ({
     }
     // A fresh attempt clears any prior failure marker for this row.
     set((s) => {
-      if (!s.failedIds.has(sound.id)) return { status: 'loading', currentSoundId: sound.id }
+      if (!s.failedIds.has(sound.id))
+        return {
+          status: 'loading',
+          currentSoundId: sound.id,
+          currentSound: sound,
+        }
       const next = new Set(s.failedIds)
       next.delete(sound.id)
-      return { status: 'loading', currentSoundId: sound.id, failedIds: next }
+      return {
+        status: 'loading',
+        currentSoundId: sound.id,
+        currentSound: sound,
+        failedIds: next,
+      }
     })
     audio.load(sound.id, url, { loop: get().loop, volume: get().volume })
     stageOnAudition(sound.id)
@@ -146,7 +163,7 @@ export const useTransport = create<TransportState>((set, get) => ({
     const { currentSoundId } = get()
     audio.stop()
     if (currentSoundId != null) cancelStaging(currentSoundId)
-    set({ status: 'idle', currentSoundId: null })
+    set({ status: 'idle', currentSoundId: null, currentSound: null })
   },
 
   seekFraction: (fraction) => {
@@ -179,6 +196,7 @@ export const useTransport = create<TransportState>((set, get) => ({
         failedIds,
         status: clearCurrent ? 'idle' : s.status,
         currentSoundId: clearCurrent ? null : s.currentSoundId,
+        currentSound: clearCurrent ? null : s.currentSound,
       }
     })
   },
@@ -191,7 +209,9 @@ audio.setCallbacks({
   onLoading: () => useTransport.setState({ status: 'loading' }),
   onPlaying: () => useTransport.setState({ status: 'playing' }),
   onPaused: () =>
-    useTransport.setState((s) => (s.status === 'playing' ? { status: 'paused' } : {})),
+    useTransport.setState((s) =>
+      s.status === 'playing' ? { status: 'paused' } : {},
+    ),
   onEnded: () => {
     const s = useTransport.getState()
     if (s.autoAdvance && s._advance) s._advance()

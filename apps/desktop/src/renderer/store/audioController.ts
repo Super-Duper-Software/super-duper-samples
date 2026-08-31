@@ -63,9 +63,14 @@ let currentId: number | null = null
  */
 let switching = false
 
-/** The DOM node of the active row's playhead, and which sound it belongs to. */
-let playheadNode: HTMLElement | null = null
-let playheadNodeId: number | null = null
+/**
+ * Every registered playhead DOM node, mapped to the sound id it belongs to.
+ * There can be more than one for the current sound at once — e.g. the result
+ * row's inline waveform and the transport bar's larger zoomable waveform
+ * (ticket 12). The rAF loop writes `--playhead` to every node whose id matches
+ * the sound currently loaded.
+ */
+const playheadNodes = new Map<HTMLElement, number>()
 
 export function setCallbacks(cb: AudioCallbacks): void {
   callbacks = cb
@@ -82,15 +87,19 @@ function armStallTimer(): void {
   clearStallTimer()
   stallTimer = setTimeout(() => {
     stallTimer = null
-    if (currentId != null && el != null && el.paused) callbacks.onError(currentId)
+    if (currentId != null && el != null && el.paused)
+      callbacks.onError(currentId)
   }, STALL_TIMEOUT_MS)
 }
 
 function frame(): void {
   const a = el
-  if (a && playheadNode && playheadNodeId === currentId && a.duration > 0) {
-    // Direct DOM write — no setState, no re-render. See module header.
-    playheadNode.style.setProperty('--playhead', String(a.currentTime / a.duration))
+  if (a && playheadNodes.size > 0 && a.duration > 0) {
+    const value = String(a.currentTime / a.duration)
+    for (const [node, id] of playheadNodes) {
+      // Direct DOM write — no setState, no re-render. See module header.
+      if (id === currentId) node.style.setProperty('--playhead', value)
+    }
   }
   rafId = requestAnimationFrame(frame)
 }
@@ -109,7 +118,9 @@ function stopRaf(): void {
 }
 
 function resetPlayhead(): void {
-  playheadNode?.style.setProperty('--playhead', '0')
+  for (const node of playheadNodes.keys()) {
+    node.style.setProperty('--playhead', '0')
+  }
 }
 
 /**
@@ -211,7 +222,9 @@ export function seekFraction(fraction: number): void {
   if (!a || !(a.duration > 0)) return
   const f = Math.min(1, Math.max(0, fraction))
   a.currentTime = f * a.duration
-  playheadNode?.style.setProperty('--playhead', String(f))
+  for (const [node, id] of playheadNodes) {
+    if (id === currentId) node.style.setProperty('--playhead', String(f))
+  }
 }
 
 export function setVolume(volume: number): void {
@@ -223,21 +236,30 @@ export function setLoop(loop: boolean): void {
 }
 
 /**
- * The active row's <Waveform> registers its playhead node here while it is the
- * current sound, and unregisters on unmount / when another sound takes over.
- * Only this node is written to by the rAF loop.
+ * A <Waveform> registers its playhead node here while it is the current sound,
+ * and unregisters (by node) on unmount / when another sound takes over. Every
+ * registered node whose sound id is the one playing is written by the rAF loop.
  */
 export function registerPlayheadNode(soundId: number, node: HTMLElement): void {
-  playheadNode = node
-  playheadNodeId = soundId
-  node.style.setProperty('--playhead', el && el.duration > 0 ? String(el.currentTime / el.duration) : '0')
+  playheadNodes.set(node, soundId)
+  node.style.setProperty(
+    '--playhead',
+    el && el.duration > 0 && soundId === currentId
+      ? String(el.currentTime / el.duration)
+      : '0',
+  )
 }
 
-export function unregisterPlayheadNode(soundId: number): void {
-  if (playheadNodeId === soundId) {
-    playheadNode = null
-    playheadNodeId = null
+export function unregisterPlayheadNode(
+  nodeOrSoundId: HTMLElement | number,
+): void {
+  if (typeof nodeOrSoundId === 'number') {
+    for (const [node, id] of playheadNodes) {
+      if (id === nodeOrSoundId) playheadNodes.delete(node)
+    }
+    return
   }
+  playheadNodes.delete(nodeOrSoundId)
 }
 
 /** Test-only: tear down the singleton between cases. */
@@ -245,6 +267,5 @@ export function __resetForTest(): void {
   stop()
   el = null
   callbacks = NOOP
-  playheadNode = null
-  playheadNodeId = null
+  playheadNodes.clear()
 }

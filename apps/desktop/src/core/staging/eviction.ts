@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path'
 import type { DB } from '../db/index'
 import type { Sound } from '../types'
 import { getSoundsByIds } from '../db/sounds'
+import { deletePeaksRecord } from '../db/peaks'
 import {
   hasLibraryEntry,
   listStagedEntries,
@@ -117,6 +118,8 @@ async function removeStaged(
   await rm(original, { force: true })
   await rm(sidecar, { force: true })
   db.prepare('DELETE FROM staged_entries WHERE sound_id = ?').run(entry.soundId)
+  // Cached peaks (ticket 12) describe an Original that no longer exists — drop them.
+  deletePeaksRecord(db, entry.soundId)
 }
 
 /** True if this Sound must survive any eviction / clear. */

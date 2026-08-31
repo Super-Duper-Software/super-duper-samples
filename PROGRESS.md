@@ -3,8 +3,8 @@
 Tracer-bullet backlog: `.scratch/freesound-desktop-v1/`. Ticket 09 (the milestone) is
 built and its macOS drag-out was manually verified by the user on 2026-08-30. Tickets 10
 (sidecars + LRU eviction), 11 (Library save / view / delete), 15 (search filters +
-sort), 12 (computed peaks + canvas waveform), 13 (library organisation) and 14
-(rebuild from sidecars) are done. Next frontier: 16, 18; then 17 after 16; 19 last.
+sort), 12 (computed peaks + canvas waveform), 13 (library organisation), 14
+(rebuild from sidecars) and 16 (Collections) are done. Next frontier: 17, 18; 19 last.
 
 | # | Ticket | State | Commit |
 |---|---|---|---|
@@ -23,13 +23,172 @@ sort), 12 (computed peaks + canvas waveform), 13 (library organisation) and 14
 | 12 | Computed peaks + canvas waveform | **done** — code + tests (`test/peaks.test.ts`, `test/waveform-peaks.test.ts`) | `9a9febc` |
 | 13 | Library organisation | **done** — code + tests (`test/library-organisation.test.ts`) | `8eea6e1` |
 | 14 | Rebuild from sidecars | **done** — code + tests (`test/rebuild.test.ts`) | `261b47d` |
-| 16–19 | Collections, manifest, overlays, packaging | not started | — |
+| 16 | Collections | **done** — code + tests (`test/collections.test.ts`) | `6dfad08` |
+| 17–19 | Attribution manifest, shell polish, packaging | not started | — |
 
 ## Test counts
 
-- `apps/desktop`: 185 vitest tests (+14 for ticket 14), `tsc --noEmit` clean, `electron-vite build` clean.
+- `apps/desktop`: 201 vitest tests (+16 for ticket 16), `tsc --noEmit` clean, `electron-vite build` clean.
 - `worker`: 30 vitest tests, `tsc --noEmit` clean.
 - `spike/drag-out`: syntax-checked only (throwaway).
+
+## Ticket 16 — what landed
+
+- **No migration.** `collections (id, name, created_at)` and
+  `collection_members (collection_id, sound_id, added_at, PRIMARY KEY(collection_id,
+  sound_id))` were created empty by **m001** (with `FOREIGN KEY(sound_id)
+  REFERENCES sounds(id) ON DELETE CASCADE` and the same on `collection_id`).
+  `MIGRATIONS` stays `[m001, m002]`; `db/index.ts` already runs
+  `PRAGMA foreign_keys = ON`.
+- **`src/core/db/collections.ts`** — the DB access seam (no Electron, unit-tested
+  through the core):
+  - `insertCollection` / `updateCollectionName` / `deleteCollectionRow` /
+    `hasCollection`.
+  - `addMembers(db, collectionId, soundIds, now)` — one transaction,
+    `INSERT … ON CONFLICT(collection_id, sound_id) DO NOTHING`, so a batch add of
+    a mixed selection is idempotent and never moves an existing `added_at`.
+  - `removeMember` — deletes only the one join row.
+  - `clearSoundFromAllCollections(db, soundId)` — `DELETE FROM
+    collection_members WHERE sound_id = ?`, called explicitly from
+    `deleteFromLibrary` (which KEEPS the `sounds` row, so the FK cascade does not
+    fire).
+  - `listCollectionSummaries` → `{ id, name, count }[]` ordered by
+    `name COLLATE NOCASE`, then id (count via a correlated sub-select).
+  - `listCollectionMemberIds(db, collectionId, dir)` — member ids, most-recently
+    added first (`dir` flips it), `JOIN library_entries` so a Sound that somehow
+    left the Library cannot appear.
+  - `collectionsForSounds(db, soundIds)` → `{ [soundId]: {id,name}[] }` for the
+    per-row badges; every requested id present (mapped to `[]`).
+- **New domain types** (`src/core/types.ts`, exported): `CollectionSummary
+  { id, name, count }`, `CollectionRef { id, name }`.
+- **Core command API** (`src/core/index.ts`):
+  - `createCollection(name)` → `CollectionSummary` (trims; empty name throws).
+  - `renameCollection(id, name)` (trims; empty throws; no-op on unknown id).
+  - `deleteCollection(id)` — drops the `collections` row + its
+    `collection_members` (FK cascade); `library_entries` and files are never
+    touched. Confirmation is a `window.confirm` in the renderer.
+  - `addToCollection(collectionId, soundIds[])` — batch, idempotent. Throws if
+    the Collection is unknown, or if any Sound is not in the Library (a
+    Collection is a set of *Library* Sounds — a Staged Sound cannot belong to
+    one).
+  - `removeFromCollection(collectionId, soundId)` — leaves the Sound in the
+    Library and in every other Collection.
+  - `listCollections()` → `CollectionSummary[]`.
+  - `listCollectionSounds(collectionId, { dir? })` → `LibrarySound[]` — the SAME
+    hydrated shape `listLibrary` returns (Sound + `customName` / `effectiveName`
+    / `customTags` / `savedAt`), so a Collection browses, plays, drags and
+    renames identically to the Library. Served ENTIRELY from SQLite — a test
+    asserts no gateway `search` call.
+  - `getCollectionsForSounds(soundIds[])` → `Record<number, CollectionRef[]>`.
+  - `saveToLibrary(soundId, sound?, collectionIds?)` — the optional third arg
+    files the Sound into those Collections in the SAME transaction as the save
+    (each id validated first — an unknown Collection throws before anything is
+    written), so filing at save time is one action.
+  - `deleteFromLibrary` now wraps `deleteLibraryEntry` +
+    `clearSoundFromAllCollections` + `deletePeaksRecord` in one transaction
+    before unlinking the files — a Sound leaving the Library leaves every
+    Collection with it.
+- **preload**: `createCollection` / `renameCollection` / `deleteCollection` /
+  `addToCollection` / `removeFromCollection` / `listCollections` /
+  `listCollectionSounds` / `getCollectionsForSounds` on the `core:invoke`
+  passthrough (no `src/main` change); `saveToLibrary` signature widened with
+  `collectionIds?`; `CollectionSummary` / `CollectionRef` re-exported.
+- **Renderer**:
+  - `src/renderer/store/useCollections.ts` — Zustand mirror: `collections`
+    list, a per-Sound `memberships` cache (`ensureMemberships` batch-fills gaps
+    via `getCollectionsForSounds`, mirroring `useLibrary.ensure`), `revision`
+    bump on every mutation, and `create` / `rename` / `remove` / `addSounds` /
+    `removeSound` actions that re-`load()` and refresh affected memberships.
+  - `src/renderer/store/useMultiSelect.ts` — a tiny `Set<number>` checkbox
+    selection for the Library / Collection lists (`toggle` / `set` / `clear`),
+    whose only job is to gather Sounds for a one-action batch add.
+  - `src/renderer/components/CollectionMenu.tsx` — a dropdown that lists
+    Collections and creates one inline (Enter / Add), calling back with the
+    chosen (or freshly created) id. Closes on outside-click / Escape.
+  - `src/renderer/components/CollectionsPanel.tsx` — the flat browse list: a
+    "New collection" field, and per row name + count, **Rename**
+    (`window.prompt`), **Delete** (`window.confirm`, matching ticket 11), and
+    click-to-open. No tree, no nesting affordance.
+  - `src/renderer/components/AddToCollectionBar.tsx` — appears while ≥1 row is
+    checked; "Add to collection ▾" (a `CollectionMenu`) files every checked
+    Sound in one `addToCollection` call, then clears the selection.
+  - `src/renderer/hooks/useCollectionView.ts` — loads one Collection's
+    `listCollectionSounds`; re-fetches on open-collection / sort-dir change and
+    on `useCollections.revision` / `useLibrary.revision`. No gateway, no paging.
+  - `src/renderer/components/ResultRow.tsx` — `variant` gains `'collection'`;
+    `isLibraryVariant = variant !== 'search'` now drives the rename / tags /
+    actions block, plus a new leading **checkbox** and **Collection-membership
+    badges** (sky chips). The remove button takes optional `removeLabel` /
+    `removeTitle` (Collection view: "Remove from collection"). Search rows gain
+    a **"＋ list"** `CollectionMenu` that calls `saveToLibrary(id, sound,
+    [collectionId])` — save-and-file in one gesture.
+  - `src/renderer/components/ResultList.tsx` — passes `removeLabel` /
+    `removeTitle` through; Delete/Backspace now fires `onRemove` for any
+    non-search variant.
+  - `src/renderer/App.tsx` — third **Collections** tab. With no Collection open
+    it shows `<CollectionsPanel>`; opening one shows a "‹ All collections" back
+    button + name + an added-order sort toggle and browses the members in the
+    same virtualized `ResultList` (`variant="collection"`, remove = remove from
+    the Collection, no file deletion, no confirm). `<AddToCollectionBar>` is
+    mounted above both the Library and Collection lists. Switching tab / going
+    back clears the row selection and the checkbox selection. A header line
+    states "Collections do not nest."
+- **Tests** (`test/collections.test.ts`, 16): create (trimmed) + reject empty
+  name; rename without touching members; a Sound in two Collections at once,
+  with correct `getCollectionsForSounds` badges; add is idempotent (no dup row,
+  `added_at` unmoved); batch-add a mixed selection in one call; `addToCollection`
+  throws for a non-Library Sound and for an unknown Collection; remove from a
+  Collection preserves Library membership AND the other Collection; remove is a
+  no-op when absent; delete a Collection leaves every Sound in the Library and
+  the files on disk, and drops the `collection_members` rows; delete a Sound
+  from the Library clears every membership while other Sounds' memberships stay
+  intact; `saveToLibrary(id, sound, [ids])` saves and files in one action, and
+  throws (saving nothing) for an unknown Collection; `listCollectionSounds`
+  makes no gateway call and carries the user's `customName` / `customTags`
+  overlay; membership persists across a `createCore` restart.
+
+### Deferrals / judgement calls (ticket 16)
+
+- **No migration.** Both tables were pre-created empty by m001 for this ticket;
+  the guidance's "if so, use it" path. `MIGRATIONS` stays `[m001, m002]`.
+- **Collection deletion cascades its members via the FK**, not an explicit
+  `DELETE`. Foreign keys are on (`db/index.ts`), the m001 constraint is
+  `ON DELETE CASCADE`, and a test asserts the join rows are gone. The Library
+  delete path is the one that needs the explicit
+  `clearSoundFromAllCollections`, because it deliberately keeps the `sounds`
+  row.
+- **`addToCollection` throws for a non-Library Sound** (rather than silently
+  filtering) — mirrors `setCustomName` / `setLibraryTags`, and a Collection is
+  defined as a set of *Library* Sounds (CONTEXT.md § Staged: a Staged Sound
+  "cannot belong to a Collection"). The renderer only ever offers the checkbox
+  on already-saved rows, so this is a guard, not a normal path.
+- **Members are ordered most-recently-added first.** A Collection is an
+  *unordered* set, so any stable order is valid; "what did I just file" is the
+  useful default, and the header toggle flips it. There is no manual reordering.
+- **Multi-select is checkboxes, not shift/ctrl-click.** Robust, obvious, and
+  the batch-add target is met. Row keyboard nav (ticket 03/04) is untouched.
+- **Save-and-file on a search row uses the "＋ list" menu**; the bare `s`
+  keystroke still does a plain save. Adding a keyboard variant for
+  save-into-collection was judged more surface than v1 needs.
+- **No renderer component tests** (spec 0001: none exist). `CollectionsPanel`,
+  `CollectionMenu`, `AddToCollectionBar`, the checkbox and the badges are
+  straight presentation over the core commands and the two stores, all covered
+  at the core seam — see "Needs manual verification".
+- **`test/eviction.test.ts` pre-existing flake** (ticket 10, timing-based) is
+  unchanged — it was green on the full run after this ticket landed; the 16 new
+  tests add no timers (every assertion is on a DB row or a returned value).
+
+### Needs manual verification (ticket 16)
+
+- In the GUI: create a Collection; from search, use "＋ list" to save a Sound
+  straight into it; from the Library, tick several rows and "Add to collection";
+  confirm each row shows the right Collection badges.
+- Open a Collection and confirm playback, waveform and drag-out behave exactly
+  as in the Library, and that "Remove from collection" leaves the Sound in the
+  Library (and in any other Collection).
+- Rename a Collection; delete one and confirm the `window.confirm` copy and that
+  its Sounds remain in the Library.
+- Delete a Sound from the Library and confirm it vanishes from every Collection.
 
 ## Ticket 14 — what landed
 

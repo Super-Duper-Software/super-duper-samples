@@ -5,17 +5,16 @@
 //   - Up / Down move a selection held in the `useResultSelection` store (which
 //     ticket 04 reads to drive play / prev / next); the selection is scrolled
 //     into view with the virtualizer and the row DOM node takes focus.
-//   - `/` or Esc hand focus back to the search box.
+//   - Esc hands focus back to the search box.
 //   - Scrolling within five rows of the end asks the parent for the next page.
 //
 // Auditioning keys (ticket 04), handled here so they work while a row is focused
 // and are inert while the search input is focused (this handler is scoped to the
 // list, and the input has its own handler):
-//   - Space          — play / pause the SELECTED row
-//   - J / Ctrl+Down   — select the next row AND start auditioning it
-//   - K / Ctrl+Up     — select the previous row AND start auditioning it
-// These deliberately avoid ticket 03's bindings: plain ArrowUp/ArrowDown still
-// only move the selection, and `/` / Esc still only return focus to search.
+//   - Space  — play / pause the SELECTED row
+//   - J      — select the next row AND start auditioning it
+//   - K      — select the previous row AND start auditioning it
+// Plain ArrowUp/ArrowDown still only move the selection.
 
 import { useCallback, useEffect, useRef } from 'react'
 import type { KeyboardEvent } from 'react'
@@ -107,7 +106,7 @@ export function ResultList({
     [select, sounds],
   )
 
-  // J / K / Ctrl+Arrow: step the selection and audition the landing row.
+  // J / K: step the selection and audition the landing row.
   const auditionRelative = useCallback(
     (delta: number) => {
       const from = useResultSelection.getState().selectedIndex
@@ -175,13 +174,11 @@ export function ResultList({
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
-        if (e.ctrlKey) auditionRelative(1)
-        else move(1, resolveId)
+        move(1, resolveId)
         break
       case 'ArrowUp':
         e.preventDefault()
-        if (e.ctrlKey) auditionRelative(-1)
-        else move(-1, resolveId)
+        move(-1, resolveId)
         break
       case 'j':
       case 'J':
@@ -220,7 +217,6 @@ export function ResultList({
         if (sound) onRemove(sound)
         break
       }
-      case '/':
       case 'Escape':
         e.preventDefault()
         onFocusSearch()

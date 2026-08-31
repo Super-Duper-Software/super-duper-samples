@@ -5,7 +5,7 @@
 // rows here, and it does not.
 
 export interface Shortcut {
-  /** Display form of the key(s), e.g. `Space`, `Ctrl ↓`, `J`. */
+  /** Display form of the key(s), e.g. `Space`, `↑ / ↓`, `J`. */
   keys: string
   description: string
 }
@@ -22,8 +22,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: 'Anywhere',
     items: [
       { keys: '?', description: 'Show this shortcut list' },
-      { keys: '/', description: 'Jump to the search box' },
-      { keys: 'Esc', description: 'Leave the search box · close a dialog' },
+      { keys: 'Esc', description: 'Return to the search box · close a dialog' },
     ],
   },
   {
@@ -32,8 +31,8 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     items: [
       { keys: '↑ / ↓', description: 'Move the selection' },
       { keys: 'Space', description: 'Play / pause the selected sound' },
-      { keys: 'J / Ctrl ↓', description: 'Select and play the next sound' },
-      { keys: 'K / Ctrl ↑', description: 'Select and play the previous sound' },
+      { keys: 'J', description: 'Select and play the next sound' },
+      { keys: 'K', description: 'Select and play the previous sound' },
       { keys: 'S', description: 'Save the selected sound to your Library' },
       {
         keys: 'Delete / Backspace',

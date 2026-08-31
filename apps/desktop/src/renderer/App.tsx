@@ -313,7 +313,7 @@ export default function App() {
               ref={inputRef}
               type="search"
               className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-600 focus:outline-none"
-              placeholder="Search sounds…  (press / to return here · press s to save the selected sound)"
+              placeholder="Search sounds…  (press s to save the selected sound · ? for shortcuts)"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onInputKeyDown}

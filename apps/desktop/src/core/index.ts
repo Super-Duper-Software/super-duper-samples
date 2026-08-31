@@ -8,6 +8,8 @@
 import { mapRawSound } from './gateway/mapRawSound'
 import type { FreesoundGateway, RawSearchPage } from './gateway/index'
 import type {
+  LibraryFilter,
+  LibrarySound,
   SearchFilter,
   SearchOptions,
   SearchPrefs,
@@ -25,11 +27,20 @@ import { getMeta, setMeta } from './db/appMeta'
 import { getSoundsByIds, upsertSound, upsertSounds } from './db/sounds'
 import {
   deleteLibraryEntry,
+  hasLibraryEntry,
   libraryMembership,
-  listLibrarySoundIds,
+  listLibraryOverlays,
   saveLibraryEntry,
+  setCustomName as dbSetCustomName,
+  setCustomTags as dbSetCustomTags,
   type SortDir,
 } from './db/library'
+import {
+  hasLibraryFilter,
+  matchesLibraryFilter,
+  normaliseLibraryFilter,
+  normaliseTags,
+} from './library/libraryFilter'
 import { contentPaths, isOriginalOnDisk } from './staging/contentStore'
 import { deletePeaksRecord } from './db/peaks'
 import {
@@ -152,6 +163,9 @@ const DEBOUNCE_MS = 250
 /** `app_meta` key holding the persisted active sort + filter (ticket 15). */
 const SEARCH_PREFS_KEY = 'search_prefs'
 
+/** `app_meta` key holding the persisted active Library filter (ticket 13). */
+const LIBRARY_FILTER_KEY = 'library_filter'
+
 /** The neutral prefs: relevance order, no filter. */
 const DEFAULT_SEARCH_PREFS: SearchPrefs = { sort: 'relevance', filter: {} }
 
@@ -199,6 +213,57 @@ function readSearchPrefs(db: DB): SearchPrefs {
   } catch {
     return { ...DEFAULT_SEARCH_PREFS, filter: {} }
   }
+}
+
+/**
+ * Read the persisted Library filter from `app_meta` (ticket 13). Absence or a
+ * corrupt blob falls back to the empty filter — a bad stored value must never
+ * wedge the Library view.
+ */
+function readLibraryFilter(db: DB): LibraryFilter {
+  const raw = getMeta(db, LIBRARY_FILTER_KEY)
+  if (!raw) return {}
+  try {
+    return normaliseLibraryFilter(JSON.parse(raw) as LibraryFilter)
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * The Library as `LibrarySound[]` — every `sounds` row that has a
+ * `library_entries` row, merged with the user's overlay (custom name + tags),
+ * ordered by date saved, and optionally narrowed by a structured filter. Served
+ * ENTIRELY from SQLite: no gateway call, ever.
+ */
+function readLibrary(
+  db: DB,
+  dir: SortDir,
+  filter?: LibraryFilter,
+): LibrarySound[] {
+  const overlays = listLibraryOverlays(db, dir)
+  const sounds = getSoundsByIds(
+    db,
+    overlays.map((o) => o.soundId),
+  )
+  const byId = new Map(sounds.map((s) => [s.id, s]))
+
+  const hydrated: LibrarySound[] = []
+  for (const o of overlays) {
+    const sound = byId.get(o.soundId)
+    if (!sound) continue // a lost `sounds` row — skip rather than throw
+    hydrated.push({
+      ...sound,
+      customName: o.customName,
+      effectiveName: o.customName ?? sound.name,
+      customTags: o.customTags,
+      savedAt: o.savedAt,
+    })
+  }
+
+  if (!hasLibraryFilter(filter)) return hydrated
+  const f = normaliseLibraryFilter(filter)
+  return hydrated.filter((s) => matchesLibraryFilter(s, f))
 }
 
 export interface CoreDeps {
@@ -463,12 +528,56 @@ export interface Core {
   getLibraryMembership(ids: number[]): Record<number, boolean>
 
   /**
-   * The Library as `Sound[]`, ordered by the date each was saved. `dir` defaults
-   * to `desc` (newest-saved first — "what did I gather for this project"). Makes
-   * NO gateway call: it is served entirely from the local `sounds` +
+   * The Library as `LibrarySound[]` (each `Sound` merged with the user's overlay
+   * — custom name + custom tags + `savedAt`), ordered by the date each was saved.
+   * `dir` defaults to `desc` (newest-saved first — "what did I gather for this
+   * project"). Makes NO gateway call: served entirely from the local `sounds` +
    * `library_entries` tables, so it works fully offline and while signed out.
    */
-  listLibrary(opts?: { sort?: 'savedAt'; dir?: SortDir }): Sound[]
+  listLibrary(opts?: { sort?: 'savedAt'; dir?: SortDir }): LibrarySound[]
+
+  /**
+   * The Library narrowed by a structured filter (ticket 13) — by tag, License,
+   * duration, file format and/or a free-text term, composing with AND. Served
+   * ENTIRELY from the database: it never issues a network request, so it is
+   * instant and works offline. An absent / all-empty filter is identical to
+   * `listLibrary`.
+   */
+  filterLibrary(
+    filter: LibraryFilter,
+    opts?: { sort?: 'savedAt'; dir?: SortDir },
+  ): LibrarySound[]
+
+  /**
+   * Give a Library Sound the user's own name (or clear it with `null` / `''`).
+   * Writes ONLY `library_entries.custom_name` — the Sound's author, License,
+   * Freesound name and URL are untouched, so the link to the original is never
+   * severed. The custom name is what a Drag-Out delivers on the file (sanitised
+   * for the filesystem at drag time); the Freesound name is used when it is
+   * unset. Throws if the Sound is not in the Library.
+   */
+  setCustomName(soundId: number, customName: string | null): void
+
+  /**
+   * Replace a Library Sound's own tag list (ticket 13) — the user's tags, kept
+   * separate from the tags inherited from Freesound. Tags are trimmed, de-duped
+   * (case-insensitively) and empties dropped. Pass `[]` to clear them. Throws if
+   * the Sound is not in the Library.
+   */
+  setLibraryTags(soundId: number, tags: string[]): void
+
+  /**
+   * The persisted active Library filter (ticket 13), restored on startup so the
+   * Library view reopens with the user's last filter. `{}` when nothing is saved
+   * or the stored blob is unreadable.
+   */
+  getLibraryFilter(): LibraryFilter
+
+  /**
+   * Persist the active Library filter (ticket 13) into `app_meta`. Does NOT run a
+   * query — the renderer re-reads the Library itself with the new filter.
+   */
+  setLibraryFilter(filter: LibraryFilter): LibraryFilter
 
   /**
    * Remove a Sound from the Library: delete its `library_entries` row AND unlink
@@ -817,8 +926,32 @@ export function createCore(deps: CoreDeps): Core {
       saveLibraryEntry(db, soundId, Date.now())
     },
     getLibraryMembership: (ids) => libraryMembership(db, ids),
-    listLibrary: (opts) =>
-      getSoundsByIds(db, listLibrarySoundIds(db, opts?.dir ?? 'desc')),
+    listLibrary: (opts) => readLibrary(db, opts?.dir ?? 'desc'),
+    filterLibrary: (filter, opts) =>
+      readLibrary(db, opts?.dir ?? 'desc', filter),
+    setCustomName: (soundId, customName) => {
+      if (!hasLibraryEntry(db, soundId)) {
+        throw new Error(
+          `setCustomName: sound ${soundId} is not in the Library — save it first`,
+        )
+      }
+      const trimmed = (customName ?? '').trim()
+      dbSetCustomName(db, soundId, trimmed === '' ? null : trimmed)
+    },
+    setLibraryTags: (soundId, tags) => {
+      if (!hasLibraryEntry(db, soundId)) {
+        throw new Error(
+          `setLibraryTags: sound ${soundId} is not in the Library — save it first`,
+        )
+      }
+      dbSetCustomTags(db, soundId, normaliseTags(tags))
+    },
+    getLibraryFilter: () => readLibraryFilter(db),
+    setLibraryFilter: (filter) => {
+      const clean = normaliseLibraryFilter(filter)
+      setMeta(db, LIBRARY_FILTER_KEY, JSON.stringify(clean))
+      return clean
+    },
     deleteFromLibrary: async (soundId) => {
       const sound = getSoundsByIds(db, [soundId])[0]
       deleteLibraryEntry(db, soundId)

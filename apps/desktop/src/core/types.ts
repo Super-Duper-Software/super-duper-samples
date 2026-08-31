@@ -84,11 +84,7 @@ export type SearchSort =
  * which still travels with every Sound regardless of how it was found.
  */
 export type LicenseFilter =
-  | 'commercial'
-  | 'cc0'
-  | 'cc-by'
-  | 'cc-by-nc'
-  | 'sampling-plus'
+  'commercial' | 'cc0' | 'cc-by' | 'cc-by-nc' | 'sampling-plus'
 
 /**
  * Structured, pre-search constraints (ticket 15). Every field is optional; an
@@ -117,6 +113,45 @@ export interface SearchFilter {
 export interface SearchPrefs {
   sort: SearchSort
   filter: SearchFilter
+}
+
+/**
+ * A Library Sound plus the user's local overlay (ticket 13). `customName` and
+ * `customTags` are the user's own vocabulary; the Freesound `name` / `tags`
+ * inherited from {@link Sound} are still present and unchanged. `effectiveName`
+ * is `customName ?? name` — the name that arrives in the DAW on a Drag-Out.
+ */
+export interface LibrarySound extends Sound {
+  /** The user's own name for this Sound, or `null` when they have not renamed it. */
+  customName: string | null
+  /** `customName ?? name` — what a Drag-Out delivers on the file. */
+  effectiveName: string
+  /** The user's own tags, kept separate from the inherited Freesound `tags`. */
+  customTags: string[]
+  /** Epoch ms the Sound was saved to the Library. */
+  savedAt: number
+}
+
+/**
+ * Structured, database-only Library filter (ticket 13). Every field is optional;
+ * an absent or all-empty filter returns the whole Library. Applied entirely from
+ * the local database — it never triggers a network request. Dimensions compose
+ * with AND; `tags` matches a Sound carrying ANY of the listed tags (inherited or
+ * custom).
+ */
+export interface LibraryFilter {
+  /** Match Sounds carrying ANY of these tags (case-insensitive; inherited or custom). */
+  tags?: string[]
+  /** License pre-filter — reuses {@link LicenseFilter}. */
+  license?: LicenseFilter
+  /** Minimum duration in seconds (inclusive). */
+  durationMin?: number
+  /** Maximum duration in seconds (inclusive). */
+  durationMax?: number
+  /** Original file format, e.g. `'wav'` / `'aiff'` (case-insensitive exact match). */
+  fileType?: string
+  /** Free text — matched against custom name, Freesound name, author and every tag. */
+  text?: string
 }
 
 export interface SearchOptions {

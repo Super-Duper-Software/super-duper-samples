@@ -12,7 +12,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import type { Sound } from '../../core/types'
+import type { LibrarySound, Sound } from '../../core/types'
 import { useRowTransport } from '../hooks/useRowTransport'
 import { useTransport } from '../store/useTransport'
 import { selectRowStaging, useStaging } from '../store/useStaging'
@@ -61,6 +61,45 @@ function ResultRowImpl({
   useEffect(() => {
     ensureLibrary([sound.id])
   }, [sound.id, ensureLibrary])
+
+  // Ticket 13: the user's local overlay is carried on the Sound in the Library
+  // view (`variant="library"`). `customName ?? name` is what a Drag-Out delivers.
+  const overlay = sound as Partial<LibrarySound>
+  const customName = overlay.customName ?? null
+  const customTags = overlay.customTags ?? []
+  const displayName = customName ?? sound.name
+
+  const onRename = useCallback(() => {
+    const next = window.prompt(
+      `Rename “${sound.name}” in your Library.\n\n` +
+        'This is the name the file gets when you drag it into a DAW. ' +
+        'Leave it blank to go back to the Freesound name.',
+      customName ?? sound.name,
+    )
+    if (next === null) return // cancelled
+    void useLibrary
+      .getState()
+      .rename(sound.id, next.trim() === '' ? null : next)
+  }, [sound.id, sound.name, customName])
+
+  const onAddTag = useCallback(() => {
+    const raw = window.prompt('Add one of your own tags to this sound:')
+    if (!raw) return
+    const t = raw.trim()
+    if (!t || customTags.some((x) => x.toLowerCase() === t.toLowerCase()))
+      return
+    void useLibrary.getState().setTags(sound.id, [...customTags, t])
+  }, [sound.id, customTags])
+
+  const onRemoveTag = useCallback(
+    (tag: string) => {
+      void useLibrary.getState().setTags(
+        sound.id,
+        customTags.filter((x) => x.toLowerCase() !== tag.toLowerCase()),
+      )
+    },
+    [sound.id, customTags],
+  )
 
   const { isCurrent, status, failed } = useRowTransport(sound.id)
   const isPlaying = isCurrent && status === 'playing'
@@ -177,10 +216,27 @@ function ResultRowImpl({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
-          <span className="truncate text-sm font-medium text-neutral-100" title={sound.name}>
-            {sound.name}
+          <span
+            className="truncate text-sm font-medium text-neutral-100"
+            title={
+              customName
+                ? `${customName}  (Freesound: ${sound.name})`
+                : sound.name
+            }
+          >
+            {displayName}
           </span>
-          <span className="shrink-0 text-xs text-neutral-500">{sound.username}</span>
+          {variant === 'library' && customName && (
+            <span
+              className="shrink-0 truncate text-[11px] italic text-neutral-500"
+              title={`Freesound name: ${sound.name}`}
+            >
+              aka {sound.name}
+            </span>
+          )}
+          <span className="shrink-0 text-xs text-neutral-500">
+            {sound.username}
+          </span>
         </div>
         <div className="mt-0.5 flex items-center gap-2 overflow-hidden">
           <span className="shrink-0 text-xs tabular-nums text-neutral-400">
@@ -203,17 +259,61 @@ function ResultRowImpl({
               ♥ saved
             </span>
           )}
-          <span
-            className="min-w-0 flex-1 truncate text-xs text-neutral-500"
-            title={sound.tags.join(', ')}
-          >
-            {sound.tags.join(' · ')}
-          </span>
+          {variant === 'library' ? (
+            <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+              {customTags.map((t) => (
+                <button
+                  key={`c:${t}`}
+                  type="button"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => onRemoveTag(t)}
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded border border-emerald-700/70 bg-emerald-950/60 px-1 text-[10px] text-emerald-300 hover:border-emerald-500 hover:text-emerald-100"
+                  title="Your tag — click to remove"
+                >
+                  <span># {t}</span>
+                  <span aria-hidden>×</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={onAddTag}
+                className="shrink-0 rounded border border-neutral-700 px-1 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
+                title="Add your own tag"
+              >
+                + tag
+              </button>
+              {sound.tags.length > 0 && (
+                <span
+                  className="min-w-0 truncate text-[11px] text-neutral-600"
+                  title={`From Freesound: ${sound.tags.join(', ')}`}
+                >
+                  {sound.tags.join(' · ')}
+                </span>
+              )}
+            </span>
+          ) : (
+            <span
+              className="min-w-0 flex-1 truncate text-xs text-neutral-500"
+              title={sound.tags.join(', ')}
+            >
+              {sound.tags.join(' · ')}
+            </span>
+          )}
         </div>
       </div>
 
       {variant === 'library' && (
         <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={onRename}
+            className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+            title="Give this sound your own name (used on drag-out)"
+          >
+            Rename
+          </button>
           <button
             type="button"
             onMouseDown={(e) => e.stopPropagation()}

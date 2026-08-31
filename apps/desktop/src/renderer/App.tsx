@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { AuthBar } from './components/AuthBar'
 import { FilterBar } from './components/FilterBar'
+import { LibraryFilterBar } from './components/LibraryFilterBar'
 import { ResultList } from './components/ResultList'
 import { StagingConsentBanner } from './components/StagingConsentBanner'
 import { TransportBar } from './components/TransportBar'
@@ -11,6 +12,7 @@ import { formatResultCount } from './lib/format'
 import { activeFilterChips } from './lib/filterLabels'
 import { useResultSelection } from './store/useResultSelection'
 import { useLibrary } from './store/useLibrary'
+import { useLibraryFilter, hasLibraryFilter } from './store/useLibraryFilter'
 import { useSearchPrefs } from './store/useSearchPrefs'
 import type { Sound } from '../core/types'
 
@@ -28,9 +30,15 @@ export default function App() {
     useSearchPrefs.getState().load()
   }, [])
 
+  const libraryFilter = useLibraryFilter((s) => s.filter)
+  useEffect(() => {
+    useLibraryFilter.getState().load()
+  }, [])
+
   const { status, error, sounds, totalCount, hasMore, loadingMore, loadMore } =
     useSearch(query, sort, filter, prefsReady)
-  const library = useLibraryView(view === 'library')
+  const library = useLibraryView(view === 'library', libraryFilter)
+  const libraryFiltered = hasLibraryFilter(libraryFilter)
 
   const activeChips = activeFilterChips(filter)
 
@@ -122,21 +130,24 @@ export default function App() {
             <FilterBar />
           </>
         ) : (
-          <div className="flex items-center gap-2 text-xs text-neutral-400">
-            <span>Sorted by date saved</span>
-            <button
-              type="button"
-              onClick={() =>
-                library.setDir(library.dir === 'desc' ? 'asc' : 'desc')
-              }
-              className="rounded border border-neutral-700 px-1.5 py-0.5 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
-            >
-              {library.dir === 'desc' ? 'Newest first' : 'Oldest first'}
-            </button>
-            <span className="text-neutral-600">
-              · select a row and press Delete to remove it
-            </span>
-          </div>
+          <>
+            <div className="flex items-center gap-2 text-xs text-neutral-400">
+              <span>Sorted by date saved</span>
+              <button
+                type="button"
+                onClick={() =>
+                  library.setDir(library.dir === 'desc' ? 'asc' : 'desc')
+                }
+                className="rounded border border-neutral-700 px-1.5 py-0.5 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+              >
+                {library.dir === 'desc' ? 'Newest first' : 'Oldest first'}
+              </button>
+              <span className="text-neutral-600">
+                · select a row and press Delete to remove it
+              </span>
+            </div>
+            <LibraryFilterBar />
+          </>
         )}
       </header>
 
@@ -231,18 +242,35 @@ export default function App() {
               </p>
             )}
 
-            {library.status === 'ok' && library.sounds.length === 0 && (
-              <div className="p-4 text-sm text-neutral-400">
-                <p className="font-medium text-neutral-300">
-                  Your Library is empty.
-                </p>
-                <p className="mt-1">
-                  Search for a sound, select it, and press{' '}
-                  <kbd className="rounded border border-neutral-700 px-1">s</kbd>{' '}
-                  to keep it here.
-                </p>
-              </div>
-            )}
+            {library.status === 'ok' &&
+              library.sounds.length === 0 &&
+              (libraryFiltered ? (
+                <div className="p-4 text-sm text-neutral-400">
+                  <p className="font-medium text-neutral-300">
+                    No Library sounds match this filter.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => useLibraryFilter.getState().clearFilter()}
+                    className="mt-2 rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+                  >
+                    Clear all filters
+                  </button>
+                </div>
+              ) : (
+                <div className="p-4 text-sm text-neutral-400">
+                  <p className="font-medium text-neutral-300">
+                    Your Library is empty.
+                  </p>
+                  <p className="mt-1">
+                    Search for a sound, select it, and press{' '}
+                    <kbd className="rounded border border-neutral-700 px-1">
+                      s
+                    </kbd>{' '}
+                    to keep it here.
+                  </p>
+                </div>
+              ))}
 
             {library.sounds.length > 0 && (
               <ResultList

@@ -27,6 +27,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import type { DB } from '../db/index'
+import { getLibraryOverlay } from '../db/library'
 import { getSoundsByIds } from '../db/sounds'
 import type { Sound } from '../types'
 import { contentPaths, extForSound } from './contentStore'
@@ -144,7 +145,12 @@ export function createDragController(deps: DragControllerDeps): DragController {
     })
 
     // 4. Hardlink each Original into the drag dir under a human-readable name.
-    const paths = sounds.map((sound) => hardlinkForDrag(sound))
+    //    A Library Sound the user has renamed drags out under THAT name (ticket
+    //    13); everything else uses the Freesound name. Either way the name is run
+    //    through the same filesystem sanitisation + `(2)`/`(3)` disambiguation.
+    const paths = sounds.map((sound) =>
+      hardlinkForDrag(sound, effectiveDragName(sound)),
+    )
 
     // 5. Resolve a guaranteed-non-empty icon.
     const iconPath = resolveIconPath(opts.iconDataUrl)
@@ -173,17 +179,28 @@ export function createDragController(deps: DragControllerDeps): DragController {
   }
 
   /**
+   * The name the dropped file should carry: the user's custom Library name when
+   * they have set one (ticket 13), otherwise the Freesound name. A blank/whitespace
+   * custom name is ignored. Sanitisation happens later in `sanitiseStem`.
+   */
+  function effectiveDragName(sound: Sound): string {
+    const custom = getLibraryOverlay(db, sound.id)?.customName
+    if (typeof custom === 'string' && custom.trim() !== '') return custom
+    return sound.name
+  }
+
+  /**
    * Link the Sound's Original into `<dataDir>/drag/` as `<pretty name>.<ext>`.
    * Reuses an existing link to the SAME Original; disambiguates a different
    * Sound that sanitises to the same name with ` (2)`, ` (3)`, …
    */
-  function hardlinkForDrag(sound: Sound): string {
+  function hardlinkForDrag(sound: Sound, displayName: string): string {
     const src = contentPaths(dataDir, sound).original
     const ext = extForSound(sound)
     const dir = join(dataDir, DRAG_DIRNAME)
     mkdirSync(dir, { recursive: true })
 
-    const stem = sanitiseStem(sound, ext)
+    const stem = sanitiseStem({ id: sound.id, name: displayName }, ext)
     const srcIno = statSync(src).ino
 
     for (let n = 1; ; n++) {

@@ -14,6 +14,8 @@ import type {
   StagingStatusChange,
 } from '../core'
 import type {
+  LibraryFilter,
+  LibrarySound,
   SearchOptions,
   SearchPrefs,
   SearchResult,
@@ -22,6 +24,8 @@ import type {
 import type { SortDir } from '../core'
 
 export type {
+  LibraryFilter,
+  LibrarySound,
   LicenseFilter,
   SearchFilter,
   SearchOptions,
@@ -129,8 +133,34 @@ export interface CoreApi {
   saveToLibrary(soundId: number, sound?: Sound): Promise<void>
   /** Batch "already in the Library?" for search-result badges. */
   getLibraryMembership(ids: number[]): Promise<Record<number, boolean>>
-  /** The Library as `Sound[]`, newest-saved first by default. No gateway call. */
-  listLibrary(opts?: { sort?: 'savedAt'; dir?: SortDir }): Promise<Sound[]>
+  /**
+   * The Library as `LibrarySound[]` (Sound + the user's custom name / tags),
+   * newest-saved first by default. No gateway call.
+   */
+  listLibrary(opts?: {
+    sort?: 'savedAt'
+    dir?: SortDir
+  }): Promise<LibrarySound[]>
+  /**
+   * The Library narrowed by a structured filter (tag / License / duration / file
+   * format / free text, composing with AND). Database-only — never a network
+   * request. An empty filter is identical to `listLibrary`.
+   */
+  filterLibrary(
+    filter: LibraryFilter,
+    opts?: { sort?: 'savedAt'; dir?: SortDir },
+  ): Promise<LibrarySound[]>
+  /**
+   * Give a Library Sound the user's own name (or clear it with `null` / `''`).
+   * Keeps the Sound's author, License and Freesound linkage intact.
+   */
+  setCustomName(soundId: number, customName: string | null): Promise<void>
+  /** Replace a Library Sound's own tag list (distinct from the inherited tags). */
+  setLibraryTags(soundId: number, tags: string[]): Promise<void>
+  /** The persisted active Library filter, restored on startup. */
+  getLibraryFilter(): Promise<LibraryFilter>
+  /** Persist the active Library filter. Does not run a query. */
+  setLibraryFilter(filter: LibraryFilter): Promise<LibraryFilter>
   /**
    * Remove a Sound from the Library: drops its row AND deletes its Original +
    * sidecar to reclaim disk. The renderer confirms with the user first.
@@ -216,6 +246,16 @@ const api: CoreApi = {
     ipcRenderer.invoke('core:invoke', 'getLibraryMembership', [ids]),
   listLibrary: (opts) =>
     ipcRenderer.invoke('core:invoke', 'listLibrary', [opts]),
+  filterLibrary: (filter, opts) =>
+    ipcRenderer.invoke('core:invoke', 'filterLibrary', [filter, opts]),
+  setCustomName: (soundId, customName) =>
+    ipcRenderer.invoke('core:invoke', 'setCustomName', [soundId, customName]),
+  setLibraryTags: (soundId, tags) =>
+    ipcRenderer.invoke('core:invoke', 'setLibraryTags', [soundId, tags]),
+  getLibraryFilter: () =>
+    ipcRenderer.invoke('core:invoke', 'getLibraryFilter', []),
+  setLibraryFilter: (filter) =>
+    ipcRenderer.invoke('core:invoke', 'setLibraryFilter', [filter]),
   deleteFromLibrary: (soundId) =>
     ipcRenderer.invoke('core:invoke', 'deleteFromLibrary', [soundId]),
   // Named channels: these two need Electron `shell`, which cannot live in core.

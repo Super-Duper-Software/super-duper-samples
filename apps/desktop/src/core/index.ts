@@ -23,6 +23,14 @@ import {
   ThrottledError,
 } from './errors'
 import { openDb, type DB } from './db/index'
+import { assessStartup, type StartupAssessment } from './startup/assessStartup'
+import {
+  createRebuildService,
+  type RebuildProgress,
+  type RebuildReport,
+  type RebuildRunner,
+  type RebuildService,
+} from './rebuild/rebuildService'
 import { getMeta, setMeta } from './db/appMeta'
 import { getSoundsByIds, upsertSound, upsertSounds } from './db/sounds'
 import {
@@ -154,6 +162,26 @@ export type {
   PeaksStatusChange,
 } from './peaks/peakService'
 export { BASE_BUCKET_COUNT } from './peaks/computePeaks'
+export { inspectDbHealth } from './db/index'
+export type { DbHealth } from './db/index'
+export { assessStartup, countSidecars } from './startup/assessStartup'
+export type { StartupAssessment } from './startup/assessStartup'
+export {
+  createRebuildService,
+  rebuildWorkerRunner as createRebuildWorkerRunner,
+  scanSidecars,
+  NOT_RECOVERABLE_MESSAGE,
+} from './rebuild/rebuildService'
+export type {
+  RebuildProgress,
+  RebuildReport,
+  RebuildRecovered,
+  RebuildRunner,
+  RebuildService,
+  SidecarScan,
+  ScannedSidecar,
+  MalformedSidecar,
+} from './rebuild/rebuildService'
 export { decodeAudioBuffer, UndecodableAudioError } from './peaks/decodeAudio'
 export { computePeaks } from './peaks/computePeaks'
 
@@ -341,6 +369,22 @@ export interface CoreDeps {
   computePeaksRunner?: PeakRunner
   /** Broadcast every per-sound peaks status change (main forwards it to the renderer). */
   onPeaksStatusChange?: (change: PeaksStatusChange) => void
+
+  // ---- rebuild from sidecars (ticket 14) --------------------------------
+  /**
+   * Absolute path to the built `rebuildWorker.js`. When set, the content-store
+   * scan for `rebuildFromSidecars` runs on a `node:worker_threads` thread — off
+   * the Electron main process. `src/main` passes `out/main/rebuildWorker.js`.
+   */
+  rebuildWorkerPath?: string
+  /**
+   * Test seam: replace the sidecar-scan runner entirely (in-process, or behind a
+   * controllable promise to prove `rebuildFromSidecars` does not block). Wins
+   * over `rebuildWorkerPath`.
+   */
+  rebuildRunner?: RebuildRunner
+  /** Broadcast sidecar-scan progress `{ done, total }` (main forwards it to the renderer). */
+  onRebuildProgress?: (progress: RebuildProgress) => void
 }
 
 /** The command API. Later tickets add methods here; the bridge forwards them all. */
@@ -633,6 +677,39 @@ export interface Core {
     listener: (change: PeaksStatusChange) => void,
   ): () => void
 
+  // ---- rebuild from sidecars (ticket 14) --------------------------------
+
+  /**
+   * The startup health verdict, captured BEFORE the database was opened: whether
+   * the DB file was usable, how many sidecars are in the content store, and
+   * whether the renderer should offer a rebuild rather than show an empty
+   * Library. Carries `notRecoverable` — the sentence to show the user first.
+   */
+  getStartupAssessment(): StartupAssessment
+
+  /**
+   * Reconstruct `sounds` rows and Library membership from the content store's
+   * `<id>.json` sidecars alone — the recovery path ADR-0002 promises. The scan
+   * runs OFF the main thread (a Worker in production) and reports progress via
+   * `subscribeRebuildProgress`; this call returns as soon as the scan resolves
+   * and never blocks other commands while it runs.
+   *
+   * Returns a structured report: what was `recovered` (each with author +
+   * License), `orphanAudio` (Originals with no sidecar — reported, never
+   * imported, never deleted), `orphanSidecars` (sidecars with no Original —
+   * reported and their `.json` removed), `malformed` (bad sidecars, reported
+   * individually — one never aborts the run), and `notRecoverable` (custom
+   * names, custom tags and Collections). Safe to re-run.
+   */
+  rebuildFromSidecars(): Promise<RebuildReport>
+
+  /**
+   * Subscribe to sidecar-scan progress (`{ done, total }`) during a
+   * `rebuildFromSidecars` run. Returns an unsubscribe function. The main process
+   * forwards these over `core:event:rebuildProgress`.
+   */
+  subscribeRebuildProgress(listener: (p: RebuildProgress) => void): () => void
+
   /** Release the database handle and cancel any pending debounced/refresh timers. */
   close(): void
 }
@@ -669,6 +746,11 @@ function unconfiguredAuth(
 
 export function createCore(deps: CoreDeps): Core {
   const { gateway, dbPath, debounceMs = DEBOUNCE_MS } = deps
+
+  // Capture the DB + sidecar health BEFORE `openDb` — it would recreate a
+  // missing or blank schema and hide the very condition a rebuild responds to.
+  const startupAssessment = assessStartup({ dbPath, dataDir: deps.dataDir })
+
   const db: DB = openDb(dbPath)
 
   const scheduler: Scheduler = deps.scheduler ?? createRealScheduler()
@@ -697,6 +779,16 @@ export function createCore(deps: CoreDeps): Core {
     peakWorkerPath: deps.peakWorkerPath,
     runner: deps.computePeaksRunner,
     onStatusChange: deps.onPeaksStatusChange,
+  })
+
+  // Rebuild from sidecars (ticket 14). The content-store scan runs off this
+  // thread (a Worker in production; an injected runner under test).
+  const rebuild: RebuildService = createRebuildService({
+    db,
+    dataDir: deps.dataDir,
+    rebuildWorkerPath: deps.rebuildWorkerPath,
+    runner: deps.rebuildRunner,
+    onProgress: deps.onRebuildProgress,
   })
 
   const staging: StagingController = createStagingController({
@@ -969,10 +1061,15 @@ export function createCore(deps: CoreDeps): Core {
     },
     getFreesoundUrl: (soundId) => getSoundsByIds(db, [soundId])[0]?.url ?? null,
 
+    getStartupAssessment: () => startupAssessment,
+    rebuildFromSidecars: () => rebuild.rebuildFromSidecars(),
+    subscribeRebuildProgress: (listener) => rebuild.subscribe(listener),
+
     close: () => {
       controller.dispose()
       staging.close()
       peakService.close()
+      rebuild.close()
       auth.close()
       dragRegistry.clear()
       db.close()

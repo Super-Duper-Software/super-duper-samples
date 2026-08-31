@@ -7,10 +7,63 @@
 // Heavier work introduced by later tickets (peak compute, sidecar rebuild, bulk
 // eviction) must move off the main thread via `worker_threads`.
 
+import { existsSync } from 'node:fs'
 import Database from 'better-sqlite3'
 import { MIGRATIONS, type Migration } from './migrations'
 
 export type DB = Database.Database
+
+/**
+ * Verdict on whether the database at a path can be used (ticket 14). Anything
+ * other than `{ ok: true }` is a cue for `src/main` to offer a rebuild from
+ * sidecars rather than launch into a broken app or a silently empty Library.
+ *
+ *   - `missing`           — no file there at all (a fresh install, OR a deleted DB).
+ *   - `unreadable`        — the file exists but SQLite cannot open it, or
+ *                           `PRAGMA quick_check` fails (corruption, truncation).
+ *   - `schema-incomplete` — opens fine but the core's tables are not all present
+ *                           (a botched migration, or a hand-created empty file).
+ */
+export type DbHealth =
+  | { ok: true }
+  | { ok: false; reason: 'missing' | 'unreadable' | 'schema-incomplete' }
+
+/**
+ * Probe `dbPath` WITHOUT migrating or creating it — a read-only open plus an
+ * integrity and schema check. Call this BEFORE `openDb` (which would paper over
+ * a missing or blank database by creating the schema fresh). `':memory:'` is
+ * always reported healthy.
+ */
+export function inspectDbHealth(dbPath: string): DbHealth {
+  if (dbPath !== ':memory:' && !existsSync(dbPath)) {
+    return { ok: false, reason: 'missing' }
+  }
+  let probe: Database.Database
+  try {
+    probe = new Database(dbPath, {
+      readonly: true,
+      fileMustExist: dbPath !== ':memory:',
+    })
+  } catch {
+    return { ok: false, reason: 'unreadable' }
+  }
+  try {
+    const check = probe.pragma('quick_check', { simple: true })
+    if (check !== 'ok') return { ok: false, reason: 'unreadable' }
+    const row = probe
+      .prepare(
+        `SELECT COUNT(*) AS n FROM sqlite_master
+           WHERE type = 'table' AND name IN ('sounds', 'library_entries')`,
+      )
+      .get() as { n: number }
+    if (row.n < 2) return { ok: false, reason: 'schema-incomplete' }
+    return { ok: true }
+  } catch {
+    return { ok: false, reason: 'unreadable' }
+  } finally {
+    probe.close()
+  }
+}
 
 /**
  * Open (creating if absent) the database at `dbPath`, enforce foreign keys, and

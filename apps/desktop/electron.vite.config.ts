@@ -16,6 +16,9 @@ export default defineConfig({
           // Ticket 12: the peak-computation Worker. A separate entry so it lands
           // at `out/main/peakWorker.js` and can be spawned via `worker_threads`.
           peakWorker: resolve(__dirname, 'src/core/peaks/peakWorker.ts'),
+          // Ticket 14: the sidecar-scan Worker for "rebuild from sidecars".
+          // Lands at `out/main/rebuildWorker.js`; spawned via `worker_threads`.
+          rebuildWorker: resolve(__dirname, 'src/core/rebuild/rebuildWorker.ts'),
         },
       },
     },

@@ -5,6 +5,7 @@ import { FilterBar } from './components/FilterBar'
 import { LibraryFilterBar } from './components/LibraryFilterBar'
 import { ResultList } from './components/ResultList'
 import { StagingConsentBanner } from './components/StagingConsentBanner'
+import { RebuildBanner } from './components/RebuildBanner'
 import { TransportBar } from './components/TransportBar'
 import { useSearch } from './hooks/useSearch'
 import { useLibraryView } from './hooks/useLibraryView'
@@ -152,6 +153,7 @@ export default function App() {
       </header>
 
       <StagingConsentBanner />
+      <RebuildBanner />
 
       <section className="min-h-0 flex-1">
         {view === 'search' && (

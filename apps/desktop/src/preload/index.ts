@@ -9,6 +9,8 @@ import type {
   EvictionOutcome,
   PeaksPayload,
   PeaksStatusChange,
+  RebuildProgress,
+  RebuildReport,
   StagingConsent,
   StagingStatus,
   StagingStatusChange,
@@ -40,10 +42,25 @@ export type {
   EvictionOutcome,
   PeaksPayload,
   PeaksStatusChange,
+  RebuildProgress,
+  RebuildReport,
   StagingConsent,
   StagingStatus,
   StagingStatusChange,
 } from '../core'
+
+/**
+ * Payload the main process pushes on `core:event:rebuildOffer` (ticket 14) when
+ * the database was missing / corrupt / half-migrated but sidecars are on disk.
+ */
+export interface RebuildOffer {
+  /** Why the database was unusable, or `null` if it opened but lacked the schema. */
+  reason: 'missing' | 'unreadable' | 'schema-incomplete' | null
+  /** How many `<id>.json` sidecars are available to rebuild from. */
+  sidecarCount: number
+  /** The plain-language "not recoverable" warning to show before accepting. */
+  notRecoverable: string
+}
 
 /** Channel the main process pushes auth-state transitions on (ticket 07). */
 const AUTH_STATE_CHANNEL = 'core:event:authState'
@@ -51,6 +68,10 @@ const AUTH_STATE_CHANNEL = 'core:event:authState'
 const STAGING_STATUS_CHANNEL = 'core:event:stagingStatus'
 /** Channel the main process pushes per-sound computed-peaks status changes on (ticket 12). */
 const PEAKS_STATUS_CHANNEL = 'core:event:peaksStatus'
+/** Channel the main process pushes a "database gone — rebuild?" offer on (ticket 14). */
+const REBUILD_OFFER_CHANNEL = 'core:event:rebuildOffer'
+/** Channel the main process pushes sidecar-scan progress on during a rebuild (ticket 14). */
+const REBUILD_PROGRESS_CHANNEL = 'core:event:rebuildProgress'
 
 export interface CoreApi {
   search(query: string, opts?: SearchOptions): Promise<SearchResult>
@@ -194,6 +215,28 @@ export interface CoreApi {
    * Returns an unsubscribe function.
    */
   onPeaks(listener: (change: PeaksStatusChange) => void): () => void
+
+  // ---- rebuild from sidecars (ticket 14) --------------------------------
+  /**
+   * Reconstruct the Library from the content store's `<id>.json` sidecars when
+   * the database was lost. Resolves with a report of what was recovered (each
+   * with author + License), what had no sidecar (orphan audio — left on disk),
+   * what had no audio (orphan sidecars — removed), what was malformed, and the
+   * plain statement that custom names, custom tags and Collections are gone.
+   * The scan runs off the main thread; listen on `onRebuildProgress` for a bar.
+   */
+  rebuildFromSidecars(): Promise<RebuildReport>
+  /**
+   * Subscribe to the "your database was missing or unreadable — rebuild from
+   * sidecars?" offer the main process pushes once on startup. Returns an
+   * unsubscribe function.
+   */
+  onRebuildOffer(listener: (offer: RebuildOffer) => void): () => void
+  /**
+   * Subscribe to sidecar-scan progress (`{ done, total }`) during a rebuild.
+   * Returns an unsubscribe function.
+   */
+  onRebuildProgress(listener: (progress: RebuildProgress) => void): () => void
 }
 
 const api: CoreApi = {
@@ -273,6 +316,20 @@ const api: CoreApi = {
       listener(change)
     ipcRenderer.on(PEAKS_STATUS_CHANNEL, handler)
     return () => ipcRenderer.removeListener(PEAKS_STATUS_CHANNEL, handler)
+  },
+
+  rebuildFromSidecars: () =>
+    ipcRenderer.invoke('core:invoke', 'rebuildFromSidecars', []),
+  onRebuildOffer: (listener) => {
+    const handler = (_e: unknown, offer: RebuildOffer): void => listener(offer)
+    ipcRenderer.on(REBUILD_OFFER_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(REBUILD_OFFER_CHANNEL, handler)
+  },
+  onRebuildProgress: (listener) => {
+    const handler = (_e: unknown, progress: RebuildProgress): void =>
+      listener(progress)
+    ipcRenderer.on(REBUILD_PROGRESS_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(REBUILD_PROGRESS_CHANNEL, handler)
   },
 }
 

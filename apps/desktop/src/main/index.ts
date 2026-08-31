@@ -3,15 +3,17 @@
 // (CONVENTIONS.md, spec 0001: "If a behaviour cannot be exercised without
 // launching Electron, it is in the wrong place.").
 
-import { existsSync } from 'node:fs'
+import { existsSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import {
+  assessStartup,
   createCore,
   createRealScheduler,
   type AuthState,
   type Core,
   type PeaksStatusChange,
+  type RebuildProgress,
   type StagingStatusChange,
 } from '../core'
 import { HttpFreesoundGateway } from '../core/gateway/http'
@@ -38,6 +40,10 @@ const AUTH_STATE_CHANNEL = 'core:event:authState'
 const STAGING_STATUS_CHANNEL = 'core:event:stagingStatus'
 /** Channel the renderer listens on for per-sound computed-peaks status pushes (ticket 12). */
 const PEAKS_STATUS_CHANNEL = 'core:event:peaksStatus'
+/** Channel the main process pushes a "your database is gone — rebuild?" offer on (ticket 14). */
+const REBUILD_OFFER_CHANNEL = 'core:event:rebuildOffer'
+/** Channel the main process pushes sidecar-scan progress on during a rebuild (ticket 14). */
+const REBUILD_PROGRESS_CHANNEL = 'core:event:rebuildProgress'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -109,10 +115,31 @@ function broadcastPeaksStatus(change: PeaksStatusChange): void {
   }
 }
 
+function broadcastRebuildProgress(progress: RebuildProgress): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(REBUILD_PROGRESS_CHANNEL, progress)
+  }
+}
+
 void app.whenReady().then(() => {
   const config = loadConfig()
   const dataDir = app.getPath('userData')
   const dbPath = join(dataDir, 'library.db') // opened in the core, off the renderer thread.
+
+  // Ticket 14 — check the database BEFORE the core opens it. If it is missing,
+  // corrupt or half-migrated but there are sidecars on disk, we offer the user a
+  // rebuild instead of launching into an empty Library. A file that exists but
+  // cannot be opened is moved aside so `openDb` can start a fresh schema; the
+  // rebuild then repopulates it.
+  const startup = assessStartup({ dbPath, dataDir })
+  if (!startup.db.ok && startup.db.reason === 'unreadable') {
+    try {
+      renameSync(dbPath, `${dbPath}.corrupt-${Date.now()}`)
+    } catch {
+      // If we cannot move it, `openDb` will throw and Electron will surface it —
+      // still better than silently continuing on a corrupt file.
+    }
+  }
 
   const gateway = new HttpFreesoundGateway({
     apiKey: config.freesoundApiKey,
@@ -129,9 +156,13 @@ void app.whenReady().then(() => {
     onAuthStateChange: broadcastAuthState,
     onStagingStatusChange: broadcastStagingStatus,
     onPeaksStatusChange: broadcastPeaksStatus,
+    onRebuildProgress: broadcastRebuildProgress,
     // The peak Worker is built as a second `main` entry (electron.vite.config.ts),
     // so it sits next to this compiled bundle at `out/main/peakWorker.js`.
     peakWorkerPath: join(__dirname, 'peakWorker.js'),
+    // The sidecar-scan Worker for "rebuild from sidecars" (ticket 14), built as a
+    // third `main` entry — `out/main/rebuildWorker.js`.
+    rebuildWorkerPath: join(__dirname, 'rebuildWorker.js'),
     dragHost: createElectronDragHost({
       getWindow: () => BrowserWindow.getAllWindows()[0] ?? null,
       fallbackIconPath: dragIconFallbackPath,
@@ -146,6 +177,16 @@ void app.whenReady().then(() => {
   app.on('browser-window-created', (_e, win) => {
     win.webContents.on('did-finish-load', () => {
       win.webContents.send(AUTH_STATE_CHANNEL, core.getAuthState())
+      // Ticket 14 — if the database was unusable and there are sidecars, tell the
+      // renderer to offer a rebuild (with the "custom names / tags / Collections
+      // are not recoverable" warning) rather than show an empty Library.
+      if (startup.offerRebuild) {
+        win.webContents.send(REBUILD_OFFER_CHANNEL, {
+          reason: startup.db.ok ? null : startup.db.reason,
+          sidecarCount: startup.sidecarCount,
+          notRecoverable: startup.notRecoverable,
+        })
+      }
     })
   })
 

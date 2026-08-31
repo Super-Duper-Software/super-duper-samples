@@ -9,6 +9,8 @@ import {
   type DragHost,
   type PeakRunner,
   type PeaksStatusChange,
+  type RebuildProgress,
+  type RebuildRunner,
   type StagingStatusChange,
 } from '../../src/core'
 import { FakeFreesoundGateway } from '../../src/core/gateway/fake'
@@ -85,6 +87,8 @@ export async function makeTestCore(
   opts: {
     gateway?: FreesoundGateway
     dbPath?: string
+    /** Reuse an existing data dir (ticket 14 — rebuild after the DB is deleted). */
+    dataDir?: string
     debounceMs?: number
     authPlatform?: FakeAuthPlatform
     scheduler?: FakeScheduler
@@ -101,9 +105,14 @@ export async function makeTestCore(
     computePeaksRunner?: PeakRunner
     peakWorkerPath?: string
     onPeaksStatusChange?: (change: PeaksStatusChange) => void
+    /** Ticket 14 — in-process sidecar-scan runner so tests never spawn a real Worker. */
+    rebuildRunner?: RebuildRunner
+    rebuildWorkerPath?: string
+    onRebuildProgress?: (progress: RebuildProgress) => void
   } = {},
 ): Promise<TestCore> {
-  const dataDir = await mkdtemp(join(tmpdir(), 'freesound-desktop-test-'))
+  const dataDir =
+    opts.dataDir ?? (await mkdtemp(join(tmpdir(), 'freesound-desktop-test-')))
   const dbPath = opts.dbPath ?? join(dataDir, 'library.db')
   const gateway = opts.gateway ?? makeFakeGateway()
   const authPlatform = opts.authPlatform ?? new FakeAuthPlatform()
@@ -126,6 +135,9 @@ export async function makeTestCore(
     computePeaksRunner: opts.computePeaksRunner,
     peakWorkerPath: opts.peakWorkerPath,
     onPeaksStatusChange: opts.onPeaksStatusChange,
+    rebuildRunner: opts.rebuildRunner,
+    rebuildWorkerPath: opts.rebuildWorkerPath,
+    onRebuildProgress: opts.onRebuildProgress,
   })
   return {
     core,

@@ -3,8 +3,8 @@
 Tracer-bullet backlog: `.scratch/freesound-desktop-v1/`. Ticket 09 (the milestone) is
 built and its macOS drag-out was manually verified by the user on 2026-08-30. Tickets 10
 (sidecars + LRU eviction), 11 (Library save / view / delete), 15 (search filters +
-sort), 12 (computed peaks + canvas waveform) and 13 (library organisation) are
-done. Next frontier: 14, 16, 18; then 17 after 16; 19 last.
+sort), 12 (computed peaks + canvas waveform), 13 (library organisation) and 14
+(rebuild from sidecars) are done. Next frontier: 16, 18; then 17 after 16; 19 last.
 
 | # | Ticket | State | Commit |
 |---|---|---|---|
@@ -22,13 +22,137 @@ done. Next frontier: 14, 16, 18; then 17 after 16; 19 last.
 | 15 | Search filters and sort | **done** — code + tests (`test/search-filters.test.ts`) | `eb78025` |
 | 12 | Computed peaks + canvas waveform | **done** — code + tests (`test/peaks.test.ts`, `test/waveform-peaks.test.ts`) | `9a9febc` |
 | 13 | Library organisation | **done** — code + tests (`test/library-organisation.test.ts`) | `8eea6e1` |
-| 14, 16–19 | Sidecar rebuild, collections, manifest, overlays, packaging | not started | — |
+| 14 | Rebuild from sidecars | **done** — code + tests (`test/rebuild.test.ts`) | `261b47d` |
+| 16–19 | Collections, manifest, overlays, packaging | not started | — |
 
 ## Test counts
 
-- `apps/desktop`: 171 vitest tests (+11 for ticket 13), `tsc --noEmit` clean, `electron-vite build` clean.
+- `apps/desktop`: 185 vitest tests (+14 for ticket 14), `tsc --noEmit` clean, `electron-vite build` clean.
 - `worker`: 30 vitest tests, `tsc --noEmit` clean.
 - `spike/drag-out`: syntax-checked only (throwaway).
+
+## Ticket 14 — what landed
+
+- **The sidecar was already sufficient — not widened.** `Sidecar` (ticket 10,
+  `src/core/staging/contentStore.ts`) carries `soundId`, `freesoundUrl`,
+  `downloadedAt`, `author.username`, `license {url,name}`, `file {name,ext,byteSize}`
+  and the full `Sound` verbatim. Rebuild reads it as-is; nothing was added, and
+  `SIDECAR_SCHEMA_VERSION` stays `1`. A sidecar from a newer app version is still
+  accepted as long as the essential fields are present.
+- **Read-only scan** (`src/core/rebuild/scanSidecars.ts`, no DB, deletes nothing,
+  unit-tested directly):
+  - `scanSidecars(contentDir, onProgress?)` — lists the flat content store,
+    ignores `*.part` temp files, pairs each `<id>.<ext>` Original with its
+    `<id>.json` by the leading integer, and returns
+    `{ recovered, orphanAudio, orphanSidecars, malformed, total }`.
+  - `validateSidecar` asserts the shape rebuild depends on: a non-object, a
+    missing `soundId`, a missing `sound` block, or a missing `sound.username` /
+    `sound.license` is thrown as a per-file `Error` and collected into
+    `malformed` — it never aborts the run.
+  - An Original whose sidecar merely failed to parse is **not** also counted as
+    orphan audio (the malformed sidecar already reports it).
+  - `onProgress({done,total})` fires once before the first sidecar and once after
+    each — a progress bar for large libraries.
+  - A missing content dir yields an all-empty scan (a fresh install).
+- **Apply + report** (`src/core/rebuild/rebuildService.ts`):
+  - `createRebuildService({ db, dataDir, rebuildWorkerPath?, runner?, onProgress? })`.
+    The scan runs through an **injectable** `RebuildRunner`: a `worker_threads`
+    Worker in production (`rebuildWorkerRunner(path)`), the in-process
+    `scanSidecars` when no worker path is set, or a test-supplied runner (which
+    wins) — including a controllable promise to prove non-blocking.
+  - `rebuildFromSidecars()` applies the scan in **one transaction** —
+    `upsertSound(db, sidecar.sound)` then `saveLibraryEntry(db, soundId,
+    sidecar.downloadedAt)`. `saveLibraryEntry` is `INSERT … ON CONFLICT DO
+    NOTHING`, so a re-run never moves an existing `saved_at`
+    (`counts.alreadyPresent` records the overlap).
+  - Orphan sidecars (`.json` with no Original) are reported **and** their file
+    removed (`cleanedUpSidecars`). Orphan audio (Original with no sidecar) is
+    reported and **left on disk** — never imported without attribution, never
+    deleted.
+  - `RebuildReport = { recovered[{soundId,name,author,license,audioFile}],
+    orphanAudio[], orphanSidecars[], malformed[{file,error}], cleanedUpSidecars[],
+    notRecoverable, counts }`.
+  - `NOT_RECOVERABLE_MESSAGE` — the one honest sentence ("Custom names, custom
+    tags and Collections are stored only in the database and cannot be recovered
+    by a rebuild."), carried on both the startup assessment (shown in the offer,
+    **before**) and the report (shown in the result, **after**).
+- **Off the main thread** (`src/core/rebuild/rebuildWorker.ts` +
+  `electron.vite.config.ts`): a third `main` build entry lands at
+  `out/main/rebuildWorker.js` (reusing the ticket-12 `peakWorker` wiring); it runs
+  `scanSidecars` and posts `progress` / `done` / `error`. `src/main` passes
+  `rebuildWorkerPath: join(__dirname, 'rebuildWorker.js')`.
+- **Startup detection** (`src/core/db/index.ts` + `src/core/startup/assessStartup.ts`):
+  - `inspectDbHealth(dbPath): DbHealth` — a read-only open plus
+    `PRAGMA quick_check` and a check for the `sounds` + `library_entries` tables,
+    **without** migrating or creating anything. Returns
+    `{ ok: true }` or `{ ok: false, reason: 'missing' | 'unreadable' |
+    'schema-incomplete' }`.
+  - `assessStartup({ dbPath, dataDir })` → `{ db, sidecarCount, offerRebuild,
+    notRecoverable }`. `offerRebuild` is true only when the DB is **unusable AND**
+    at least one sidecar exists — a missing DB with an empty content store is
+    just a first run.
+  - `createCore` calls `assessStartup` **before** `openDb` (which would recreate
+    a blank schema and hide the condition) and exposes it as
+    `core.getStartupAssessment()`.
+- **core command API**: `getStartupAssessment()`, `rebuildFromSidecars()`,
+  `subscribeRebuildProgress(listener)`. `CoreDeps` gains `rebuildWorkerPath?`,
+  `rebuildRunner?`, `onRebuildProgress?`.
+- **src/main/index.ts** (thin): `assessStartup` on launch; if the DB file is
+  `unreadable` it is renamed to `library.db.corrupt-<ts>` so `openDb` can start a
+  fresh schema for the rebuild to fill; `onRebuildProgress` →
+  `core:event:rebuildProgress`; on `did-finish-load`, when `offerRebuild`, push
+  `core:event:rebuildOffer` `{ reason, sidecarCount, notRecoverable }`.
+- **preload**: `rebuildFromSidecars()` on the `core:invoke` passthrough;
+  `onRebuildOffer` / `onRebuildProgress` event subscriptions; `RebuildOffer`,
+  `RebuildReport`, `RebuildProgress` types re-exported.
+- **Renderer** `src/renderer/components/RebuildBanner.tsx` (mounted in `App.tsx`
+  next to `StagingConsentBanner`): on `onRebuildOffer` shows "Your library
+  database could not be read — N sounds can be rebuilt … with their author and
+  License", the not-recoverable line, and a **Rebuild Library** button; during
+  the run shows `done / total sidecars`; after, a summary of recovered / orphan
+  audio (left on disk) / stray sidecars (removed) / unreadable sidecars, and the
+  not-recoverable line again.
+- `test/rebuild.test.ts` — 14 tests: `scanSidecars` classification (recovered /
+  orphan audio / orphan sidecar / malformed / `.part` ignored) and the
+  empty-scan-on-missing-dir case; rebuild reconstructs Library membership +
+  metadata with **author and License intact** and the Original resolvable
+  (auditionable / draggable); a real `rm` of the DB file (+ WAL) then restart →
+  `assessStartup` reports `missing` + `offerRebuild`, and `rebuildFromSidecars`
+  restores the Library; re-running is safe (`alreadyPresent`); orphan audio is
+  reported, left on disk, and **not** imported; an orphan sidecar is reported and
+  its `.json` removed; one malformed sidecar (bad JSON) plus one shape-invalid
+  sidecar (missing author) are both reported individually and the valid one still
+  recovers; `inspectDbHealth` flags `missing` / `unreadable` / `schema-incomplete`;
+  `offerRebuild` is gated on sidecars existing; the not-recoverable line is
+  present before (assessment) and after (report); an injected controllable-promise
+  runner proves `rebuildFromSidecars` does not block other commands;
+  `subscribeRebuildProgress` emits `{0,3}…{3,3}`; and `rebuildWorkerRunner` runs
+  the scan on a real `worker_threads` thread (`threadId >= 1`) relaying progress.
+
+### Deferrals / judgement calls (ticket 14)
+
+- **Every sidecar-backed Original is rebuilt as Library membership.** A sidecar
+  does not record whether the Sound was saved to the Library or merely Staged
+  (ticket 10 writes a sidecar for both). With the database gone that distinction
+  is unrecoverable, so rebuild promotes every valid sidecar into the Library —
+  over-recovering a handful of auditioned-but-unsaved Sounds is the honest,
+  safe failure vs. silently dropping real saves ("which Sounds the user has",
+  per the ticket). Not widening the sidecar with an `intent` field keeps the
+  ticket-10/11 write paths untouched; a future ticket could add one
+  backward-readably.
+- **`downloadedAt` is used as `saved_at`.** It is the only timestamp in the
+  sidecar; the true save time is in the lost database. Library order after a
+  rebuild is therefore download order, not save order.
+- **No renderer component test.** Per spec 0001 there are no renderer component
+  tests; `RebuildBanner` is straight presentation over the core report and the
+  preload event, both covered at the core/contract seam.
+- **`unreadable` DB with no sidecars**: `src/main` still moves the corrupt file
+  aside and starts fresh (an empty Library beats a crash), but shows no rebuild
+  offer — there is nothing to rebuild from. Only `offerRebuild` (DB unusable +
+  sidecars present) surfaces the banner.
+- **`better-sqlite3` native module** had to be recompiled for this environment's
+  Node 24 (`NODE_MODULE_VERSION` 128 → 137) before any test — app/core code
+  unchanged; flagged for the human in case CI pins a different Node.
 
 ## Ticket 13 — what landed
 

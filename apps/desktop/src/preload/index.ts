@@ -16,6 +16,8 @@ import type {
   StagingStatusChange,
 } from '../core'
 import type {
+  CollectionRef,
+  CollectionSummary,
   LibraryFilter,
   LibrarySound,
   SearchOptions,
@@ -26,6 +28,8 @@ import type {
 import type { SortDir } from '../core'
 
 export type {
+  CollectionRef,
+  CollectionSummary,
   LibraryFilter,
   LibrarySound,
   LicenseFilter,
@@ -151,7 +155,11 @@ export interface CoreApi {
    * Instant: writes one DB row, never moves or copies the file. Idempotent.
    * Pass the `Sound` so the core can persist its metadata if needed.
    */
-  saveToLibrary(soundId: number, sound?: Sound): Promise<void>
+  saveToLibrary(
+    soundId: number,
+    sound?: Sound,
+    collectionIds?: number[],
+  ): Promise<void>
   /** Batch "already in the Library?" for search-result badges. */
   getLibraryMembership(ids: number[]): Promise<Record<number, boolean>>
   /**
@@ -197,6 +205,38 @@ export interface CoreApi {
    * `shell.openExternal`).
    */
   openFreesoundPage(soundId: number): Promise<void>
+
+  // ---- collections (ticket 16) ----------------------------------------
+  /** Create a named Collection. Returns it with `count: 0`. Empty name rejects. */
+  createCollection(name: string): Promise<CollectionSummary>
+  /** Rename a Collection. Empty name rejects. */
+  renameCollection(collectionId: number, name: string): Promise<void>
+  /**
+   * Delete a Collection (the renderer confirms first). Its Sounds stay in the
+   * Library and in any other Collection.
+   */
+  deleteCollection(collectionId: number): Promise<void>
+  /**
+   * Add one or more Sounds to a Collection in one action. Idempotent; rejects if
+   * a Sound is not in the Library or the Collection does not exist.
+   */
+  addToCollection(collectionId: number, soundIds: number[]): Promise<void>
+  /** Remove a Sound from a Collection — it stays in the Library and other Collections. */
+  removeFromCollection(collectionId: number, soundId: number): Promise<void>
+  /** Every Collection with its member count, ordered by name. No gateway call. */
+  listCollections(): Promise<CollectionSummary[]>
+  /**
+   * A Collection's Sounds as `LibrarySound[]`, most-recently-added first.
+   * Database-only — browses / plays / drags exactly like the Library.
+   */
+  listCollectionSounds(
+    collectionId: number,
+    opts?: { dir?: SortDir },
+  ): Promise<LibrarySound[]>
+  /** For each Sound id, the Collections it belongs to (`{ id, name }`) — the row badges. */
+  getCollectionsForSounds(
+    soundIds: number[],
+  ): Promise<Record<number, CollectionRef[]>>
 
   // ---- computed peaks & canvas waveform (ticket 12) ---------------
   /**
@@ -283,8 +323,12 @@ const api: CoreApi = {
   getDiskUsage: () => ipcRenderer.invoke('core:invoke', 'getDiskUsage', []),
   clearStaged: () => ipcRenderer.invoke('core:invoke', 'clearStaged', []),
 
-  saveToLibrary: (soundId, sound) =>
-    ipcRenderer.invoke('core:invoke', 'saveToLibrary', [soundId, sound]),
+  saveToLibrary: (soundId, sound, collectionIds) =>
+    ipcRenderer.invoke('core:invoke', 'saveToLibrary', [
+      soundId,
+      sound,
+      collectionIds,
+    ]),
   getLibraryMembership: (ids) =>
     ipcRenderer.invoke('core:invoke', 'getLibraryMembership', [ids]),
   listLibrary: (opts) =>
@@ -306,6 +350,32 @@ const api: CoreApi = {
     ipcRenderer.invoke('core:revealInFinder', soundId),
   openFreesoundPage: (soundId) =>
     ipcRenderer.invoke('core:openExternal', soundId),
+
+  createCollection: (name) =>
+    ipcRenderer.invoke('core:invoke', 'createCollection', [name]),
+  renameCollection: (collectionId, name) =>
+    ipcRenderer.invoke('core:invoke', 'renameCollection', [collectionId, name]),
+  deleteCollection: (collectionId) =>
+    ipcRenderer.invoke('core:invoke', 'deleteCollection', [collectionId]),
+  addToCollection: (collectionId, soundIds) =>
+    ipcRenderer.invoke('core:invoke', 'addToCollection', [
+      collectionId,
+      soundIds,
+    ]),
+  removeFromCollection: (collectionId, soundId) =>
+    ipcRenderer.invoke('core:invoke', 'removeFromCollection', [
+      collectionId,
+      soundId,
+    ]),
+  listCollections: () =>
+    ipcRenderer.invoke('core:invoke', 'listCollections', []),
+  listCollectionSounds: (collectionId, opts) =>
+    ipcRenderer.invoke('core:invoke', 'listCollectionSounds', [
+      collectionId,
+      opts,
+    ]),
+  getCollectionsForSounds: (soundIds) =>
+    ipcRenderer.invoke('core:invoke', 'getCollectionsForSounds', [soundIds]),
 
   getPeaks: (soundId) =>
     ipcRenderer.invoke('core:invoke', 'getPeaks', [soundId]),

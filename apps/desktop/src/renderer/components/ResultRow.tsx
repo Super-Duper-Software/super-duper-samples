@@ -17,11 +17,14 @@ import { useRowTransport } from '../hooks/useRowTransport'
 import { useTransport } from '../store/useTransport'
 import { selectRowStaging, useStaging } from '../store/useStaging'
 import { selectRowLibrary, useLibrary } from '../store/useLibrary'
+import { selectRowCollections, useCollections } from '../store/useCollections'
+import { selectRowChecked, useMultiSelect } from '../store/useMultiSelect'
 import { formatDuration } from '../lib/format'
 import { waveformIconDataUrl } from '../lib/dragIcon'
 import { LicenseChip } from './LicenseChip'
 import { StagingChip } from './StagingChip'
 import { Waveform } from './Waveform'
+import { CollectionMenu } from './CollectionMenu'
 
 export interface ResultRowProps {
   sound: Sound
@@ -33,13 +36,20 @@ export interface ResultRowProps {
   size: number
   onSelect: (index: number) => void
   /**
-   * `'search'` (default) shows a "Saved" badge on Sounds already in the Library.
-   * `'library'` shows the per-row Library actions (reveal / open page / remove)
-   * and no badge — everything here is saved by definition.
+   * `'search'` (default) shows a "Saved" badge on Sounds already in the Library
+   * and a "＋" menu to save-and-file in one action. `'library'` and
+   * `'collection'` show the per-row actions (rename / reveal / page / remove),
+   * a multi-select checkbox and the Collection-membership badges. `'collection'`
+   * differs only in that "remove" means "remove from this Collection", not
+   * "delete from the Library".
    */
-  variant?: 'search' | 'library'
-  /** Library variant only: remove this Sound (the caller confirms first). */
+  variant?: 'search' | 'library' | 'collection'
+  /** Library / collection variants: remove this Sound (the caller confirms if needed). */
   onRemove?: (sound: Sound) => void
+  /** Override the remove button's label (e.g. "Remove from collection"). */
+  removeLabel?: string
+  /** Override the remove button's tooltip. */
+  removeTitle?: string
 }
 
 function ResultRowImpl({
@@ -51,8 +61,42 @@ function ResultRowImpl({
   onSelect,
   variant = 'search',
   onRemove,
+  removeLabel,
+  removeTitle,
 }: ResultRowProps) {
   const handleSelect = useCallback(() => onSelect(index), [onSelect, index])
+
+  // Library-like rows (Library tab or an open Collection) share the same
+  // affordances: checkbox, Collection badges, rename / tags / remove.
+  const isLibraryVariant = variant === 'library' || variant === 'collection'
+
+  // Ticket 16: which Collections this Sound belongs to (row badges).
+  const memberOf = useCollections(useShallow(selectRowCollections(sound.id)))
+  const ensureMemberships = useCollections((s) => s.ensureMemberships)
+  useEffect(() => {
+    if (isLibraryVariant) ensureMemberships([sound.id])
+  }, [sound.id, isLibraryVariant, ensureMemberships])
+
+  // Ticket 16: minimal checkbox multi-select for batch "add to collection".
+  const { checked } = useMultiSelect(useShallow(selectRowChecked(sound.id)))
+  const toggleChecked = useMultiSelect((s) => s.toggle)
+
+  // Ticket 16: on a search row, save the Sound AND file it in one action.
+  const onSaveInto = useCallback(
+    (collectionId: number) => {
+      void (async () => {
+        try {
+          await window.core?.saveToLibrary?.(sound.id, sound, [collectionId])
+        } catch {
+          return
+        }
+        useLibrary.getState().note(sound.id, true)
+        await useCollections.getState().load()
+        await useCollections.getState().refreshMemberships([sound.id])
+      })()
+    },
+    [sound],
+  )
 
   // Ticket 11: Library membership for the "Saved" badge. Mirrors the staging
   // pattern — a `useShallow` slice so only this row re-renders when it flips.
@@ -192,6 +236,17 @@ function ResultRowImpl({
       ].join(' ')}
       style={{ top: 0, height: size, transform: `translateY(${start}px)` }}
     >
+      {isLibraryVariant && (
+        <input
+          type="checkbox"
+          checked={checked}
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={() => toggleChecked(sound.id)}
+          aria-label={`Select ${displayName} for batch actions`}
+          className="h-3.5 w-3.5 shrink-0 accent-emerald-500"
+        />
+      )}
+
       <button
         type="button"
         aria-label={isPlaying ? `Pause ${sound.name}` : `Play ${sound.name}`}
@@ -226,7 +281,7 @@ function ResultRowImpl({
           >
             {displayName}
           </span>
-          {variant === 'library' && customName && (
+          {isLibraryVariant && customName && (
             <span
               className="shrink-0 truncate text-[11px] italic text-neutral-500"
               title={`Freesound name: ${sound.name}`}
@@ -259,7 +314,25 @@ function ResultRowImpl({
               ♥ saved
             </span>
           )}
-          {variant === 'library' ? (
+          {variant === 'search' && (
+            <CollectionMenu
+              label="＋ list"
+              onPick={onSaveInto}
+              className="shrink-0 rounded border border-neutral-700 px-1 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
+              title="Save to your Library and add to a collection in one step"
+            />
+          )}
+          {isLibraryVariant &&
+            memberOf.map((c) => (
+              <span
+                key={`col:${c.id}`}
+                className="shrink-0 truncate rounded border border-sky-800/70 bg-sky-950/50 px-1 text-[10px] text-sky-300"
+                title={`In the collection “${c.name}”`}
+              >
+                {c.name}
+              </span>
+            ))}
+          {isLibraryVariant ? (
             <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
               {customTags.map((t) => (
                 <button
@@ -303,7 +376,7 @@ function ResultRowImpl({
         </div>
       </div>
 
-      {variant === 'library' && (
+      {isLibraryVariant && (
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
@@ -337,9 +410,11 @@ function ResultRowImpl({
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => onRemove?.(sound)}
             className="rounded border border-red-900/70 px-1.5 py-0.5 text-[11px] text-red-300 hover:border-red-600 hover:text-red-100"
-            title="Remove from the Library and delete its files"
+            title={
+              removeTitle ?? 'Remove from the Library and delete its files'
+            }
           >
-            Remove
+            {removeLabel ?? 'Remove'}
           </button>
         </div>
       )}

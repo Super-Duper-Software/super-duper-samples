@@ -8,6 +8,8 @@
 import { mapRawSound } from './gateway/mapRawSound'
 import type { FreesoundGateway, RawSearchPage } from './gateway/index'
 import type {
+  CollectionRef,
+  CollectionSummary,
   LibraryFilter,
   LibrarySound,
   SearchFilter,
@@ -35,6 +37,7 @@ import { getMeta, setMeta } from './db/appMeta'
 import { getSoundsByIds, upsertSound, upsertSounds } from './db/sounds'
 import {
   deleteLibraryEntry,
+  getLibraryOverlay,
   hasLibraryEntry,
   libraryMembership,
   listLibraryOverlays,
@@ -43,6 +46,18 @@ import {
   setCustomTags as dbSetCustomTags,
   type SortDir,
 } from './db/library'
+import {
+  addMembers,
+  clearSoundFromAllCollections,
+  collectionsForSounds,
+  deleteCollectionRow,
+  hasCollection,
+  insertCollection,
+  listCollectionMemberIds,
+  listCollectionSummaries,
+  removeMember,
+  updateCollectionName,
+} from './db/collections'
 import {
   hasLibraryFilter,
   matchesLibraryFilter,
@@ -292,6 +307,39 @@ function readLibrary(
   if (!hasLibraryFilter(filter)) return hydrated
   const f = normaliseLibraryFilter(filter)
   return hydrated.filter((s) => matchesLibraryFilter(s, f))
+}
+
+/**
+ * A Collection's Sounds as `LibrarySound[]` — the same hydrated shape
+ * `readLibrary` produces (Sound + the user's custom name / tags / `savedAt`), so
+ * a Collection browses in the identical list UI with identical playback, drag
+ * and rename behaviour. Members are ordered most-recently-added first (`dir`
+ * flips it). Served ENTIRELY from SQLite: no gateway call, ever.
+ */
+function readCollectionSounds(
+  db: DB,
+  collectionId: number,
+  dir: SortDir,
+): LibrarySound[] {
+  const ids = listCollectionMemberIds(db, collectionId, dir)
+  const sounds = getSoundsByIds(db, ids)
+  const byId = new Map(sounds.map((s) => [s.id, s]))
+
+  const hydrated: LibrarySound[] = []
+  for (const id of ids) {
+    const sound = byId.get(id)
+    if (!sound) continue // a lost `sounds` row — skip rather than throw
+    const o = getLibraryOverlay(db, id)
+    if (!o) continue // no longer in the Library — skip
+    hydrated.push({
+      ...sound,
+      customName: o.customName,
+      effectiveName: o.customName ?? sound.name,
+      customTags: o.customTags,
+      savedAt: o.savedAt,
+    })
+  }
+  return hydrated
 }
 
 export interface CoreDeps {
@@ -561,8 +609,17 @@ export interface Core {
    * A `sounds` row must exist. Pass the `Sound` (a search result or a Staged
    * Sound always carries one) and it is upserted first; if none is passed and no
    * row exists, this throws rather than saving a Sound with no metadata.
+   *
+   * `collectionIds` files the Sound into those Collections in the SAME
+   * transaction as the save (ticket 16) — so filing at save time is one action,
+   * not a separate step. Each id must be an existing Collection or this throws
+   * (before writing anything). Idempotent per Collection.
    */
-  saveToLibrary(soundId: number, sound?: Sound): void
+  saveToLibrary(
+    soundId: number,
+    sound?: Sound,
+    collectionIds?: readonly number[],
+  ): void
 
   /**
    * Batch "is this in the Library?" for search-result badging, so the user does
@@ -644,6 +701,69 @@ export interface Core {
    * freesound.org").
    */
   getFreesoundUrl(soundId: number): string | null
+
+  // ---- collections (ticket 16) -----------------------------------------
+
+  /**
+   * Create a named Collection (CONTEXT.md § Collection). The name is trimmed;
+   * an empty name throws. Returns the new Collection with `count: 0`. Names are
+   * not required to be unique — two "Weather" Collections are allowed.
+   */
+  createCollection(name: string): CollectionSummary
+
+  /** Rename a Collection. The name is trimmed; an empty name throws. No-op if the id is unknown. */
+  renameCollection(collectionId: number, name: string): void
+
+  /**
+   * Delete a Collection. Removes ONLY the `collections` row and its
+   * `collection_members` rows — every member Sound stays in the Library and in
+   * any other Collection. The renderer confirms with the user first
+   * (`window.confirm`, consistent with the Library delete). No-op if unknown.
+   */
+  deleteCollection(collectionId: number): void
+
+  /**
+   * Add one or more Sounds to a Collection in a single transaction. Idempotent —
+   * a Sound already in the Collection is untouched and never duplicated, so
+   * batch-adding a mixed selection is safe. Throws if the Collection does not
+   * exist, or if any Sound is not in the Library (a Collection is a set of
+   * Library Sounds — a Staged Sound cannot belong to one).
+   */
+  addToCollection(collectionId: number, soundIds: readonly number[]): void
+
+  /**
+   * Remove a Sound from a Collection. Deletes only the membership — the Sound
+   * stays in the Library and in every other Collection it belongs to. No-op if
+   * the Sound was not in the Collection.
+   */
+  removeFromCollection(collectionId: number, soundId: number): void
+
+  /**
+   * Every Collection with its current member count, ordered by name. Served
+   * entirely from the database — no gateway call.
+   */
+  listCollections(): CollectionSummary[]
+
+  /**
+   * A Collection's Sounds as `LibrarySound[]` (Sound + the user's custom name /
+   * tags), most-recently-added first (`dir` flips it). Served ENTIRELY from the
+   * local database — it makes NO gateway call (a test asserts this) — so a
+   * Collection browses, plays and drags exactly like the Library, offline and
+   * signed out.
+   */
+  listCollectionSounds(
+    collectionId: number,
+    opts?: { dir?: SortDir },
+  ): LibrarySound[]
+
+  /**
+   * For each requested Sound id, the Collections it belongs to (`{ id, name }`).
+   * Every requested id is present in the result (mapped to `[]` when the Sound
+   * is in no Collection). Drives the per-row "in these Collections" badges.
+   */
+  getCollectionsForSounds(
+    soundIds: number[],
+  ): Record<number, CollectionRef[]>
 
   // ---- computed peaks & canvas waveform (ticket 12) ----------------
 
@@ -1008,14 +1128,25 @@ export function createCore(deps: CoreDeps): Core {
     getDiskUsage: () => staging.getDiskUsage(),
     clearStaged: () => staging.clearStaged(),
 
-    saveToLibrary: (soundId, sound) => {
+    saveToLibrary: (soundId, sound, collectionIds) => {
       if (sound) upsertSound(db, sound)
       if (!getSoundsByIds(db, [soundId])[0]) {
         throw new Error(
           `saveToLibrary: no metadata for sound ${soundId} — search or audition it first`,
         )
       }
-      saveLibraryEntry(db, soundId, Date.now())
+      const fileInto = collectionIds ?? []
+      for (const cid of fileInto) {
+        if (!hasCollection(db, cid)) {
+          throw new Error(`saveToLibrary: no collection ${cid}`)
+        }
+      }
+      const now = Date.now()
+      const tx = db.transaction(() => {
+        saveLibraryEntry(db, soundId, now)
+        for (const cid of fileInto) addMembers(db, cid, [soundId], now)
+      })
+      tx()
     },
     getLibraryMembership: (ids) => libraryMembership(db, ids),
     listLibrary: (opts) => readLibrary(db, opts?.dir ?? 'desc'),
@@ -1046,9 +1177,15 @@ export function createCore(deps: CoreDeps): Core {
     },
     deleteFromLibrary: async (soundId) => {
       const sound = getSoundsByIds(db, [soundId])[0]
-      deleteLibraryEntry(db, soundId)
-      // Cached peaks (ticket 12) die with the Original.
-      deletePeaksRecord(db, soundId)
+      db.transaction(() => {
+        deleteLibraryEntry(db, soundId)
+        // Ticket 16: a Sound leaving the Library leaves every Collection too.
+        // The `sounds` row is kept here, so the FK cascade does not fire —
+        // clear the memberships explicitly.
+        clearSoundFromAllCollections(db, soundId)
+        // Cached peaks (ticket 12) die with the Original.
+        deletePeaksRecord(db, soundId)
+      })()
       if (sound) await removeContentFiles(deps.dataDir, sound)
     },
     getPeaks: (soundId) => peakService.getPeaks(soundId),
@@ -1060,6 +1197,38 @@ export function createCore(deps: CoreDeps): Core {
       return contentPaths(deps.dataDir, sound).original
     },
     getFreesoundUrl: (soundId) => getSoundsByIds(db, [soundId])[0]?.url ?? null,
+
+    createCollection: (name) => {
+      const clean = name.trim()
+      if (clean === '') throw new Error('createCollection: name is empty')
+      const id = insertCollection(db, clean, Date.now())
+      return { id, name: clean, count: 0 }
+    },
+    renameCollection: (collectionId, name) => {
+      const clean = name.trim()
+      if (clean === '') throw new Error('renameCollection: name is empty')
+      updateCollectionName(db, collectionId, clean)
+    },
+    deleteCollection: (collectionId) => deleteCollectionRow(db, collectionId),
+    addToCollection: (collectionId, soundIds) => {
+      if (!hasCollection(db, collectionId)) {
+        throw new Error(`addToCollection: no collection ${collectionId}`)
+      }
+      for (const id of soundIds) {
+        if (!hasLibraryEntry(db, id)) {
+          throw new Error(
+            `addToCollection: sound ${id} is not in the Library — save it first`,
+          )
+        }
+      }
+      addMembers(db, collectionId, soundIds, Date.now())
+    },
+    removeFromCollection: (collectionId, soundId) =>
+      removeMember(db, collectionId, soundId),
+    listCollections: () => listCollectionSummaries(db),
+    listCollectionSounds: (collectionId, opts) =>
+      readCollectionSounds(db, collectionId, opts?.dir ?? 'desc'),
+    getCollectionsForSounds: (soundIds) => collectionsForSounds(db, soundIds),
 
     getStartupAssessment: () => startupAssessment,
     rebuildFromSidecars: () => rebuild.rebuildFromSidecars(),

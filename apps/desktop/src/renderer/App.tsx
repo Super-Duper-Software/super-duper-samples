@@ -7,20 +7,28 @@ import { ResultList } from './components/ResultList'
 import { StagingConsentBanner } from './components/StagingConsentBanner'
 import { RebuildBanner } from './components/RebuildBanner'
 import { TransportBar } from './components/TransportBar'
+import { CollectionsPanel } from './components/CollectionsPanel'
+import { AddToCollectionBar } from './components/AddToCollectionBar'
 import { useSearch } from './hooks/useSearch'
 import { useLibraryView } from './hooks/useLibraryView'
+import { useCollectionView } from './hooks/useCollectionView'
 import { formatResultCount } from './lib/format'
 import { activeFilterChips } from './lib/filterLabels'
 import { useResultSelection } from './store/useResultSelection'
 import { useLibrary } from './store/useLibrary'
+import { useCollections } from './store/useCollections'
+import { useMultiSelect } from './store/useMultiSelect'
 import { useLibraryFilter, hasLibraryFilter } from './store/useLibraryFilter'
 import { useSearchPrefs } from './store/useSearchPrefs'
-import type { Sound } from '../core/types'
+import type { CollectionSummary, Sound } from '../core/types'
 
-type View = 'search' | 'library'
+type View = 'search' | 'library' | 'collections'
 
 export default function App() {
   const [view, setView] = useState<View>('search')
+  const [openCollection, setOpenCollection] = useState<CollectionSummary | null>(
+    null,
+  )
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -34,12 +42,36 @@ export default function App() {
   const libraryFilter = useLibraryFilter((s) => s.filter)
   useEffect(() => {
     useLibraryFilter.getState().load()
+    void useCollections.getState().load()
   }, [])
 
   const { status, error, sounds, totalCount, hasMore, loadingMore, loadMore } =
     useSearch(query, sort, filter, prefsReady)
   const library = useLibraryView(view === 'library', libraryFilter)
   const libraryFiltered = hasLibraryFilter(libraryFilter)
+
+  const collection = useCollectionView(
+    view === 'collections' && openCollection ? openCollection.id : null,
+  )
+  // Keep the open Collection's header count fresh as membership changes.
+  const collectionsRevision = useCollections((s) => s.revision)
+  const collectionsList = useCollections((s) => s.collections)
+  useEffect(() => {
+    if (!openCollection) return
+    const fresh = collectionsList.find((c) => c.id === openCollection.id)
+    if (!fresh) setOpenCollection(null)
+    else if (fresh.name !== openCollection.name || fresh.count !== openCollection.count)
+      setOpenCollection(fresh)
+  }, [collectionsList, openCollection, collectionsRevision])
+
+  const removeFromOpenCollection = useCallback(
+    (sound: Sound) => {
+      if (!openCollection) return
+      useMultiSelect.getState().set(sound.id, false)
+      void useCollections.getState().removeSound(openCollection.id, sound.id)
+    },
+    [openCollection],
+  )
 
   const activeChips = activeFilterChips(filter)
 
@@ -65,7 +97,10 @@ export default function App() {
         'This also deletes the downloaded Original from this device. ' +
         'You can download it again from search later.',
     )
-    if (ok) void useLibrary.getState().remove(sound.id)
+    if (ok) {
+      useMultiSelect.getState().set(sound.id, false)
+      void useLibrary.getState().remove(sound.id)
+    }
   }, [])
 
   const showResults = view === 'search' && status === 'ok' && sounds.length > 0
@@ -76,6 +111,8 @@ export default function App() {
       onClick={() => {
         setView(v)
         useResultSelection.getState().clear()
+        useMultiSelect.getState().clear()
+        if (v !== 'collections') setOpenCollection(null)
       }}
       aria-pressed={view === v}
       className={[
@@ -98,6 +135,7 @@ export default function App() {
             <div className="flex items-center gap-1">
               {tab('search', 'Search')}
               {tab('library', 'Library')}
+              {tab('collections', 'Collections')}
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -112,6 +150,14 @@ export default function App() {
                 {library.sounds.length === 1 ? 'sound' : 'sounds'}
               </span>
             )}
+            {view === 'collections' &&
+              openCollection &&
+              collection.status === 'ok' && (
+                <span className="text-xs text-neutral-400" aria-live="polite">
+                  {collection.sounds.length}{' '}
+                  {collection.sounds.length === 1 ? 'sound' : 'sounds'}
+                </span>
+              )}
             <AuthBar />
           </div>
         </div>
@@ -130,7 +176,7 @@ export default function App() {
             />
             <FilterBar />
           </>
-        ) : (
+        ) : view === 'library' ? (
           <>
             <div className="flex items-center gap-2 text-xs text-neutral-400">
               <span>Sorted by date saved</span>
@@ -144,11 +190,54 @@ export default function App() {
                 {library.dir === 'desc' ? 'Newest first' : 'Oldest first'}
               </button>
               <span className="text-neutral-600">
-                · select a row and press Delete to remove it
+                · select a row and press Delete to remove it · tick rows to add
+                them to a collection
               </span>
             </div>
             <LibraryFilterBar />
           </>
+        ) : (
+          <div className="flex items-center gap-2 text-xs text-neutral-400">
+            {openCollection ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpenCollection(null)
+                    useResultSelection.getState().clear()
+                    useMultiSelect.getState().clear()
+                  }}
+                  className="rounded border border-neutral-700 px-1.5 py-0.5 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+                >
+                  ‹ All collections
+                </button>
+                <span className="font-medium text-neutral-200">
+                  {openCollection.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    collection.setDir(
+                      collection.dir === 'desc' ? 'asc' : 'desc',
+                    )
+                  }
+                  className="rounded border border-neutral-700 px-1.5 py-0.5 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+                >
+                  {collection.dir === 'desc'
+                    ? 'Newest added first'
+                    : 'Oldest added first'}
+                </button>
+                <span className="text-neutral-600">
+                  · removing a sound here keeps it in your Library
+                </span>
+              </>
+            ) : (
+              <span>
+                A collection is a named set of Library sounds. Collections do
+                not nest.
+              </span>
+            )}
+          </div>
         )}
       </header>
 
@@ -237,7 +326,8 @@ export default function App() {
         )}
 
         {view === 'library' && (
-          <>
+          <div className="flex h-full flex-col">
+            <AddToCollectionBar />
             {library.status === 'error' && (
               <p className="p-4 text-sm text-red-400" role="alert">
                 Could not read the Library.
@@ -275,17 +365,62 @@ export default function App() {
               ))}
 
             {library.sounds.length > 0 && (
-              <ResultList
-                sounds={library.sounds}
-                hasMore={false}
-                loadingMore={false}
-                loadMore={() => {}}
-                onFocusSearch={focusSearch}
-                variant="library"
-                onRemove={confirmRemove}
-              />
+              <div className="min-h-0 flex-1">
+                <ResultList
+                  sounds={library.sounds}
+                  hasMore={false}
+                  loadingMore={false}
+                  loadMore={() => {}}
+                  onFocusSearch={focusSearch}
+                  variant="library"
+                  onRemove={confirmRemove}
+                />
+              </div>
             )}
-          </>
+          </div>
+        )}
+
+        {view === 'collections' && !openCollection && (
+          <div className="h-full overflow-auto">
+            <CollectionsPanel onOpen={setOpenCollection} />
+          </div>
+        )}
+
+        {view === 'collections' && openCollection && (
+          <div className="flex h-full flex-col">
+            <AddToCollectionBar />
+            {collection.status === 'error' && (
+              <p className="p-4 text-sm text-red-400" role="alert">
+                Could not read this collection.
+              </p>
+            )}
+            {collection.status === 'ok' && collection.sounds.length === 0 && (
+              <div className="p-4 text-sm text-neutral-400">
+                <p className="font-medium text-neutral-300">
+                  “{openCollection.name}” has no sounds yet.
+                </p>
+                <p className="mt-1">
+                  Add sounds from your Library (tick rows, then “Add to
+                  collection”) or from a search result’s “＋ list” menu.
+                </p>
+              </div>
+            )}
+            {collection.sounds.length > 0 && (
+              <div className="min-h-0 flex-1">
+                <ResultList
+                  sounds={collection.sounds}
+                  hasMore={false}
+                  loadingMore={false}
+                  loadMore={() => {}}
+                  onFocusSearch={focusSearch}
+                  variant="collection"
+                  onRemove={removeFromOpenCollection}
+                  removeLabel="Remove from collection"
+                  removeTitle="Remove from this collection — the sound stays in your Library"
+                />
+              </div>
+            )}
+          </div>
         )}
       </section>
 

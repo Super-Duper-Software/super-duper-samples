@@ -39,12 +39,17 @@ export interface ResultListProps {
   /** Return focus to the search input (bound to `/` and Esc). */
   onFocusSearch: () => void
   /**
-   * `'search'` (default) or `'library'`. The Library variant shows per-row
-   * actions and binds Delete/Backspace to `onRemove` for the selected row.
+   * `'search'` (default), `'library'`, or `'collection'`. The non-search
+   * variants show per-row actions + a checkbox and bind Delete/Backspace to
+   * `onRemove` for the selected row.
    */
-  variant?: 'search' | 'library'
-  /** Library variant only: remove a Sound (the caller confirms with the user). */
+  variant?: 'search' | 'library' | 'collection'
+  /** Library / collection variants: remove a Sound (the caller confirms if needed). */
   onRemove?: (sound: Sound) => void
+  /** Override the per-row remove button label (e.g. "Remove from collection"). */
+  removeLabel?: string
+  /** Override the per-row remove button tooltip. */
+  removeTitle?: string
 }
 
 export function ResultList({
@@ -55,6 +60,8 @@ export function ResultList({
   onFocusSearch,
   variant = 'search',
   onRemove,
+  removeLabel,
+  removeTitle,
 }: ResultListProps) {
   const parentRef = useRef<HTMLDivElement>(null)
 
@@ -195,7 +202,7 @@ export function ResultList({
       }
       case 'Backspace':
       case 'Delete': {
-        if (variant !== 'library' || !onRemove) break
+        if (variant === 'search' || !onRemove) break
         e.preventDefault()
         const sound = sounds[useResultSelection.getState().selectedIndex]
         if (sound) onRemove(sound)
@@ -238,6 +245,8 @@ export function ResultList({
               onSelect={onSelect}
               variant={variant}
               onRemove={onRemove}
+              removeLabel={removeLabel}
+              removeTitle={removeTitle}
             />
           )
         })}

@@ -154,6 +154,28 @@ export interface LibraryFilter {
   text?: string
 }
 
+/**
+ * A Collection (CONTEXT.md § Collection) with its current member count — the
+ * shape `listCollections` returns for the browse list. A Collection is a
+ * user-named, unordered set of Library Sounds; it does not nest and has no
+ * existence on disk (ADR-0002).
+ */
+export interface CollectionSummary {
+  id: number
+  name: string
+  /** Number of Sounds currently in the Collection. */
+  count: number
+}
+
+/**
+ * A minimal Collection reference (`{ id, name }`) — used for the per-Sound
+ * "which Collections does this belong to?" badges.
+ */
+export interface CollectionRef {
+  id: number
+  name: string
+}
+
 export interface SearchOptions {
   /** 1-based page number. Defaults to 1. */
   page?: number

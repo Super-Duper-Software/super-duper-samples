@@ -4,8 +4,9 @@
 // launching Electron, it is in the wrong place.").
 
 import { existsSync, renameSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import {
   assessStartup,
   createCore,
@@ -82,6 +83,28 @@ function registerIpc(core: Core): void {
     const url = core.getFreesoundUrl(soundId)
     if (url) return shell.openExternal(url)
   })
+
+  // Ticket 17 — write an Attribution Manifest to a file the user picks. The core
+  // built the text; the native Save dialog and the disk write are the only
+  // Electron-only steps, so they happen here.
+  ipcMain.handle(
+    'core:saveManifest',
+    async (_event, defaultFileName: string, text: string) => {
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      const result = await (win
+        ? dialog.showSaveDialog(win, {
+            defaultPath: defaultFileName,
+            filters: [{ name: 'Text', extensions: ['txt'] }],
+          })
+        : dialog.showSaveDialog({
+            defaultPath: defaultFileName,
+            filters: [{ name: 'Text', extensions: ['txt'] }],
+          }))
+      if (result.canceled || !result.filePath) return { saved: false }
+      await writeFile(result.filePath, text, 'utf8')
+      return { saved: true, path: result.filePath }
+    },
+  )
 
   // Generic passthrough so later commands need no main-process change. This
   // already covers `signIn` / `signOut` / `getAuthState`.

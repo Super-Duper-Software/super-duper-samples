@@ -51,6 +51,7 @@ import {
   clearSoundFromAllCollections,
   collectionsForSounds,
   deleteCollectionRow,
+  getCollectionName,
   hasCollection,
   insertCollection,
   listCollectionMemberIds,
@@ -58,6 +59,7 @@ import {
   removeMember,
   updateCollectionName,
 } from './db/collections'
+import { buildManifest, type Manifest } from './manifest/buildManifest'
 import {
   hasLibraryFilter,
   matchesLibraryFilter,
@@ -199,6 +201,18 @@ export type {
 } from './rebuild/rebuildService'
 export { decodeAudioBuffer, UndecodableAudioError } from './peaks/decodeAudio'
 export { computePeaks } from './peaks/computePeaks'
+export { buildManifest } from './manifest/buildManifest'
+export type {
+  Manifest,
+  ManifestEntry,
+  ManifestSummary,
+  ManifestInput,
+  ManifestSourceSound,
+} from './manifest/buildManifest'
+export {
+  requiresAttribution,
+  restrictsCommercialUse,
+} from './manifest/obligations'
 
 const DEFAULT_PAGE_SIZE = 15
 const DEBOUNCE_MS = 250
@@ -765,6 +779,22 @@ export interface Core {
     soundIds: number[],
   ): Record<number, CollectionRef[]>
 
+  /**
+   * Generate an Attribution Manifest for a Collection (ticket 17) — a
+   * human-readable credits document naming every member Sound's title, author,
+   * License and Freesound URL, grouping attribution-required Sounds apart from
+   * CC0, and flagging any Sound licensed for non-commercial use only.
+   *
+   * The result is a SNAPSHOT: it is rendered from the Collection's membership at
+   * the moment of the call and is a plain value — it does not change when the
+   * Collection is edited afterwards. `manifest.text` is the plain-text document
+   * to copy or save verbatim.
+   *
+   * An empty Collection returns a Manifest whose `text` is a clear message, not
+   * a blank document. Throws if the Collection does not exist.
+   */
+  generateManifest(collectionId: number): Manifest
+
   // ---- computed peaks & canvas waveform (ticket 12) ----------------
 
   /**
@@ -1229,6 +1259,21 @@ export function createCore(deps: CoreDeps): Core {
     listCollectionSounds: (collectionId, opts) =>
       readCollectionSounds(db, collectionId, opts?.dir ?? 'desc'),
     getCollectionsForSounds: (soundIds) => collectionsForSounds(db, soundIds),
+    generateManifest: (collectionId) => {
+      const name = getCollectionName(db, collectionId)
+      if (name === null) {
+        throw new Error(`generateManifest: no collection ${collectionId}`)
+      }
+      // Same hydrated, DB-only read the Collection view uses — no gateway call.
+      // Members come back most-recently-added first; the Manifest keeps that order.
+      const sounds = readCollectionSounds(db, collectionId, 'desc')
+      return buildManifest({
+        collectionId,
+        collectionName: name,
+        generatedAt: Date.now(),
+        sounds,
+      })
+    },
 
     getStartupAssessment: () => startupAssessment,
     rebuildFromSidecars: () => rebuild.rebuildFromSidecars(),

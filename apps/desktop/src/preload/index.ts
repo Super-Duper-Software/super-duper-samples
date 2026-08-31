@@ -7,6 +7,7 @@ import type {
   AuthState,
   DiskUsage,
   EvictionOutcome,
+  Manifest,
   PeaksPayload,
   PeaksStatusChange,
   RebuildProgress,
@@ -44,6 +45,9 @@ export type {
   AuthState,
   DiskUsage,
   EvictionOutcome,
+  Manifest,
+  ManifestEntry,
+  ManifestSummary,
   PeaksPayload,
   PeaksStatusChange,
   RebuildProgress,
@@ -238,6 +242,26 @@ export interface CoreApi {
     soundIds: number[],
   ): Promise<Record<number, CollectionRef[]>>
 
+  // ---- attribution manifest (ticket 17) ------------------------------
+  /**
+   * Generate an Attribution Manifest for a Collection — a snapshot credits
+   * document (title, author, License, Freesound URL per Sound; attribution-
+   * required separated from CC0; non-commercial Sounds flagged and listed
+   * apart). `manifest.text` is the plain-text document to copy or save. An
+   * empty Collection yields a clear message, not a blank document. Rejects if
+   * the Collection does not exist.
+   */
+  generateManifest(collectionId: number): Promise<Manifest>
+  /**
+   * Write manifest text to a file the user chooses (a native Save dialog).
+   * Resolves `{ saved: false }` if the user cancels, `{ saved: true, path }`
+   * once written. Main-process only — it needs Electron `dialog` + `fs`.
+   */
+  saveManifest(
+    defaultFileName: string,
+    text: string,
+  ): Promise<{ saved: boolean; path?: string }>
+
   // ---- computed peaks & canvas waveform (ticket 12) ---------------
   /**
    * Cached waveform peaks for a Sound, or `null` when there are none yet (not on
@@ -376,6 +400,12 @@ const api: CoreApi = {
     ]),
   getCollectionsForSounds: (soundIds) =>
     ipcRenderer.invoke('core:invoke', 'getCollectionsForSounds', [soundIds]),
+
+  generateManifest: (collectionId) =>
+    ipcRenderer.invoke('core:invoke', 'generateManifest', [collectionId]),
+  // Named channel: needs Electron `dialog` + `fs`, which cannot live in core.
+  saveManifest: (defaultFileName, text) =>
+    ipcRenderer.invoke('core:saveManifest', defaultFileName, text),
 
   getPeaks: (soundId) =>
     ipcRenderer.invoke('core:invoke', 'getPeaks', [soundId]),

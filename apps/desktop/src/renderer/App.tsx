@@ -8,6 +8,7 @@ import { StagingConsentBanner } from './components/StagingConsentBanner'
 import { RebuildBanner } from './components/RebuildBanner'
 import { TransportBar } from './components/TransportBar'
 import { CollectionsPanel } from './components/CollectionsPanel'
+import { ManifestPanel } from './components/ManifestPanel'
 import { AddToCollectionBar } from './components/AddToCollectionBar'
 import { useSearch } from './hooks/useSearch'
 import { useLibraryView } from './hooks/useLibraryView'
@@ -29,6 +30,7 @@ export default function App() {
   const [openCollection, setOpenCollection] = useState<CollectionSummary | null>(
     null,
   )
+  const [showManifest, setShowManifest] = useState(false)
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -112,6 +114,7 @@ export default function App() {
         setView(v)
         useResultSelection.getState().clear()
         useMultiSelect.getState().clear()
+        setShowManifest(false)
         if (v !== 'collections') setOpenCollection(null)
       }}
       aria-pressed={view === v}
@@ -204,6 +207,7 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     setOpenCollection(null)
+                    setShowManifest(false)
                     useResultSelection.getState().clear()
                     useMultiSelect.getState().clear()
                   }}
@@ -227,6 +231,14 @@ export default function App() {
                     ? 'Newest added first'
                     : 'Oldest added first'}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setShowManifest(true)}
+                  className="rounded border border-emerald-700 bg-emerald-600/10 px-1.5 py-0.5 text-emerald-300 hover:border-emerald-500 hover:text-emerald-100"
+                  title="Generate the attribution credits this collection owes"
+                >
+                  Generate manifest
+                </button>
                 <span className="text-neutral-600">
                   · removing a sound here keeps it in your Library
                 </span>
@@ -244,7 +256,7 @@ export default function App() {
       <StagingConsentBanner />
       <RebuildBanner />
 
-      <section className="min-h-0 flex-1">
+      <section className="relative min-h-0 flex-1">
         {view === 'search' && (
           <>
             {status === 'loading' && (
@@ -421,6 +433,13 @@ export default function App() {
               </div>
             )}
           </div>
+        )}
+        {view === 'collections' && openCollection && showManifest && (
+          <ManifestPanel
+            collectionId={openCollection.id}
+            collectionName={openCollection.name}
+            onClose={() => setShowManifest(false)}
+          />
         )}
       </section>
 

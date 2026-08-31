@@ -471,6 +471,16 @@ function ResultRowImpl({
         </div>
       )}
 
+      {sound.license.name.includes('NC') && (
+        <span
+          role="alert"
+          className="shrink-0 rounded border border-amber-500 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200"
+          title="Non-commercial license — this Sound may not be used in paid work"
+        >
+          ⚠ Non-commercial
+        </span>
+      )}
+
       <LicenseChip name={sound.license.name} />
 
       {dragNotice && (

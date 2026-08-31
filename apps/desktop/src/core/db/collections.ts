@@ -52,6 +52,14 @@ export function hasCollection(db: DB, id: number): boolean {
   )
 }
 
+/** A Collection's current name, or `null` if the id does not exist. */
+export function getCollectionName(db: DB, id: number): string | null {
+  const row = db
+    .prepare('SELECT name FROM collections WHERE id = ?')
+    .get(id) as { name: string } | undefined
+  return row?.name ?? null
+}
+
 /**
  * Add many Sounds to one Collection in a single transaction. Idempotent — a
  * Sound already in the Collection is left as it was (its `added_at` does not

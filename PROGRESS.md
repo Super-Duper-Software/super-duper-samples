@@ -4,7 +4,8 @@ Tracer-bullet backlog: `.scratch/freesound-desktop-v1/`. Ticket 09 (the mileston
 built and its macOS drag-out was manually verified by the user on 2026-08-30. Tickets 10
 (sidecars + LRU eviction), 11 (Library save / view / delete), 15 (search filters +
 sort), 12 (computed peaks + canvas waveform), 13 (library organisation), 14
-(rebuild from sidecars) and 16 (Collections) are done. Next frontier: 17, 18; 19 last.
+(rebuild from sidecars), 16 (Collections) and 17 (Attribution Manifest) are done.
+Next frontier: 18; 19 last.
 
 | # | Ticket | State | Commit |
 |---|---|---|---|
@@ -24,13 +25,70 @@ sort), 12 (computed peaks + canvas waveform), 13 (library organisation), 14
 | 13 | Library organisation | **done** — code + tests (`test/library-organisation.test.ts`) | `8eea6e1` |
 | 14 | Rebuild from sidecars | **done** — code + tests (`test/rebuild.test.ts`) | `261b47d` |
 | 16 | Collections | **done** — code + tests (`test/collections.test.ts`) | `6dfad08` |
-| 17–19 | Attribution manifest, shell polish, packaging | not started | — |
+| 17 | Attribution Manifest | **done** — code + tests (`test/manifest.test.ts`) | _pending_ |
+| 18–19 | Shell polish, packaging | not started | — |
 
 ## Test counts
 
-- `apps/desktop`: 201 vitest tests (+16 for ticket 16), `tsc --noEmit` clean, `electron-vite build` clean.
+- `apps/desktop`: 212 vitest tests (+11 for ticket 17), `tsc --noEmit` clean, `electron-vite build` clean.
 - `worker`: 30 vitest tests, `tsc --noEmit` clean.
 - `spike/drag-out`: syntax-checked only (throwaway).
+
+## Ticket 17 — what landed
+
+- **No migration, no new table.** A Manifest is a snapshot *value*, not stored
+  state — `core.generateManifest(collectionId)` reads current membership once and
+  returns it. Editing the Collection afterwards cannot change a value already
+  handed out (a test mutates the Collection every way and asserts the held value
+  is byte-identical).
+- **`src/core/manifest/obligations.ts`** — two pure predicates over the short
+  license label: `requiresAttribution` (everything except `CC0`; unrecognised →
+  true) and `restrictsCommercialUse` (the `NC` family; unrecognised → true). The
+  renderer's `LicenseChip` keeps its own `name.includes('NC')` check — they must
+  stay in step.
+- **`src/core/manifest/buildManifest.ts`** — pure, no I/O. `buildManifest({
+  collectionId, collectionName, generatedAt, sounds })` → `Manifest { entries,
+  summary, text }`. `entries` carries every member with title (the Freesound
+  published name, not the user's custom name — attribution names the work),
+  author, `licenseName` + `licenseUrl`, `freesoundUrl`, and the two obligation
+  booleans. `summary` pre-counts total / attributionRequired / noAttribution /
+  nonCommercial. `text` is the pasteable plain-text document: NON-COMMERCIAL
+  section first (own list, prominent), then ATTRIBUTION REQUIRED (NC members
+  repeated here with an inline `[NON-COMMERCIAL]` marker), then NO ATTRIBUTION
+  REQUIRED (CC0). Empty Collection → a clear message, never a blank document.
+  `generatedAt` is rendered as a locale-independent `YYYY-MM-DD` so the snapshot
+  is byte-stable.
+- **Core command API** (`src/core/index.ts`): `generateManifest(collectionId)` —
+  looks up the name (`getCollectionName`, new in `db/collections.ts`; throws on
+  unknown id), reads members with the same DB-only `readCollectionSounds` the
+  Collection view uses (no gateway call), passes `Date.now()`. `Manifest` /
+  `ManifestEntry` / `ManifestSummary` and the two predicates are exported.
+- **preload**: `generateManifest` on the `core:invoke` passthrough; plus a
+  **named channel** `core:saveManifest(defaultFileName, text)` → `{ saved,
+  path? }` for the file save (needs Electron `dialog` + `fs` — cannot live in
+  core). `Manifest` types re-exported.
+- **`src/main/index.ts`** — the `core:saveManifest` handler: native
+  `dialog.showSaveDialog` (`.txt` filter) then `fs/promises.writeFile`. Returns
+  `{ saved: false }` on cancel.
+- **Renderer**:
+  - `src/renderer/components/ManifestPanel.tsx` — modal opened from the open
+    Collection's header ("Generate manifest"). Fetches a fresh snapshot on
+    mount, shows `manifest.text` read-only in a `<pre>`, an amber banner when
+    `summary.nonCommercial > 0`, and Copy (`navigator.clipboard.writeText`) /
+    "Save to file…" (`core.saveManifest`) actions with a transient status line.
+    Esc / backdrop / Close dismiss.
+  - `src/renderer/App.tsx` — `showManifest` state, the header button, panel
+    render inside a now-`relative` `<section>`; reset on tab switch and on
+    leaving the Collection.
+  - `src/renderer/components/ResultRow.tsx` — a bold amber **⚠ Non-commercial**
+    badge next to the `LicenseChip` on every row (search / Library / Collection),
+    so the warning is unmistakable everywhere a Sound appears, not only in the
+    Manifest. (License itself was already shown on every surface via
+    `LicenseChip`.)
+- **`test/manifest.test.ts`** — 11 tests: the `obligations` predicates; the pure
+  `buildManifest` text/grouping/empty-collection cases; and the core seam
+  (`generateManifest` lists every member with author/License/URL with no gateway
+  call, throws on unknown id, is a proven snapshot, separates CC0, flags NC).
 
 ## Ticket 16 — what landed
 

@@ -412,13 +412,21 @@ export default function App() {
               library.setDir(library.dir === 'desc' ? 'asc' : 'desc')
             }
             className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
+            title={library.dir === 'desc' ? 'Newest first' : 'Oldest first'}
+            aria-label={
+              library.dir === 'desc'
+                ? 'Sort direction: newest first'
+                : 'Sort direction: oldest first'
+            }
           >
-            {library.dir === 'desc' ? 'Newest first' : 'Oldest first'}
+            {isRail
+              ? library.dir === 'desc'
+                ? '↓'
+                : '↑'
+              : library.dir === 'desc'
+                ? 'Newest first'
+                : 'Oldest first'}
           </button>
-          <span className="text-ink-faint">
-            · select a row and press Delete to remove it · tick rows to add them
-            to a collection
-          </span>
         </div>
         <LibraryFilterBar />
       </>
@@ -445,10 +453,24 @@ export default function App() {
                 collection.setDir(collection.dir === 'desc' ? 'asc' : 'desc')
               }
               className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
+              title={
+                collection.dir === 'desc'
+                  ? 'Newest added first'
+                  : 'Oldest added first'
+              }
+              aria-label={
+                collection.dir === 'desc'
+                  ? 'Sort direction: newest added first'
+                  : 'Sort direction: oldest added first'
+              }
             >
-              {collection.dir === 'desc'
-                ? 'Newest added first'
-                : 'Oldest added first'}
+              {isRail
+                ? collection.dir === 'desc'
+                  ? '↓'
+                  : '↑'
+                : collection.dir === 'desc'
+                  ? 'Newest added first'
+                  : 'Oldest added first'}
             </button>
             <button
               type="button"
@@ -456,11 +478,8 @@ export default function App() {
               className="rounded border border-accent-2 px-1.5 py-0.5 text-accent-2-text hover:bg-surface-raised"
               title="Generate the attribution credits this collection owes"
             >
-              Generate manifest
+              Credits
             </button>
-            <span className="text-ink-faint">
-              · removing a sound here keeps it in your Library
-            </span>
           </>
         ) : (
           <span>

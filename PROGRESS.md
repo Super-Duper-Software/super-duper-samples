@@ -170,6 +170,70 @@ is the first with a visible effect and needs a manual pass.
 - **Live 760px swap:** dragging the window across 760px swaps every visible row
   between the wide and rail forms with no reload and no lost selection / play
   state.
+### Ticket 06 — transport / filter / sub-bars + Credits
+
+- **`src/renderer/components/TransportBar.tsx`** now branches on
+  `useViewport().isRail`. The wide row is byte-for-byte the old layout. The rail
+  row is one line: play/pause · current-sound name (truncate, fills width) · `♥`
+  glyph only (no "Support" text; `title` kept) · a `⋯` sub-panel. The scrub
+  `Waveform` above it is `h-12` in rail (`h-16` in wide). The `w-28`
+  status-label column is gone in rail — playback status shows as a colour +
+  `animate-pulse` cue on the play button (`border-accent-2` while playing,
+  pulsing while buffering) with the text status kept in the button `title`.
+- **Rail transport `⋯`** is a small local upward-opening sub-panel (not
+  `OverflowMenu`, which cannot host a slider): Stop button, Loop checkbox,
+  Auto-advance checkbox, and the volume slider (`flex-1`, same `aria-label`).
+  Closes on Escape / outside-click; every control is a native element so Tab /
+  arrows / Space reach all of it.
+- **`src/renderer/components/FilterBar.tsx`** branches on `isRail`. Wide is
+  unchanged (`Sort` label + `w-44` select, `Filters ▾` inline). Rail is a
+  two-column grid: the sort `<select>` goes fluid (full width) and the
+  `FilterPopover` trigger is stretched to fill its half via arbitrary variants
+  on the wrapper (`[&>span>div>button]:w-full …`) — `FilterPopover.tsx` itself
+  untouched. The active-filter chip row is unchanged and still wraps below.
+- **`src/renderer/App.tsx`** (`contextBar`, shared by both header branches):
+  - Library sub-bar: the helper sentence ("· select a row and press Delete … ·
+    tick rows to add them to a collection") is removed in both layouts. The
+    sort-direction button keeps its text label in wide; in rail it is a compact
+    `↑`/`↓` glyph (label moved to `title` + `aria-label`).
+  - Collections sub-bar: the trailing sentence ("· removing a sound here keeps
+    it in your Library") is removed in both layouts. `‹ All collections`
+    breadcrumb and the open Collection name stay. The direction button is a
+    compact `↑`/`↓` glyph in rail, text in wide.
+  - "Generate manifest" button relabelled **"Credits"** (one occurrence,
+    rendered in both layouts). Still a labelled button; `title` unchanged. The
+    `ManifestPanel` heading/output, `buildManifest`, IPC names and docs keep the
+    term **Attribution Manifest** — UI label only.
+- Not touched: `OverflowMenu`, `FilterPopover`, `CollectionMenu`, `viewport.ts`,
+  `ResultRow`/`ResultList`, `ManifestPanel`, `CONTEXT.md` (the Credits/Manifest
+  split is already recorded there).
+- `tsc --noEmit` clean, `electron-vite build` clean, 323 vitest tests pass.
+
+#### Needs manual verification (spec 0003 ticket 06)
+
+At the **360px floor** and at **~900px**, and dragging live across the 760px
+breakpoint:
+
+- **Transport (rail, ≤760):** one row, no wrap at 360px; the sound name
+  truncates rather than pushing `♥` / `⋯` off-screen. The scrub waveform is
+  visibly shorter (`h-12`) but still present and scrubbable.
+- **Play-button cue:** buffering pulses, playing shows the accent border,
+  paused/idle is the plain border; hovering the button shows the text status.
+- **Transport `⋯` (rail):** opens upward, does not clip at the window bottom;
+  Stop / Loop / Auto-advance / volume all work and match the wide controls;
+  Escape and an outside click close it; Tab cycles through all four controls.
+- **Transport (wide, ~900px and just above 760):** unchanged, and the single
+  row does not wrap to two lines.
+- **FilterBar (rail):** `Sort` and `Filters ▾` are equal width on one row and
+  fill it; the sort select is fluid; the chip row still wraps beneath. `Filters`
+  popover still opens/positions correctly.
+- **Sub-bars (rail):** Library and Collection direction toggles are single
+  `↑`/`↓` glyphs with a tooltip; no helper/trailing sentences in either layout;
+  the Collections breadcrumb + name + **Credits** button remain on the row.
+- **Credits:** the button reads "Credits"; the panel it opens still says
+  "Attribution Manifest" and the exported artifact is unchanged.
+- **Live reflow:** resizing across 760px reflows the transport bar, filter bar
+  and both sub-bars without a reload.
 
 ## Responsive rail — Ticket 05 (header) — what landed
 

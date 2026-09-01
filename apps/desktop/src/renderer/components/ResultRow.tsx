@@ -9,7 +9,7 @@
 // node inside <Waveform> by `audioController`, so it never re-renders this row.
 // A track change flips `isCurrent` for exactly the outgoing and incoming rows.
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { LibrarySound, Sound } from '../../core/types'
@@ -23,6 +23,8 @@ import { formatDuration } from '../lib/format'
 import { waveformIconDataUrl } from '../lib/dragIcon'
 import { CollectionMenu } from './CollectionMenu'
 import { LicenseChip } from './LicenseChip'
+import { OverflowMenu } from './OverflowMenu'
+import type { OverflowMenuItem } from './OverflowMenu'
 import { StagingChip } from './StagingChip'
 import { Waveform } from './Waveform'
 
@@ -143,6 +145,23 @@ function ResultRowImpl({
   const [renameDraft, setRenameDraft] = useState('')
   const [addingTag, setAddingTag] = useState(false)
   const [tagDraft, setTagDraft] = useState('')
+  // Tag authoring left the row body: custom tags now show read-only and the
+  // add / remove affordances only appear while this inline editor is armed
+  // from the row `⋯` → "Edit tags" (and, untouched here, in the Edit view).
+  const [editingTags, setEditingTags] = useState(false)
+
+  // The row `⋯` → "Add to collection" opens the shared `CollectionMenu` as a
+  // nested step. `CollectionMenu` has no imperative "open", so it is mounted
+  // invisibly next to the menu and its trigger is clicked programmatically when
+  // `pickNonce` bumps. `overflowKey` remounts the `OverflowMenu` to dismiss it
+  // once the nested pick is done (it exposes no close handle).
+  const [pickNonce, setPickNonce] = useState(0)
+  const [overflowKey, setOverflowKey] = useState(0)
+  const pickerHostRef = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (pickNonce === 0) return
+    pickerHostRef.current?.querySelector('button')?.click()
+  }, [pickNonce])
 
   const startRename = useCallback(() => {
     setRenameDraft(customName ?? sound.name)
@@ -176,6 +195,80 @@ function ResultRowImpl({
     },
     [sound.id, customTags],
   )
+
+  // "Add to collection" from a row `⋯`: file this ONE Sound, leaving the batch
+  // multi-select bar untouched, then dismiss the (now-stale) overflow menu.
+  const handlePickCollection = useCallback(
+    (collectionId: number) => {
+      onAddToCollection(collectionId)
+      setOverflowKey((k) => k + 1)
+    },
+    [onAddToCollection],
+  )
+
+  const openFreesoundPage = useCallback(() => {
+    void window.core.openFreesoundPage(sound.id)
+  }, [sound.id])
+
+  const revealInFinder = useCallback(() => {
+    void window.core.revealInFinder(sound.id)
+  }, [sound.id])
+
+  // Per-variant `⋯` contents. The one or two most-used actions stay visible on
+  // the row (Download / ✂ Edit / Remove from collection); everything else lives
+  // here.
+  const menuItems = useMemo<OverflowMenuItem[]>(() => {
+    const addToCollection: OverflowMenuItem = {
+      label: 'Add to collection',
+      opensNestedPicker: true,
+      disabled: !(isLibraryVariant || inLibrary),
+      onSelect: () => {
+        setPickNonce((n) => n + 1)
+        setOverflowKey((k) => k + 1)
+      },
+    }
+    const openPage: OverflowMenuItem = {
+      label: 'Open Freesound page',
+      onSelect: openFreesoundPage,
+    }
+    if (variant === 'search') {
+      return [openPage, addToCollection]
+    }
+    const editTags: OverflowMenuItem = {
+      label: 'Edit tags',
+      onSelect: () => setEditingTags(true),
+    }
+    const rename: OverflowMenuItem = { label: 'Rename', onSelect: startRename }
+    const reveal: OverflowMenuItem = {
+      label: 'Reveal in Finder',
+      onSelect: revealInFinder,
+    }
+    if (variant === 'collection') {
+      return [addToCollection, editTags, rename, reveal, openPage]
+    }
+    return [
+      addToCollection,
+      editTags,
+      rename,
+      reveal,
+      openPage,
+      {
+        label: removeLabel ?? 'Remove from Library',
+        destructive: true,
+        onSelect: () => onRemove?.(sound),
+      },
+    ]
+  }, [
+    variant,
+    isLibraryVariant,
+    inLibrary,
+    openFreesoundPage,
+    revealInFinder,
+    startRename,
+    removeLabel,
+    onRemove,
+    sound,
+  ])
 
   const { isCurrent, status, failed } = useRowTransport(sound.id)
   const isPlaying = isCurrent && status === 'playing'
@@ -349,7 +442,14 @@ function ResultRowImpl({
             {sound.username}
           </span>
         </div>
-        <div className="mt-0.5 flex items-center gap-2 overflow-hidden">
+        <div
+          className="mt-0.5 flex items-center gap-2 overflow-hidden"
+          title={
+            sound.tags.length > 0
+              ? `Freesound tags: ${sound.tags.join(', ')}`
+              : undefined
+          }
+        >
           <span className="shrink-0 text-xs tabular-nums text-ink-muted">
             {formatDuration(sound.duration)}
           </span>
@@ -426,86 +526,86 @@ function ResultRowImpl({
                 {c.name}
               </span>
             ))}
-          {isLibraryVariant ? (
-            <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
-              {customTags.map((t) => (
+          {isLibraryVariant &&
+            (editingTags ? (
+              <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+                {customTags.map((t) => (
+                  <button
+                    key={`c:${t}`}
+                    type="button"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={() => onRemoveTag(t)}
+                    className="inline-flex shrink-0 items-center gap-0.5 rounded border border-ok px-1 text-[10px] text-ok hover:bg-surface-raised"
+                    title="Your tag — click to remove"
+                  >
+                    <span># {t}</span>
+                    <span aria-hidden>×</span>
+                  </button>
+                ))}
+                {addingTag ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    value={tagDraft}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onChange={(e) => setTagDraft(e.target.value)}
+                    onBlur={commitAddTag}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        commitAddTag()
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setAddingTag(false)
+                      }
+                    }}
+                    placeholder="tag + Enter"
+                    className="w-28 shrink-0 rounded border border-focus bg-surface px-1 text-[10px] text-ink placeholder:text-ink-faint focus:outline-none"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={startAddTag}
+                    className="shrink-0 rounded border border-line px-1 text-[10px] text-ink-muted hover:border-line-strong hover:text-ink"
+                    title="Add your own tag"
+                  >
+                    + tag
+                  </button>
+                )}
                 <button
-                  key={`c:${t}`}
                   type="button"
                   onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => onRemoveTag(t)}
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded border border-ok px-1 text-[10px] text-ok hover:bg-surface-raised"
-                  title="Your tag — click to remove"
-                >
-                  <span># {t}</span>
-                  <span aria-hidden>×</span>
-                </button>
-              ))}
-              {addingTag ? (
-                <input
-                  type="text"
-                  autoFocus
-                  value={tagDraft}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onChange={(e) => setTagDraft(e.target.value)}
-                  onBlur={commitAddTag}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      commitAddTag()
-                    } else if (e.key === 'Escape') {
-                      e.preventDefault()
-                      setAddingTag(false)
-                    }
+                  onClick={() => {
+                    setAddingTag(false)
+                    setEditingTags(false)
                   }}
-                  placeholder="tag + Enter"
-                  className="w-28 shrink-0 rounded border border-focus bg-surface px-1 text-[10px] text-ink placeholder:text-ink-faint focus:outline-none"
-                />
-              ) : (
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={startAddTag}
                   className="shrink-0 rounded border border-line px-1 text-[10px] text-ink-muted hover:border-line-strong hover:text-ink"
-                  title="Add your own tag"
+                  title="Done editing tags"
                 >
-                  + tag
+                  ✓ done
                 </button>
-              )}
-              {sound.tags.length > 0 && (
-                <span
-                  className="min-w-0 truncate text-[11px] text-ink-faint"
-                  title={`From Freesound: ${sound.tags.join(', ')}`}
-                >
-                  {sound.tags.join(' · ')}
+              </span>
+            ) : (
+              customTags.length > 0 && (
+                <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+                  {customTags.map((t) => (
+                    <span
+                      key={`c:${t}`}
+                      className="inline-flex shrink-0 items-center rounded border border-ok px-1 text-[10px] text-ok"
+                      title="Your tag — edit from the ⋯ menu"
+                    >
+                      # {t}
+                    </span>
+                  ))}
                 </span>
-              )}
-            </span>
-          ) : (
-            <span
-              className="min-w-0 flex-1 truncate text-xs text-ink-faint"
-              title={sound.tags.join(', ')}
-            >
-              {sound.tags.join(' · ')}
-            </span>
-          )}
+              )
+            ))}
         </div>
       </div>
 
-      {/* Search row: once the Sound is downloaded, file it into a Collection
-          without leaving the search results. Rendered outside the metadata
-          row's `overflow-hidden` so the dropdown is not clipped. */}
-      {variant === 'search' && inLibrary && (
-        <div className="flex shrink-0 items-center">
-          <CollectionMenu
-            label="＋ Collection ▾"
-            onPick={onAddToCollection}
-            title="Add this downloaded sound to a collection"
-            className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
-          />
-        </div>
-      )}
-
+      {/* Visible row action: ✂ Edit (Library / Collection). The one action
+          unique to this app is never buried in the `⋯` menu. */}
       {isLibraryVariant && onEdit && (
         <button
           type="button"
@@ -523,60 +623,62 @@ function ResultRowImpl({
         </button>
       )}
 
-      {isLibraryVariant && (
-        <div className="flex shrink-0 items-center gap-1">
-          <button
-            type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={startRename}
-            className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
-            title="Give this sound your own name (used on drag-out)"
-          >
-            Rename
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={() => void window.core.revealInFinder(sound.id)}
-            className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
-            title="Reveal the Original in Finder / Explorer"
-          >
-            Reveal
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={() => void window.core.openFreesoundPage(sound.id)}
-            className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
-            title="Open this sound's page on freesound.org"
-          >
-            Page
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={() => onRemove?.(sound)}
-            className="rounded border border-error px-1.5 py-0.5 text-[11px] text-error hover:bg-surface-raised"
-            title={
-              removeTitle ?? 'Remove from the Library and delete its files'
-            }
-          >
-            {removeLabel ?? 'Remove'}
-          </button>
-        </div>
-      )}
-
-      {sound.license.name.includes('NC') && (
-        <span
-          role="alert"
-          className="shrink-0 rounded border border-license-caution bg-surface-raised px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-license-caution"
-          title="Non-commercial license — this Sound may not be used in paid work"
+      {/* Visible row action: Remove from collection stays on the Collection row
+          — frequent and non-destructive here (the Sound stays in the Library). */}
+      {variant === 'collection' && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={() => onRemove?.(sound)}
+          className="shrink-0 rounded border border-error px-1.5 py-0.5 text-[11px] text-error hover:bg-surface-raised"
+          title={
+            removeTitle ??
+            'Remove from this collection — the sound stays in your Library'
+          }
         >
-          ⚠ Non-commercial
-        </span>
+          {removeLabel ?? 'Remove from collection'}
+        </button>
       )}
 
-      <LicenseChip name={sound.license.name} />
+      {/* Per-row `⋯`. `CollectionMenu` is mounted invisibly alongside it and
+          driven programmatically for the "Add to collection" nested step. */}
+      <div className="relative flex shrink-0 items-center">
+        <OverflowMenu
+          key={overflowKey}
+          label={`More actions for ${displayName}`}
+          title="More actions"
+          items={menuItems}
+        />
+        <span
+          ref={pickerHostRef}
+          aria-hidden
+          className="pointer-events-none absolute right-0 top-0 opacity-0"
+        >
+          <CollectionMenu
+            label=""
+            onPick={handlePickCollection}
+            title="Add this sound to a collection"
+            className="block h-0 w-0 overflow-hidden p-0"
+          />
+        </span>
+      </div>
+
+      {/* Fixed-width trailing licence slot: always rendered, right-aligned,
+          holding EITHER the non-commercial pill OR the licence chip so the
+          action buttons to its left line up from row to row. */}
+      <div className="flex w-24 shrink-0 items-center justify-end">
+        {sound.license.name.includes('NC') ? (
+          <span
+            role="alert"
+            className="shrink-0 whitespace-nowrap rounded border-2 border-license-caution bg-surface-raised px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-license-caution"
+            title="Non-commercial license — this Sound may not be used in paid work"
+          >
+            ⚠ Non-commercial
+          </span>
+        ) : (
+          <LicenseChip name={sound.license.name} />
+        )}
+      </div>
 
       {dragNotice && (
         <div

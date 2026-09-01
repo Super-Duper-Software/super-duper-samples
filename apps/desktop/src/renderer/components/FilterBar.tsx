@@ -10,6 +10,7 @@
 
 import { memo } from 'react'
 import type { ChangeEvent } from 'react'
+import { useViewport } from '../lib/viewport'
 import { useSearchPrefs } from '../store/useSearchPrefs'
 import type { SearchFilter } from '../../preload'
 import {
@@ -28,6 +29,7 @@ const numOrUndef = (v: string): number | undefined =>
   v === '' ? undefined : Number(v)
 
 export const FilterBar = memo(function FilterBar() {
+  const { isRail } = useViewport()
   const sort = useSearchPrefs((s) => s.sort)
   const filter = useSearchPrefs((s) => s.filter)
   const setSort = useSearchPrefs((s) => s.setSort)
@@ -42,28 +44,23 @@ export const FilterBar = memo(function FilterBar() {
     (e: ChangeEvent<HTMLSelectElement | HTMLInputElement>) =>
       setFilter({ [key]: numOrUndef(e.target.value) } as Partial<SearchFilter>)
 
-  return (
-    <div className="mt-2 flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-ink-muted">
-        <label className="flex items-center gap-1.5">
-          <span>Sort</span>
-          <span className="w-44">
-            <StyledSelect
-              aria-label="Sort results"
-              value={sort}
-              onChange={(e) => setSort(e.target.value as typeof sort)}
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </StyledSelect>
-          </span>
-        </label>
+  const sortSelect = (
+    <StyledSelect
+      aria-label="Sort results"
+      value={sort}
+      onChange={(e) => setSort(e.target.value as typeof sort)}
+    >
+      {SORT_OPTIONS.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </StyledSelect>
+  )
 
-        <FilterPopover count={chips.length} onClearAll={clearFilter}>
-          <Field label="Duration" wide>
+  const filterFields = (
+    <>
+      <Field label="Duration" wide>
             <DurationRange
               min={filter.durationMin}
               max={filter.durationMax}
@@ -150,8 +147,35 @@ export const FilterBar = memo(function FilterBar() {
               ))}
             </StyledSelect>
           </Field>
-        </FilterPopover>
-      </div>
+    </>
+  )
+
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {isRail ? (
+        // Rail — Sort and Filters as two equal-width controls on one row. The
+        // `w-44` fixed sort select goes fluid; the `FilterPopover` trigger is
+        // stretched to fill its half without touching that shared component.
+        <div className="grid grid-cols-2 gap-2 text-xs text-ink-muted [&>span>div]:block [&>span>div>button]:w-full [&>span>div>button]:justify-between">
+          <span className="min-w-0">{sortSelect}</span>
+          <span className="min-w-0">
+            <FilterPopover count={chips.length} onClearAll={clearFilter}>
+              {filterFields}
+            </FilterPopover>
+          </span>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-ink-muted">
+          <label className="flex items-center gap-1.5">
+            <span>Sort</span>
+            <span className="w-44">{sortSelect}</span>
+          </label>
+
+          <FilterPopover count={chips.length} onClearAll={clearFilter}>
+            {filterFields}
+          </FilterPopover>
+        </div>
+      )}
 
       {chips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5" aria-label="Active filters">

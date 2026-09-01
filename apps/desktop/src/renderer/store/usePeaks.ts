@@ -25,6 +25,15 @@ interface PeaksState {
   revision: number
   ensure: (soundId: number) => void
   _set: (soundId: number, entry: PeaksPayload | null) => void
+  /**
+   * Forget a cached entry. Negative (Edit) ids are locally minted and get
+   * REUSED once a deleted Edit's id frees up (`nextEditId` — ADR-0005): without
+   * this, `ensure()`'s "already have an entry" bail would keep serving a
+   * long-gone Edit's waveform for a brand new one that happens to land on the
+   * same id. Called on delete (`useLibrary.remove`) and defensively again when
+   * a new Edit id shows up (`useLibrary.noteCreated`).
+   */
+  clear: (soundId: number) => void
 }
 
 function coreApi(): typeof window.core | undefined {
@@ -72,6 +81,15 @@ export const usePeaks = create<PeaksState>((set, get) => ({
       if (current && !entry) return s
       const byId = new Map(s.byId)
       byId.set(soundId, entry)
+      return { byId, revision: s.revision + 1 }
+    })
+  },
+
+  clear: (soundId) => {
+    set((s) => {
+      if (!s.byId.has(soundId)) return s
+      const byId = new Map(s.byId)
+      byId.delete(soundId)
       return { byId, revision: s.revision + 1 }
     })
   },

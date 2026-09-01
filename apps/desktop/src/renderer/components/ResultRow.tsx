@@ -50,6 +50,11 @@ export interface ResultRowProps {
   removeLabel?: string
   /** Override the remove button's tooltip. */
   removeTitle?: string
+  /**
+   * Library / collection variants: open the Edit view (ticket 07) on this
+   * Sound. Omit to hide the "Edit" affordance entirely.
+   */
+  onEdit?: (sound: Sound) => void
 }
 
 function ResultRowImpl({
@@ -63,6 +68,7 @@ function ResultRowImpl({
   onRemove,
   removeLabel,
   removeTitle,
+  onEdit,
 }: ResultRowProps) {
   const handleSelect = useCallback(() => onSelect(index), [onSelect, index])
 
@@ -124,6 +130,11 @@ function ResultRowImpl({
   const overlay = sound as Partial<LibrarySound>
   const customName = overlay.customName ?? null
   const customTags = overlay.customTags ?? []
+  // An Edit's own `sound.name` is the core's internal `edited` / `edited (N)`
+  // fallback (ADR-0005), not a real Freesound title — showing it as "aka
+  // edited" is just confusing, so the "aka" annotation is for a real Sound's
+  // renamed row only. The Manifest already credits the true source (ticket 08).
+  const isEdit = (overlay.derivedFrom ?? null) !== null
   const displayName = customName ?? sound.name
 
   // Electron's renderer has no window.prompt, so rename / add-tag are inline
@@ -318,7 +329,7 @@ function ResultRowImpl({
             <span
               className="truncate text-sm font-medium text-ink"
               title={
-                customName
+                customName && !isEdit
                   ? `${customName}  (Freesound: ${sound.name})`
                   : sound.name
               }
@@ -326,7 +337,7 @@ function ResultRowImpl({
               {displayName}
             </span>
           )}
-          {isLibraryVariant && customName && (
+          {isLibraryVariant && customName && !isEdit && (
             <span
               className="shrink-0 truncate text-[11px] italic text-ink-faint"
               title={`Freesound name: ${sound.name}`}
@@ -341,6 +352,12 @@ function ResultRowImpl({
         <div className="mt-0.5 flex items-center gap-2 overflow-hidden">
           <span className="shrink-0 text-xs tabular-nums text-ink-muted">
             {formatDuration(sound.duration)}
+          </span>
+          <span
+            className="shrink-0 rounded border border-line px-1 text-[10px] font-medium uppercase tracking-wide text-ink-faint"
+            title={`File format: ${sound.type.toUpperCase()}`}
+          >
+            {sound.type}
           </span>
           {failed && (
             <span
@@ -487,6 +504,23 @@ function ResultRowImpl({
             className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
           />
         </div>
+      )}
+
+      {isLibraryVariant && onEdit && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={() => onEdit(sound)}
+          disabled={stagingStatus !== 'ready'}
+          className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink disabled:opacity-40"
+          title={
+            stagingStatus === 'ready'
+              ? 'Open the Edit view — trim a region and audition the cut'
+              : "This sound's Original is not on disk yet — it can't be edited"
+          }
+        >
+          ✂ Edit
+        </button>
       )}
 
       {isLibraryVariant && (

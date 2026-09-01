@@ -383,6 +383,25 @@ describe('Edits in the Attribution Manifest (ticket 05)', () => {
     expect(m.text).toContain('https://freesound.org/s/1/')
   })
 
+  it("titles an Edit's entry with the PARENT's original name, not the Edit's own", async () => {
+    const { core } = await offlineCoreWithLibrary(
+      [fakeSound(1, { name: 'Rain on tin', username: 'fieldrec', license: LICENSES.by })],
+      { audioRenderRunner: fakeRunner() },
+    )
+    const { editId } = (await core.createEdit(1, WHOLE_FILE_SPEC))!
+    // An unrenamed Edit's own name is the bare `edited` / `edited (N)` fallback
+    // (ticket 01) — attribution must not show that; it credits the original.
+    core.setCustomName(editId, 'My cool edit')
+
+    const c = core.createCollection('With an edit')
+    core.addToCollection(c.id, [editId])
+    const m = core.generateManifest(c.id)
+
+    expect(m.entries[0]!.title).toBe('Rain on tin')
+    expect(m.text).toContain('"Rain on tin" by fieldrec')
+    expect(m.text).not.toContain('My cool edit')
+  })
+
   it('flags and segregates an Edit of a CC-BY-NC Sound exactly like its parent', async () => {
     const { core } = await offlineCoreWithLibrary(
       [fakeSound(1, { name: 'Thunder', username: 'sky', license: LICENSES.byNc })],

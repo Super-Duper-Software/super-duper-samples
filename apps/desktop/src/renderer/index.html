@@ -6,9 +6,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `media-src ... file:` (ticket 07): the Edit view's loop-audition plays a
+         Library Sound's local Original directly via a `file://` URL — without
+         this the load is blocked (a CSP console warning, not a thrown error),
+         so the audio element just silently never plays. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://cdn.freesound.org data:; media-src https://cdn.freesound.org"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://cdn.freesound.org data:; media-src https://cdn.freesound.org file:"
     />
     <title>Super Duper Samples</title>
   </head>

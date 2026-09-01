@@ -100,6 +100,46 @@ function wavRenderRunner(bytes: () => Buffer): AudioRenderRunner {
   }
 }
 
+/** Reads the fixed 44-byte-header mono 16-bit PCM WAV shape `makeSplitAmplitudeWav` writes. */
+function readWavHeader(buf: Buffer): { sampleRate: number; frames: number } {
+  return { sampleRate: buf.readUInt32LE(24), frames: (buf.length - 44) / 2 }
+}
+
+/** Slices a WAV's PCM data to `trim` (or the whole file), fixing up both size fields. */
+function sliceWav(buf: Buffer, trim: { startSec: number; endSec: number } | null): Buffer {
+  const { sampleRate, frames } = readWavHeader(buf)
+  const startFrame = trim ? Math.max(0, Math.round(trim.startSec * sampleRate)) : 0
+  const endFrame = trim ? Math.min(frames, Math.round(trim.endSec * sampleRate)) : frames
+  const sliceBytes = buf.subarray(44 + startFrame * 2, 44 + endFrame * 2)
+  const out = Buffer.alloc(44 + sliceBytes.length)
+  buf.copy(out, 0, 0, 44)
+  out.writeUInt32LE(36 + sliceBytes.length, 4)
+  out.writeUInt32LE(sliceBytes.length, 40)
+  sliceBytes.copy(out, 44)
+  return out
+}
+
+/**
+ * A render runner that actually honours `spec.trim` against the real source
+ * bytes — a step up from `wavRenderRunner`'s fixed dummy output, needed now
+ * that peaks are computed from the EDIT'S OWN rendered file rather than
+ * sliced from the parent's decode: a test proving "the peaks reflect the
+ * trimmed window" needs the rendered file to genuinely BE that window.
+ */
+function trimmingWavRenderRunner(): AudioRenderRunner {
+  return async ({ sourcePath, spec, outPath }) => {
+    const { readFile, writeFile } = await import('node:fs/promises')
+    const src = await readFile(sourcePath)
+    const out = sliceWav(src, spec.trim)
+    await writeFile(outPath, out)
+    const { sampleRate, frames } = readWavHeader(src)
+    const durationSec = spec.trim
+      ? spec.trim.endSec - spec.trim.startSec
+      : frames / sampleRate
+    return { byteSize: out.byteLength, durationSec }
+  }
+}
+
 const inProcessPeakRunner = (
   filePath: string,
   targetBuckets: number,
@@ -114,14 +154,14 @@ async function stage(core: Awaited<ReturnType<typeof makeTestCore>>['core'], que
 }
 
 describe('ticket 03 — computed waveform peaks for an Edit', () => {
-  it('an Edit created from a WAV parent has peaks sliced to its trimmed window, not the whole parent', async () => {
+  it("an Edit created from a WAV parent has peaks decoded from its OWN rendered (trimmed) file", async () => {
     const sampleRate = 8000
     const totalSec = 20 // well within the fixture's 34.7208s duration
     const wav = makeSplitAmplitudeWav({ totalSec, sampleRate, loudAmp: 0.9, quietAmp: 0.2 })
 
     const { core, dataDir } = await makeTestCore({
       gateway: makeFakeGateway({ downloadBytes: wav }),
-      audioRenderRunner: wavRenderRunner(() => makeSimpleWav(4000)),
+      audioRenderRunner: trimmingWavRenderRunner(),
       computePeaksRunner: inProcessPeakRunner,
     })
     cleanups.push(() => core.close())
@@ -137,31 +177,30 @@ describe('ticket 03 — computed waveform peaks for an Edit', () => {
     const peaks = core.getPeaks(editId)!
 
     expect(peaks.bucketCount).toBeGreaterThan(0)
-    // Decoded straight from the parent WAV, not the (dummy) Edit file — its own header says 8000 Hz.
     expect(peaks.sampleRate).toBe(sampleRate)
 
     const maxVal = Math.max(...peaks.peaks)
     const minVal = Math.min(...peaks.peaks)
-    // Close to the loud amplitude (0.9), nowhere near the quiet one (0.2) — proves the
-    // slice came from [2s, 5s), not the tail of the file.
+    // Close to the loud amplitude (0.9), nowhere near the quiet one (0.2) — proves these
+    // are the Edit's OWN [2s, 5s) rendered bytes, not (say) the parent's tail.
     expect(maxVal).toBeGreaterThan(0.8)
     expect(minVal).toBeLessThan(-0.8)
 
-    // No decode of the exported file: no scratch PCM was ever created for this path.
+    // WAV is locally decodable — no scratch PCM detour for this Edit's own file.
     const leftovers = readdirSync(join(dataDir, 'content')).filter((f) =>
       f.includes('peaks-scratch'),
     )
     expect(leftovers).toEqual([])
   })
 
-  it('an Edit with no trim gets peaks spanning the parent whole file', async () => {
+  it('an Edit with no trim gets peaks spanning its own whole rendered file', async () => {
     const sampleRate = 8000
     const totalSec = 20
     const wav = makeSplitAmplitudeWav({ totalSec, sampleRate, loudAmp: 0.9, quietAmp: 0.2 })
 
     const { core } = await makeTestCore({
       gateway: makeFakeGateway({ downloadBytes: wav }),
-      audioRenderRunner: wavRenderRunner(() => makeSimpleWav(4000)),
+      audioRenderRunner: trimmingWavRenderRunner(),
       computePeaksRunner: inProcessPeakRunner,
     })
     cleanups.push(() => core.close())
@@ -176,6 +215,51 @@ describe('ticket 03 — computed waveform peaks for an Edit', () => {
     expect(Math.max(...peaks.peaks)).toBeGreaterThan(0.8)
     const hasQuietBucket = peaks.peaks.some((v) => Math.abs(v) < 0.35 && Math.abs(v) > 0.05)
     expect(hasQuietBucket).toBe(true)
+  })
+
+  it("recomputes peaks from the Edit's own file when the export changes the audio itself (loudness-normalise)", async () => {
+    // The parent is QUIET throughout; the fake "normalise" runner boosts it —
+    // proving peaks reflect what the export actually produced, not a slice of
+    // the parent's (quiet) raw samples.
+    const sampleRate = 8000
+    const wav = makeSplitAmplitudeWav({
+      totalSec: 4,
+      sampleRate,
+      loudAmp: 0.2,
+      quietAmp: 0.2,
+    })
+    const normalisingRunner: AudioRenderRunner = async ({ sourcePath, outPath }) => {
+      const { readFile, writeFile } = await import('node:fs/promises')
+      const src = await readFile(sourcePath)
+      const { frames } = readWavHeader(src)
+      const boosted = Buffer.from(src)
+      for (let i = 0; i < frames; i++) {
+        const v = boosted.readInt16LE(44 + i * 2)
+        boosted.writeInt16LE(Math.max(-32767, Math.min(32767, v * 4)), 44 + i * 2)
+      }
+      await writeFile(outPath, boosted)
+      return { byteSize: boosted.byteLength, durationSec: frames / sampleRate }
+    }
+
+    const { core } = await makeTestCore({
+      gateway: makeFakeGateway({ downloadBytes: wav }),
+      audioRenderRunner: normalisingRunner,
+      computePeaksRunner: inProcessPeakRunner,
+    })
+    cleanups.push(() => core.close())
+    await stage(core, 'rain', RAIN.id)
+
+    const { editId } = (await core.createEdit(RAIN.id, {
+      trim: null,
+      format: 'wav',
+      normalize: true,
+    }))!
+    core.requestPeaks(editId)
+    await waitUntil(() => core.getPeaks(editId) != null)
+    const peaks = core.getPeaks(editId)!
+
+    // The source never exceeds ~0.2; the rendered (boosted) file does.
+    expect(Math.max(...peaks.peaks)).toBeGreaterThan(0.7)
   })
 
   it('an Edit created from a compressed-source (mp3) parent still ends up with peaks, via a scratch PCM rendition', async () => {

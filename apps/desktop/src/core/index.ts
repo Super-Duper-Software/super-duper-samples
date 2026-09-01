@@ -1543,11 +1543,29 @@ export function createCore(deps: CoreDeps): Core {
       // Same hydrated, DB-only read the Collection view uses — no gateway call.
       // Members come back most-recently-added first; the Manifest keeps that order.
       const sounds = readCollectionSounds(db, collectionId, 'desc')
+
+      // Attribution is to the ORIGINAL creative work, not the Edit's own
+      // `edited` / `edited (N)` / custom name — an Edit's `title` in the
+      // Manifest is its parent's, with `buildManifest`'s own "(edited)" marker
+      // doing the disclosure (ADR-0005). Degrades to the Edit's own name if
+      // its parent is somehow gone.
+      const parentIds = sounds
+        .map((s) => s.derivedFrom)
+        .filter((id): id is number => id != null)
+      const parentNameById = new Map(
+        getSoundsByIds(db, parentIds).map((p) => [p.id, p.name]),
+      )
+      const soundsForManifest = sounds.map((s) =>
+        s.derivedFrom != null && parentNameById.has(s.derivedFrom)
+          ? { ...s, name: parentNameById.get(s.derivedFrom)! }
+          : s,
+      )
+
       return buildManifest({
         collectionId,
         collectionName: name,
         generatedAt: Date.now(),
-        sounds,
+        sounds: soundsForManifest,
       })
     },
 

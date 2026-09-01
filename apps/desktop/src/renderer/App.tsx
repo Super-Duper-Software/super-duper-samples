@@ -15,6 +15,7 @@ import { NotificationHost } from './components/NotificationHost'
 import { ShortcutsDialog } from './components/ShortcutsDialog'
 import { LogViewerDialog } from './components/LogViewerDialog'
 import { SupportSplash } from './components/SupportSplash'
+import { EditView } from './components/EditView'
 import { useNotifications } from './store/useNotifications'
 import { useAuth } from './hooks/useAuth'
 import { useSearch } from './hooks/useSearch'
@@ -30,13 +31,31 @@ import { useLibraryFilter, hasLibraryFilter } from './store/useLibraryFilter'
 import { useSearchPrefs } from './store/useSearchPrefs'
 import type { CollectionSummary, Sound } from '../core/types'
 
-type View = 'search' | 'library' | 'collections'
+type View = 'search' | 'library' | 'collections' | 'edit'
 
 export default function App() {
   const [view, setView] = useState<View>('search')
   const [openCollection, setOpenCollection] = useState<CollectionSummary | null>(
     null,
   )
+  // Ticket 07 — the Edit view. `preEditView` remembers what was showing before
+  // it opened so closing (Escape / ✕) returns there untouched; the Sound being
+  // edited lives here, not in `view`, so a Library/Collection row can look it
+  // up once fetched (search rows never offer the affordance — see ResultRow).
+  const [editingSound, setEditingSound] = useState<Sound | null>(null)
+  const preEditView = useRef<View>('search')
+  const openEdit = useCallback(
+    (sound: Sound) => {
+      preEditView.current = view === 'edit' ? preEditView.current : view
+      setEditingSound(sound)
+      setView('edit')
+    },
+    [view],
+  )
+  const closeEdit = useCallback(() => {
+    setEditingSound(null)
+    setView(preEditView.current)
+  }, [])
   const [showManifest, setShowManifest] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
@@ -51,6 +70,7 @@ export default function App() {
   const restore = useRef<{
     openCollectionId?: number | null
     selectedSoundId?: number | null
+    editSoundId?: number | null
   }>({})
   useEffect(() => {
     let cancelled = false
@@ -58,12 +78,16 @@ export default function App() {
       .getUiState()
       .then((s) => {
         if (cancelled) return
-        if (s.view) setView(s.view as View)
+        // A restored 'edit' view needs its Sound resolved first (below) — start
+        // on 'search' and let that resolution flip us over, so a lookup failure
+        // never strands the window on a blank Edit view.
+        if (s.view && s.view !== 'edit') setView(s.view as View)
         if (typeof s.query === 'string') setQuery(s.query)
         if (!s.supportPromptDismissed) setShowSupport(true)
         restore.current = {
           openCollectionId: s.openCollectionId ?? null,
           selectedSoundId: s.selectedSoundId ?? null,
+          editSoundId: s.view === 'edit' ? (s.editSoundId ?? null) : null,
         }
       })
       .catch(() => {})
@@ -74,6 +98,22 @@ export default function App() {
       cancelled = true
     }
   }, [])
+
+  // Ticket 07 — one-shot restore of a Library-row Edit view left open at exit.
+  useEffect(() => {
+    if (!uiReady) return
+    const want = restore.current.editSoundId
+    if (want == null) return
+    restore.current.editSoundId = null
+    void window.core
+      .listLibrary()
+      .then((sounds) => {
+        const match = sounds.find((s) => s.id === want)
+        if (match) openEdit(match)
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiReady])
 
   // Persist the shell state (debounced — `view`/`query`/open collection/selection
   // all funnel here). `setUiState` merges, so this never disturbs `window`.
@@ -86,10 +126,11 @@ export default function App() {
         query,
         openCollectionId: openCollection?.id ?? null,
         selectedSoundId: selectedSoundId ?? null,
+        editSoundId: view === 'edit' ? (editingSound?.id ?? null) : null,
       })
     }, 400)
     return () => clearTimeout(t)
-  }, [uiReady, view, query, openCollection, selectedSoundId])
+  }, [uiReady, view, query, openCollection, selectedSoundId, editingSound])
 
   const sort = useSearchPrefs((s) => s.sort)
   const filter = useSearchPrefs((s) => s.filter)
@@ -486,7 +527,7 @@ export default function App() {
                 loadingMore={loadingMore}
                 loadMore={loadMore}
                 onFocusSearch={focusSearch}
-                resetKey={`${query.trim()} ${sort} ${JSON.stringify(filter)}`}
+                resetKey={`${query.trim()} ${sort} ${JSON.stringify(filter)}`}
               />
             )}
           </>
@@ -540,6 +581,7 @@ export default function App() {
                   onFocusSearch={focusSearch}
                   variant="library"
                   onRemove={confirmRemove}
+                  onEdit={openEdit}
                 />
               </div>
             )}
@@ -583,6 +625,7 @@ export default function App() {
                   onRemove={removeFromOpenCollection}
                   removeLabel="Remove from collection"
                   removeTitle="Remove from this collection — the sound stays in your Library"
+                  onEdit={openEdit}
                 />
               </div>
             )}
@@ -618,6 +661,9 @@ export default function App() {
               void window.core.setUiState({ supportPromptDismissed: true })
           }}
         />
+      )}
+      {view === 'edit' && editingSound && (
+        <EditView sound={editingSound} onClose={closeEdit} />
       )}
     </main>
   )

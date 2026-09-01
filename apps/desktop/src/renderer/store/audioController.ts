@@ -13,6 +13,12 @@
 //   that may be staged and dragged, and it is emphatically NOT handled here.
 //   Dragging the Preview mp3 and swapping the Original in afterwards is
 //   forbidden outright (ADR-0003 "Consequences").
+//
+//   Exception: an Edit (ADR-0005) is a derived LOCAL Sound with no Freesound
+//   Preview at all — `useTransport.playSound` loads its local Original's own
+//   `file://` URL here instead when `previewUrls` is empty. That is still not
+//   the row-list playing a real Sound's Original — an Edit never had a
+//   Preview to begin with.
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // A single long-lived HTMLAudioElement is created once and reused for every

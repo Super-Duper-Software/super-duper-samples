@@ -175,6 +175,34 @@ export function zoomWindow(
   return { start, end }
 }
 
+/**
+ * Slide the zoom window by `deltaFraction` (of the WHOLE file), keeping its
+ * span fixed — a horizontal scroll while zoomed in. Clamped so the window
+ * stays inside [0, 1] and never changes width, even at an edge (ticket 07:
+ * without this, zooming in on the Edit view has no way to reach the rest of
+ * the file).
+ */
+export function panWindow(
+  windowStart: number,
+  windowEnd: number,
+  deltaFraction: number,
+): { start: number; end: number } {
+  const lo = clamp01(Math.min(windowStart, windowEnd))
+  const hi = clamp01(Math.max(windowStart, windowEnd))
+  const span = hi - lo
+  let start = lo + deltaFraction
+  let end = hi + deltaFraction
+  if (start < 0) {
+    start = 0
+    end = span
+  }
+  if (end > 1) {
+    end = 1
+    start = 1 - span
+  }
+  return { start, end }
+}
+
 function clamp01(n: number): number {
   if (Number.isNaN(n)) return 0
   return n < 0 ? 0 : n > 1 ? 1 : n

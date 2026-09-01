@@ -17,7 +17,7 @@
 // Per spec 0001 there are no renderer *component* tests; this stays a pure
 // state-shape check and does not render anything.
 
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { shallow } from 'zustand/shallow'
 import type { Sound } from '../src/core/types'
 import { __resetForTest } from '../src/renderer/store/audioController'
@@ -105,9 +105,40 @@ describe('transport store — playhead cannot re-render rows', () => {
     expect(selectRowTransport(8)(useTransport.getState()).failed).toBe(false)
   })
 
-  it('a Sound with no Preview URL fails instead of becoming current', () => {
+  it('a Sound with no Preview URL and no bridge to fall back to fails instead of becoming current', () => {
     useTransport.getState().playSound(fakeSound(9, false))
-    expect(useTransport.getState().currentSoundId).toBeNull()
+    expect(selectRowTransport(9)(useTransport.getState()).failed).toBe(true)
+  })
+})
+
+// ───────────── ticket 08: an Edit (no Preview) plays its local Original ─────────────
+
+describe('transport store — an Edit with no Preview falls back to its local Original', () => {
+  const originalWindow = (globalThis as { window?: unknown }).window
+
+  afterEach(() => {
+    ;(globalThis as { window?: unknown }).window = originalWindow
+  })
+
+  it('streams the local Original once getContentPath resolves a path', async () => {
+    ;(globalThis as { window?: unknown }).window = {
+      core: { getContentPath: async () => '/library/9-edited.wav' },
+    }
+    useTransport.getState().playSound(fakeSound(9, false))
+    // The lookup is async — let it settle.
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(selectRowTransport(9)(useTransport.getState()).isCurrent).toBe(true)
+    expect(selectRowTransport(9)(useTransport.getState()).failed).toBe(false)
+  })
+
+  it('fails the row when the Original is not on disk (a null content path)', async () => {
+    ;(globalThis as { window?: unknown }).window = {
+      core: { getContentPath: async () => null },
+    }
+    useTransport.getState().playSound(fakeSound(9, false))
+    await new Promise((r) => setTimeout(r, 0))
+
     expect(selectRowTransport(9)(useTransport.getState()).failed).toBe(true)
   })
 })

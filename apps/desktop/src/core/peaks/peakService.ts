@@ -230,27 +230,22 @@ export function createPeakService(deps: PeakServiceDeps): PeakService {
   }
 
   /**
-   * An Edit (ticket 03): when its parent's Original is a locally-decodable
-   * container, slice straight from the parent's decode at the Edit's own trim
-   * window — never decode the exported file. Otherwise render a scratch PCM
-   * copy of the Edit's own file for the runner to consume, then discard it.
+   * An Edit: peaks ALWAYS come from the Edit's OWN rendered file, never a
+   * slice of the parent's decode. A slice-from-parent shortcut looks
+   * plausible but is wrong the moment the export actually changes the audio
+   * — loudness-normalise, a format conversion, a resample/downmix — since the
+   * parent's raw samples reflect none of that: the drawn waveform would
+   * silently lie about what actually plays. Correctness over compute cost
+   * (a sound-effect-length clip is cheap to decode either way).
    */
   function editTask(soundId: number): (() => Promise<PeakResult>) | null {
     const editSound = getSoundsByIds(db, [soundId])[0]
     const editFields = getEditFieldsByIds(db, [soundId]).get(soundId)
     if (!editSound || !editFields || !editFields.localPath) return null
-    const { derivedFrom, localPath } = editFields
-    const trim = editFields.editSpec?.trim ?? null
+    const { localPath } = editFields
 
-    const parent =
-      derivedFrom != null ? getSoundsByIds(db, [derivedFrom])[0] : undefined
-    if (
-      parent &&
-      isOriginalOnDisk(dataDir, parent) &&
-      LOCALLY_DECODABLE_TYPES.has(parent.type.toLowerCase())
-    ) {
-      const parentPath = contentPaths(dataDir, parent).original
-      return () => runner!(parentPath, BASE_BUCKET_COUNT, trim)
+    if (LOCALLY_DECODABLE_TYPES.has(editSound.type.toLowerCase())) {
+      return () => runner!(localPath, BASE_BUCKET_COUNT)
     }
 
     if (!deps.audioRenderRunner) return null // no render seam — never block

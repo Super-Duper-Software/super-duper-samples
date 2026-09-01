@@ -15,6 +15,7 @@
 import { create } from 'zustand'
 import type { Sound } from '../../core/types'
 import * as audio from './audioController'
+import { toFileUrl } from './editAudioController'
 
 export type TransportStatus = 'idle' | 'loading' | 'playing' | 'paused'
 
@@ -101,11 +102,6 @@ export const useTransport = create<TransportState>((set, get) => ({
   _advance: null,
 
   playSound: (sound) => {
-    const url = previewUrl(sound)
-    if (!url) {
-      get().markFailed(sound.id)
-      return
-    }
     // A fresh attempt clears any prior failure marker for this row.
     set((s) => {
       if (!s.failedIds.has(sound.id))
@@ -123,10 +119,39 @@ export const useTransport = create<TransportState>((set, get) => ({
         failedIds: next,
       }
     })
-    audio.load(sound.id, url, { loop: get().loop, volume: get().volume })
-    // Auditioning streams the Preview ONLY. It no longer fetches the Original —
-    // a download now happens solely on the user's explicit "Download" action
-    // (revised ADR-0003), so skimming a list spends nothing against the quota.
+
+    const url = previewUrl(sound)
+    if (url) {
+      audio.load(sound.id, url, { loop: get().loop, volume: get().volume })
+      // Auditioning streams the Preview ONLY. It no longer fetches the Original —
+      // a download now happens solely on the user's explicit "Download" action
+      // (revised ADR-0003), so skimming a list spends nothing against the quota.
+      return
+    }
+
+    // An Edit (ADR-0005) has no Freesound Preview at all — it is a derived
+    // local Sound, so the row transport streams its local Original directly
+    // via a `file://` URL instead (the Edit view's `editAudioController` does
+    // the same for the same reason; `toFileUrl` is shared from there).
+    try {
+      void window.core
+        ?.getContentPath?.(sound.id)
+        ?.then((path) => {
+          // Superseded by another row/track selected while this was resolving.
+          if (get().currentSoundId !== sound.id) return
+          if (!path) {
+            get().markFailed(sound.id)
+            return
+          }
+          audio.load(sound.id, toFileUrl(path), {
+            loop: get().loop,
+            volume: get().volume,
+          })
+        })
+        ?.catch?.(() => get().markFailed(sound.id))
+    } catch {
+      get().markFailed(sound.id) // no bridge (tests)
+    }
   },
 
   toggle: () => {

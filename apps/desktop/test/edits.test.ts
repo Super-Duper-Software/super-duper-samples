@@ -411,6 +411,55 @@ describe('core.createEdit — honouring the full EditSpec (ticket 02)', () => {
   })
 })
 
+describe('core.createEdit — exporting an Edit of an Edit (ticket 08 regression)', () => {
+  it("renders from the FIRST Edit's own file, not the `<id>.<ext>` content-store path a negative id has no file at", async () => {
+    const sourcePaths: string[] = []
+    const recordingRunner: AudioRenderRunner = async ({ sourcePath, outPath }) => {
+      sourcePaths.push(sourcePath)
+      await writeFile(outPath, `bytes-for-${sourcePaths.length}`)
+      return { byteSize: 1, durationSec: 3 }
+    }
+    const { core, dataDir } = await makeTestCore({
+      gateway: makeFakeGateway(),
+      audioRenderRunner: recordingRunner,
+    })
+    cleanups.push(() => core.close())
+    await stageParent(core)
+
+    const first = await core.createEdit(RAIN.id, WHOLE_FILE_SPEC)
+    expect(first).not.toBeNull()
+
+    // Exporting the first Edit itself — this used to resolve `null` (a silent
+    // no-op) because `isOriginalOnDisk`/`contentPaths` assumed every parent's
+    // file lives at `<id>.<ext>`, which is never true for a negative-id Edit.
+    const second = await core.createEdit(first!.editId, WHOLE_FILE_SPEC)
+    expect(second).not.toBeNull()
+    expect(second!.editId).toBeLessThan(first!.editId) // a more-negative id
+
+    expect(sourcePaths).toHaveLength(2)
+    expect(sourcePaths[1]).toBe(
+      join(dataDir, 'content', `${RAIN.id}-edited.${RAIN.ext}`),
+    )
+
+    const edit = core.listLibrary().find((s) => s.id === second!.editId)
+    expect(edit?.derivedFrom).toBe(first!.editId)
+  })
+
+  it('resolves null (a silent no-op) when the Edit being re-exported has no file left on disk', async () => {
+    const { core } = await makeTestCore({
+      gateway: makeFakeGateway(),
+      audioRenderRunner: fakeRunner(),
+    })
+    cleanups.push(() => core.close())
+    await stageParent(core)
+
+    const first = await core.createEdit(RAIN.id, WHOLE_FILE_SPEC)
+    await core.deleteFromLibrary(first!.editId)
+
+    expect(await core.createEdit(first!.editId, WHOLE_FILE_SPEC)).toBeNull()
+  })
+})
+
 describe('pickEditName (pure)', () => {
   it('picks "edited" when free, else the next free "edited (N)"', () => {
     expect(pickEditName([])).toBe('edited')

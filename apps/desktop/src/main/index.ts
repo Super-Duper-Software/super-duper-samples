@@ -17,6 +17,7 @@ import {
   MIN_WINDOW_WIDTH,
   type AuthState,
   type Core,
+  type EditEvent,
   type PeaksStatusChange,
   type RebuildProgress,
   type StagingStatusChange,
@@ -51,6 +52,8 @@ const PEAKS_STATUS_CHANNEL = 'core:event:peaksStatus'
 const REBUILD_OFFER_CHANNEL = 'core:event:rebuildOffer'
 /** Channel the main process pushes sidecar-scan progress on during a rebuild (ticket 14). */
 const REBUILD_PROGRESS_CHANNEL = 'core:event:rebuildProgress'
+/** Channel the renderer listens on for Edit render progress / terminal failure pushes (ticket 08). */
+const EDIT_PROGRESS_CHANNEL = 'core:event:editProgress'
 
 const DEFAULT_WINDOW = { width: 960, height: 720 }
 
@@ -251,6 +254,12 @@ function broadcastRebuildProgress(progress: RebuildProgress): void {
   }
 }
 
+function broadcastEditProgress(event: EditEvent): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(EDIT_PROGRESS_CHANNEL, event)
+  }
+}
+
 void app.whenReady().then(() => {
   const config = loadConfig()
   const dataDir = app.getPath('userData')
@@ -306,6 +315,8 @@ void app.whenReady().then(() => {
     audioRenderRunner: ffmpegStaticPath
       ? createFfmpegAudioRenderRunner(ffmpegStaticPath)
       : undefined,
+    // Ticket 08 — the Edit view's export dialog progress bar / cancel control.
+    onEditProgress: broadcastEditProgress,
   })
 
   registerIpc(core)

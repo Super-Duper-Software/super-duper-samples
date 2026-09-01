@@ -14,6 +14,8 @@
 
 import { create } from 'zustand'
 import type { Sound } from '../../core/types'
+import { usePeaks } from './usePeaks'
+import { useTransport } from './useTransport'
 
 export interface LibraryState {
   /** Sound ids known to be in the Library. */
@@ -23,6 +25,12 @@ export interface LibraryState {
 
   note: (soundId: number, inLibrary: boolean) => void
   noteMany: (membership: Record<number, boolean>) => void
+  /**
+   * Ticket 08: a new Edit landed in the Library via `createEdit` (outside this
+   * store's own `save`). Marks it a member and bumps `revision` so the
+   * Library view picks it up without a manual refresh.
+   */
+  noteCreated: (soundId: number) => void
   /** Ask the core for membership of ids we have no answer for yet. */
   ensure: (ids: number[]) => void
   /**
@@ -51,6 +59,22 @@ function withMember(set: Set<number>, id: number, present: boolean): Set<number>
   if (present) next.add(id)
   else next.delete(id)
   return next
+}
+
+/**
+ * Stop the row-list transport if it is sitting on `soundId` — an Edit's
+ * negative id gets REUSED once a deleted Edit's id frees up (ADR-0005's
+ * `nextEditId`). Without this, `currentSoundId` stays pointed at the id from
+ * BEFORE the delete, so `selectRowTransport` reports the brand new Edit at
+ * that same id as already "current" the instant it appears — a click on its
+ * row then calls `toggle()` (resume the stale loaded element) instead of
+ * `playSound()` (load the new file fresh), playing the wrong audio until a
+ * different row is played first to clear `currentSoundId`.
+ */
+function forgetTransportTrack(soundId: number): void {
+  if (useTransport.getState().currentSoundId === soundId) {
+    useTransport.getState().stop()
+  }
 }
 
 export const useLibrary = create<LibraryState>((set, get) => ({
@@ -84,6 +108,19 @@ export const useLibrary = create<LibraryState>((set, get) => ({
     }
   },
 
+  noteCreated: (soundId) => {
+    // An Edit's negative id is locally minted and gets REUSED once a deleted
+    // Edit's id frees up (ADR-0005's `nextEditId`) — a stale cached waveform
+    // (or transport track, see `forgetTransportTrack`) from whatever USED to
+    // be at this id must not leak onto the new one.
+    usePeaks.getState().clear(soundId)
+    forgetTransportTrack(soundId)
+    set((s) => ({
+      memberIds: withMember(s.memberIds, soundId, true),
+      revision: s.revision + 1,
+    }))
+  },
+
   save: async (sound) => {
     try {
       await window.core?.downloadToLibrary?.(sound.id, sound)
@@ -102,6 +139,12 @@ export const useLibrary = create<LibraryState>((set, get) => ({
     } catch {
       return
     }
+    // Forget any cached waveform AND stop the transport if it's on this id
+    // now, not just on the eventual reuse — an Edit's id gets reused (see
+    // `noteCreated`), and this is the one place that reliably fires exactly
+    // once per delete.
+    usePeaks.getState().clear(soundId)
+    forgetTransportTrack(soundId)
     set((s) => ({
       memberIds: withMember(s.memberIds, soundId, false),
       revision: s.revision + 1,

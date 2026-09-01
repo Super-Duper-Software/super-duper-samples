@@ -26,6 +26,18 @@ const CODEC_ARGS_BY_FORMAT: Record<EditSpec['format'], string[]> = {
   ogg: ['-c:a', 'libvorbis', '-q:a', '5'],
 }
 
+// `outPath` is a `.render` temp file (finalized/renamed to its real extension
+// only after a successful render — see `finalizeEditFiles`), so ffmpeg cannot
+// infer the container from the extension the way it would for a normal
+// output path; without an explicit `-f`, it fails with "Unable to find a
+// suitable output format".
+const MUXER_BY_FORMAT: Record<EditSpec['format'], string> = {
+  wav: 'wav',
+  mp3: 'mp3',
+  flac: 'flac',
+  ogg: 'ogg',
+}
+
 function abortError(): Error {
   const e = new Error('The export was cancelled.')
   e.name = 'AbortError'
@@ -81,6 +93,8 @@ function buildArgs(input: AudioRenderInput): string[] {
     '-nostats',
     '-progress',
     'pipe:1',
+    '-f',
+    MUXER_BY_FORMAT[spec.format],
     outPath,
   )
 

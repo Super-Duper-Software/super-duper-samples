@@ -80,6 +80,10 @@ flagging any Sound whose License restricts the use the user intends.
 The Manifest is a snapshot, not a live view: it records what was true when it was
 generated, because that is what the user will paste into their release notes.
 
+The user-facing control that generates one is labelled **Credits** in the UI. The
+artifact it produces, and the term used everywhere in code and docs, is the
+Attribution Manifest.
+
 ## Account
 
 The Freesound user identity the app is acting as, established by OAuth2. All

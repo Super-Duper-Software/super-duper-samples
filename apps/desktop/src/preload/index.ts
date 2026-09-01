@@ -6,6 +6,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AuthState,
   DiskUsage,
+  EditEvent,
   EvictionOutcome,
   Manifest,
   PeaksPayload,
@@ -19,6 +20,7 @@ import type {
 import type {
   CollectionRef,
   CollectionSummary,
+  EditSpec,
   LibraryFilter,
   LibrarySound,
   SearchOptions,
@@ -31,6 +33,7 @@ import type { LogLevel, SortDir, UiState } from '../core'
 export type {
   CollectionRef,
   CollectionSummary,
+  EditSpec,
   LibraryFilter,
   LibrarySound,
   LicenseFilter,
@@ -45,6 +48,7 @@ export type {
   AuthState,
   ClassifiedError,
   DiskUsage,
+  EditEvent,
   ErrorKind,
   EvictionOutcome,
   LogLevel,
@@ -86,6 +90,8 @@ const PEAKS_STATUS_CHANNEL = 'core:event:peaksStatus'
 const REBUILD_OFFER_CHANNEL = 'core:event:rebuildOffer'
 /** Channel the main process pushes sidecar-scan progress on during a rebuild (ticket 14). */
 const REBUILD_PROGRESS_CHANNEL = 'core:event:rebuildProgress'
+/** Channel the main process pushes Edit render progress / terminal failure on (ticket 08). */
+const EDIT_PROGRESS_CHANNEL = 'core:event:editProgress'
 
 export interface CoreApi {
   search(query: string, opts?: SearchOptions): Promise<SearchResult>
@@ -313,6 +319,12 @@ export interface CoreApi {
    * Returns an unsubscribe function.
    */
   onPeaks(listener: (change: PeaksStatusChange) => void): () => void
+  /**
+   * Absolute path to a Sound's Original on disk, or `null` if it is not there
+   * (a search result never staged, or a Library Sound whose file went missing).
+   * Ticket 07 turns this into a `file://` URL for the Edit view's local audition.
+   */
+  getContentPath(soundId: number): Promise<string | null>
 
   // ---- rebuild from sidecars (ticket 14) --------------------------------
   /**
@@ -335,6 +347,26 @@ export interface CoreApi {
    * Returns an unsubscribe function.
    */
   onRebuildProgress(listener: (progress: RebuildProgress) => void): () => void
+
+  // ---- Edits / export dialog (ticket 08) --------------------------------
+  /**
+   * Render `parentSoundId`'s Original (or a marked region of it) into a new
+   * Edit per `spec`. Resolves `{ editId }` once it is a complete Library
+   * item; resolves `null` on a silent no-op (parent gone, Original not on
+   * disk, or the render was cancelled via `cancelEdit`). Rejects on a genuine
+   * render failure — surface `error.message` in the dialog.
+   */
+  createEdit(
+    parentSoundId: number,
+    spec: EditSpec,
+  ): Promise<{ editId: number } | null>
+  /** Abort an in-flight `createEdit` render for this parent. No-op if none is running. */
+  cancelEdit(parentSoundId: number): Promise<void>
+  /**
+   * Subscribe to Edit render progress / terminal failure pushes. Returns an
+   * unsubscribe function.
+   */
+  onEditProgress(listener: (event: EditEvent) => void): () => void
 }
 
 const api: CoreApi = {
@@ -466,6 +498,8 @@ const api: CoreApi = {
     ipcRenderer.on(PEAKS_STATUS_CHANNEL, handler)
     return () => ipcRenderer.removeListener(PEAKS_STATUS_CHANNEL, handler)
   },
+  getContentPath: (soundId) =>
+    ipcRenderer.invoke('core:invoke', 'getContentPath', [soundId]),
 
   rebuildFromSidecars: () =>
     ipcRenderer.invoke('core:invoke', 'rebuildFromSidecars', []),
@@ -479,6 +513,16 @@ const api: CoreApi = {
       listener(progress)
     ipcRenderer.on(REBUILD_PROGRESS_CHANNEL, handler)
     return () => ipcRenderer.removeListener(REBUILD_PROGRESS_CHANNEL, handler)
+  },
+
+  createEdit: (parentSoundId, spec) =>
+    ipcRenderer.invoke('core:invoke', 'createEdit', [parentSoundId, spec]),
+  cancelEdit: (parentSoundId) =>
+    ipcRenderer.invoke('core:invoke', 'cancelEdit', [parentSoundId]),
+  onEditProgress: (listener) => {
+    const handler = (_e: unknown, event: EditEvent): void => listener(event)
+    ipcRenderer.on(EDIT_PROGRESS_CHANNEL, handler)
+    return () => ipcRenderer.removeListener(EDIT_PROGRESS_CHANNEL, handler)
   },
 }
 

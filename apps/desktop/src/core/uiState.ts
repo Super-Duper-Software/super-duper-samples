@@ -8,7 +8,7 @@
 // reads `window` before creating the BrowserWindow; the renderer reads the rest
 // on mount and writes patches back as the user navigates.
 
-export type ShellView = 'search' | 'library' | 'collections'
+export type ShellView = 'search' | 'library' | 'collections' | 'edit'
 
 export interface WindowBounds {
   width: number
@@ -28,6 +28,11 @@ export interface UiState {
   /** The Sound row that was selected, so the cursor lands back on it. */
   selectedSoundId?: number | null
   /**
+   * The Library Sound open in the Edit view (ticket 07), so a restart lands
+   * back in it when `view` is `'edit'`. `null`/absent outside the Edit view.
+   */
+  editSoundId?: number | null
+  /**
    * Set once the user dismisses the Ko-fi support splash with "don't show
    * again" / "already donated". There is no way to detect a real donation
    * (Ko-fi only reports those server-side), so this is self-reported and
@@ -42,7 +47,7 @@ export const EMPTY_UI_STATE: UiState = {}
 export const MIN_WINDOW_WIDTH = 640
 export const MIN_WINDOW_HEIGHT = 480
 
-const VIEWS: readonly ShellView[] = ['search', 'library', 'collections']
+const VIEWS: readonly ShellView[] = ['search', 'library', 'collections', 'edit']
 
 function num(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined
@@ -92,6 +97,10 @@ export function normaliseUiState(raw: unknown): UiState {
   const sid = r['selectedSoundId']
   if (sid === null) out.selectedSoundId = null
   else if (num(sid) !== undefined) out.selectedSoundId = num(sid)
+
+  const eid = r['editSoundId']
+  if (eid === null) out.editSoundId = null
+  else if (num(eid) !== undefined) out.editSoundId = num(eid)
 
   if (r['supportPromptDismissed'] === true) out.supportPromptDismissed = true
 

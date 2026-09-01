@@ -16,11 +16,13 @@
 // lives in `src/main`; the core still never spawns it.
 
 import { randomBytes } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import type { DB } from '../db/index'
 import { getSoundsByIds } from '../db/sounds'
 import { saveLibraryEntry } from '../db/library'
 import {
+  getEditFieldsByIds,
   insertEditSoundRow,
   listEditNamesForParent,
   nextEditId,
@@ -98,6 +100,30 @@ export interface EditService {
 const EMPTY_PREVIEW_URLS = { hqMp3: '', lqMp3: '', hqOgg: '', lqOgg: '' }
 const EMPTY_WAVEFORM_URLS = { m: '', l: '' }
 
+/**
+ * Where a parent Sound's audio actually lives on disk, source for a render.
+ * Mirrors `Core.getContentPath`'s own negative-id branch: an ordinary Sound's
+ * Original is at the fixed `<id>.<ext>` content-store path, but an Edit
+ * (negative id, ADR-0005) is named from ITS OWN parent instead
+ * (`<parentId>-edited[-N].<ext>`) and only its `local_path` column knows
+ * where. Exporting an Edit of an Edit needs this to find the source at all —
+ * `contentPaths(dataDir, parent).original` is simply the wrong path for a
+ * negative-id parent.
+ */
+function resolveParentSourcePath(
+  db: DB,
+  dataDir: string,
+  parent: Sound,
+): string | null {
+  if (parent.id < 0) {
+    const localPath = getEditFieldsByIds(db, [parent.id]).get(parent.id)?.localPath
+    return localPath && existsSync(localPath) ? localPath : null
+  }
+  return isOriginalOnDisk(dataDir, parent)
+    ? contentPaths(dataDir, parent).original
+    : null
+}
+
 export function createEditService(deps: EditServiceDeps): EditService {
   const { db, dataDir, runner } = deps
   const listeners = new Set<(e: EditEvent) => void>()
@@ -115,7 +141,9 @@ export function createEditService(deps: EditServiceDeps): EditService {
     if (!runner) return null
 
     const parent = getSoundsByIds(db, [parentSoundId])[0]
-    if (!parent || !isOriginalOnDisk(dataDir, parent)) return null
+    if (!parent) return null
+    const sourcePath = resolveParentSourcePath(db, dataDir, parent)
+    if (!sourcePath) return null
 
     // Validate + clamp the trim window against the SOURCE's duration before
     // touching the runner at all — a bad region never starts a render.
@@ -131,7 +159,7 @@ export function createEditService(deps: EditServiceDeps): EditService {
 
     try {
       const result = await runner({
-        sourcePath: contentPaths(dataDir, parent).original,
+        sourcePath,
         spec: effectiveSpec,
         outPath: tmpOutPath,
         signal: controller.signal,

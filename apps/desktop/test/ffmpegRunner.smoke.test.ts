@@ -93,6 +93,28 @@ describe('createFfmpegAudioRenderRunner (smoke)', () => {
     expect(isDecodable(outPath)).toBe(true)
   })
 
+  it('renders correctly when outPath has no format-matching extension (the real temp `.render` path `createEdit` actually uses)', async () => {
+    // Regression: ffmpeg infers the container from the OUTPUT extension when
+    // not told otherwise, and `editService.ts` always renders to a
+    // `<...>.<hex>.render` temp path before finalizing to the real extension —
+    // every render in production hits this, not just this test.
+    const outPath = join(dir, 'no-matching-extension.abc123.render')
+    const runner = createFfmpegAudioRenderRunner(ffmpeg)
+    const spec: EditSpec = { trim: null, format: 'wav' }
+
+    const result = await runner({
+      sourcePath,
+      spec,
+      outPath,
+      signal: new AbortController().signal,
+      metadata: METADATA,
+    })
+
+    expect(existsSync(outPath)).toBe(true)
+    expect(result.byteSize).toBeGreaterThan(0)
+    expect(isDecodable(outPath)).toBe(true)
+  })
+
   it('takes the plain-copy path for a whole-file export with no format/rate/channel/normalise change', async () => {
     const outPath = join(dir, 'plain-copy.wav')
     const runner = createFfmpegAudioRenderRunner(ffmpeg)

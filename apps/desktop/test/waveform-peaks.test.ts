@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  panWindow,
   pointerToFraction,
   resamplePeaks,
   zoomWindow,
@@ -91,5 +92,38 @@ describe('zoomWindow', () => {
     const z = zoomWindow(0, 1, 0.5, 0)
     expect(z.start).toBe(0)
     expect(z.end).toBeCloseTo(0.5)
+  })
+})
+
+describe('panWindow — horizontal scroll while zoomed', () => {
+  it('slides the window without changing its span', () => {
+    const p = panWindow(0.2, 0.4, 0.1)
+    expect(p.start).toBeCloseTo(0.3)
+    expect(p.end).toBeCloseTo(0.5)
+    expect(p.end - p.start).toBeCloseTo(0.2)
+  })
+
+  it('pans backward with a negative delta', () => {
+    const p = panWindow(0.4, 0.6, -0.1)
+    expect(p.start).toBeCloseTo(0.3)
+    expect(p.end).toBeCloseTo(0.5)
+  })
+
+  it('clamps at the start of the file, keeping the span', () => {
+    const p = panWindow(0.1, 0.3, -0.5)
+    expect(p.start).toBe(0)
+    expect(p.end).toBeCloseTo(0.2)
+  })
+
+  it('clamps at the end of the file, keeping the span', () => {
+    const p = panWindow(0.7, 0.9, 0.5)
+    expect(p.end).toBe(1)
+    expect(p.start).toBeCloseTo(0.8)
+  })
+
+  it('is a no-op at full zoom (span already covers the whole file)', () => {
+    const p = panWindow(0, 1, 0.3)
+    expect(p.start).toBe(0)
+    expect(p.end).toBe(1)
   })
 })

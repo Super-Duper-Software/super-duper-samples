@@ -49,6 +49,8 @@ export interface ResultListProps {
   removeLabel?: string
   /** Override the per-row remove button tooltip. */
   removeTitle?: string
+  /** Library / collection variants: open the Edit view (ticket 07) on a row. */
+  onEdit?: (sound: Sound) => void
   /**
    * Changing this scrolls the list back to the top and drops the selection —
    * e.g. a new query / sort / filter. Leave unset for lists that should keep
@@ -67,6 +69,7 @@ export function ResultList({
   onRemove,
   removeLabel,
   removeTitle,
+  onEdit,
   resetKey,
 }: ResultListProps) {
   const parentRef = useRef<HTMLDivElement>(null)
@@ -299,6 +302,7 @@ export function ResultList({
               onRemove={onRemove}
               removeLabel={removeLabel}
               removeTitle={removeTitle}
+              onEdit={onEdit}
             />
           )
         })}

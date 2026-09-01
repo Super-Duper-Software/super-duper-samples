@@ -110,6 +110,67 @@ is the first with a visible effect and needs a manual pass.
 - Keyboard list nav (↑/↓, J/K, Space, S, Delete) and whole-row drag-out into a
   DAW still behave exactly as before.
 
+### Ticket 04 — rail result row — what landed
+
+- **`src/renderer/components/ResultRow.tsx`** now reads `useViewport().isRail`
+  (one shared `matchMedia` listener) unconditionally at the top of the component
+  and renders one of two forms from the same props / hooks — no conditional hook
+  calls, so a live 760px crossing just re-renders each visible row into the other
+  form.
+- **Rail form = two lines** inside the same row root (same `role="option"`,
+  `tabIndex`, `data-index`, `draggable`, `onDragStart` / `onDragEnd`,
+  `onMouseDown` / `onFocus` — drag-out and keyboard list-nav are byte-for-byte
+  the wide behaviour):
+  - Line 1: compact play button · name (`min-w-0 flex-1 truncate`, or the inline
+    rename `<input>` when renaming) · the per-variant `OverflowMenu` (+ its
+    invisible `CollectionMenu` nested-picker host).
+  - Line 2: `h-6 w-16` `<Waveform>` · duration · format pill · one state token ·
+    read-only custom-tag chips (`overflow-hidden`; the `⋯` → "Edit tags" inline
+    editor still opens here for Library / Collection rows).
+- **One state token** (`railStateToken`): `⚠ NC` for any non-commercial Sound
+  (always, outranks everything); else `✓ Downloaded` on a search row already in
+  the Library; else `<StagingChip>` (which is empty for the idle `not-started`
+  status).
+- **Rail `⋯`** extends the ticket-03 per-variant item builders. Same `menuItems`
+  `useMemo`, now branching on `isRail`: it keeps Add to collection / Edit tags /
+  Rename / Reveal / Open Freesound page and adds the actions the wide row keeps
+  on-row — `✂ Edit` (disabled until the Original is staged), the
+  variant-appropriate Remove (Remove from Library / Remove from collection /
+  Download-or-Remove for a search row), a disabled "Licence · <name>" detail
+  line, and a **"Select" / "Deselect"** toggle.
+- **"Select" toggle → multi-select.** No new store. The row already subscribes to
+  `useMultiSelect` via `selectRowChecked(sound.id)` + holds `toggle`; the rail
+  menu item just calls `toggleChecked(sound.id)` and its label reflects
+  `checked`. That is the same `useMultiSelect` Set `AddToCollectionBar` reads, so
+  toggling a rail row in/out of the selection updates the batch add-to-collection
+  bar. The inline checkbox is wide-only (`{!isRail && …}`). `ResultList.tsx` /
+  `store/useMultiSelect.ts` were not touched.
+- The `useStaging` slice moved a few lines up (above `menuItems`) so the rail
+  `⋯` can gate `✂ Edit` on `stagingStatus`; no behaviour change.
+- **Shared files:** none modified. `tsc --noEmit` clean, `electron-vite build`
+  clean, 323 vitest tests pass (no renderer component tests, per spec 0001).
+
+### Needs manual verification (spec 0003 ticket 04 — rail layout, 360px floor)
+
+- **Search list at 360px:** rows are two lines (play · name · `⋯` / waveform ·
+  duration · format · token · tags); NC Sounds show `⚠ NC`; a downloaded Sound
+  shows `✓ Downloaded`; `⋯` has Download-or-Remove, Add to collection, Open
+  Freesound page, Licence detail. No inline checkbox.
+- **Library list at 360px:** `⋯` has `✂ Edit`, Remove from Library, Add to
+  collection, Edit tags, Rename, Reveal, Open page, Licence detail, Select.
+  "Edit tags" opens the inline chip editor on line 2; "Rename" opens the inline
+  input on line 1; "Select" ticks the row into the batch bar and the label flips
+  to "Deselect".
+- **Collection list at 360px:** same as Library but Remove reads "Remove from
+  collection" and the Sound stays in the Library.
+- **Drag-out:** dragging a rail row into a DAW still delivers the Original (and
+  still flashes the "download first" notice when not staged).
+- **`⋯` menu:** opens below-right / flips near the viewport bottom, arrow-key /
+  Home / End / Enter navigable, closes on Esc / outside-click / after an action.
+- **Live 760px swap:** dragging the window across 760px swaps every visible row
+  between the wide and rail forms with no reload and no lost selection / play
+  state.
+
 ## Responsive rail — Ticket 05 (header) — what landed
 
 - **Header branches on `useViewport().isRail`** in `src/renderer/App.tsx`. Both

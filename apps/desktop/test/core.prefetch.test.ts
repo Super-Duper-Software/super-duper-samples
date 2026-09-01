@@ -9,7 +9,7 @@ describe('core.search — next-page prefetch', () => {
         loops: [loadFixture('search-loops-p1.json'), loadFixture('search-loops-p2.json')],
       },
     })
-    const { core } = await makeTestCore({ gateway })
+    const { core } = await makeTestCore({ signedIn: true, gateway })
 
     await core.search('loops', { page: 1, pageSize: 3 })
 
@@ -33,7 +33,7 @@ describe('core.search — next-page prefetch', () => {
         loops: [loadFixture('search-loops-p1.json'), loadFixture('search-loops-p2.json')],
       },
     })
-    const { core } = await makeTestCore({ gateway })
+    const { core } = await makeTestCore({ signedIn: true, gateway })
 
     await core.search('loops', { page: 1, pageSize: 3 }) // prefetches p2
     await core.search('loops', { page: 2, pageSize: 3 }) // last page, hasMore=false

@@ -19,6 +19,12 @@ import {
   touchStagedEntry,
   upsertStagedEntry,
 } from '../db/staged'
+import { saveLibraryEntry } from '../db/library'
+import {
+  countDownloadsSince,
+  recordDownload,
+  DOWNLOAD_QUOTA_WINDOW_MS,
+} from '../db/downloads'
 import type { Scheduler } from '../auth/scheduler'
 import type { AuthController } from '../auth/authController'
 import type { FreesoundGateway } from '../gateway/index'
@@ -66,8 +72,26 @@ export interface StagingController {
    * `last_access_at`).
    */
   stageOnAudition(soundId: number): void
+  /**
+   * Explicit, user-initiated download of a Sound's Original that ALSO saves the
+   * Sound to the Library on completion (CONTEXT.md § Library — "Sounds enter the
+   * Library only by an explicit user act"). Fire-and-forget: it enqueues the
+   * authenticated download and, when the bytes land, writes the `library_entries`
+   * row and records the download against the rolling quota. Unlike
+   * `stageOnAudition` it does NOT require the first-run staging consent — the
+   * click IS the consent — and it never cancel-on-skips.
+   *
+   * Silent no-op when signed out or when the Sound is unknown to the DB. If the
+   * Original is already on disk it just promotes it to the Library.
+   */
+  downloadToLibrary(soundId: number, sound?: Sound): void
   /** Explicitly cancel a sound's in-flight/queued staging (renderer calls this on Stop). */
   cancelStaging(soundId: number): void
+  /**
+   * Originals downloaded from Freesound within the last rolling 24 h. Backs the
+   * app's "N downloads left" quota indicator (Freesound caps this at 2,000).
+   */
+  getDownloadsInLast24h(): number
   /** Per-sound staging status for the row indicators. */
   getStagingStatus(ids: number[]): Record<number, StagingStatus>
   /** Whether the first-run notice has been acknowledged. */
@@ -132,6 +156,13 @@ export function createStagingController(
   /** The sound whose download is currently the "live" audition (cancel-on-skip). */
   let activeAuditionId: number | null = null
 
+  /**
+   * Sound ids whose in-flight download was started by `downloadToLibrary` — on
+   * completion these are promoted straight into the Library instead of being
+   * left Staged.
+   */
+  const libraryBound = new Set<number>()
+
   function emit(change: StagingStatusChange): void {
     for (const l of listeners) l(change)
     deps.onStatusChange?.(change)
@@ -161,13 +192,23 @@ export function createStagingController(
         result.bytes,
         now,
       )
-      // Keep a `sounds` row (it should already exist) and record the staged state
-      // ticket 10 evicts against.
+      // Keep a `sounds` row (it should already exist).
       upsertSound(db, sound)
-      upsertStagedEntry(db, { soundId, byteSize, path: paths.original, now })
-      // A fresh Original just landed — the staging area may now be over budget.
-      // Evict LRU-first, off the hot path, silently (ticket 10).
-      scheduleEviction()
+      // Every completed Original counts against the user's Freesound download
+      // quota, however it was triggered — record it before anything else.
+      recordDownload(db, soundId, now)
+      if (libraryBound.has(soundId)) {
+        // Explicit user download → straight into the Library. No staged row, so
+        // eviction never touches it.
+        libraryBound.delete(soundId)
+        saveLibraryEntry(db, soundId, now)
+      } else {
+        // Speculative audition download → Staged, tracked for ticket-10 eviction.
+        upsertStagedEntry(db, { soundId, byteSize, path: paths.original, now })
+        // A fresh Original just landed — the staging area may now be over budget.
+        // Evict LRU-first, off the hot path, silently (ticket 10).
+        scheduleEviction()
+      }
       // …and kick off off-thread waveform-peak computation (ticket 12). Never
       // blocks this completion; failures are the peak service's own concern.
       try {
@@ -246,7 +287,34 @@ export function createStagingController(
 
   function cancelStaging(soundId: number): void {
     if (activeAuditionId === soundId) activeAuditionId = null
+    libraryBound.delete(soundId)
     queue.cancel(soundId)
+  }
+
+  function downloadToLibrary(soundId: number, sound?: Sound): void {
+    // Signed-in only — an Original needs an OAuth token. No consent gate: the
+    // user asked for this download explicitly.
+    if (auth.getState().status !== 'signedIn') return
+
+    if (sound) upsertSound(db, sound)
+    const known = sound ?? soundById(soundId)
+    if (!known) return // unknown Sound — nothing to download
+
+    // Already on disk (Staged, or bytes present) → just promote to the Library.
+    if (isReadyOnDisk(soundId, known)) {
+      if (!hasLibraryEntry(db, soundId)) {
+        saveLibraryEntry(db, soundId, Date.now())
+      }
+      emit({ soundId, status: 'ready' })
+      return
+    }
+
+    libraryBound.add(soundId)
+    queue.enqueue(soundId)
+  }
+
+  function getDownloadsInLast24h(): number {
+    return countDownloadsSince(db, Date.now() - DOWNLOAD_QUOTA_WINDOW_MS)
   }
 
   function statusOf(soundId: number): StagingStatus {
@@ -276,6 +344,8 @@ export function createStagingController(
 
   return {
     stageOnAudition,
+    downloadToLibrary,
+    getDownloadsInLast24h,
     cancelStaging,
     getStagingStatus,
     getStagingConsent,

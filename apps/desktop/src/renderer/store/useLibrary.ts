@@ -25,7 +25,14 @@ export interface LibraryState {
   noteMany: (membership: Record<number, boolean>) => void
   /** Ask the core for membership of ids we have no answer for yet. */
   ensure: (ids: number[]) => void
-  /** Save a Sound. Instant, idempotent — a no-op if already saved. */
+  /**
+   * Download a Sound's Original and save it to the Library (CONTEXT.md § Library:
+   * a Sound enters the Library only by an explicit user act, and — post
+   * ADR-0003-revision — that act is the download itself; auditioning no longer
+   * fetches anything). Fire-and-forget: membership flips to `true` when the
+   * `ready` staging push arrives (see `useStaging`). Idempotent — a no-op on a
+   * Sound already saved / on disk. Requires being signed in.
+   */
   save: (sound: Sound) => Promise<void>
   /** Remove a Sound from the Library (its Original + sidecar are deleted too). */
   remove: (soundId: number) => Promise<void>
@@ -79,14 +86,14 @@ export const useLibrary = create<LibraryState>((set, get) => ({
 
   save: async (sound) => {
     try {
-      await window.core?.saveToLibrary?.(sound.id, sound)
+      await window.core?.downloadToLibrary?.(sound.id, sound)
     } catch {
       return
     }
-    set((s) => ({
-      memberIds: withMember(s.memberIds, sound.id, true),
-      revision: s.revision + 1,
-    }))
+    // Membership flips on the `ready` staging push (`useStaging`), which also
+    // covers the "already on disk" fast path. Bump `revision` now so the Library
+    // view is ready to re-fetch the moment the row appears.
+    set((s) => ({ revision: s.revision + 1 }))
   },
 
   remove: async (soundId) => {

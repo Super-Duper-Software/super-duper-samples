@@ -35,17 +35,17 @@ export function LogViewerDialog({ onClose }: LogViewerDialogProps) {
       onMouseDown={onClose}
     >
       <div
-        className="flex max-h-full w-full max-w-3xl flex-col rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl"
+        className="flex max-h-full w-full max-w-3xl flex-col rounded-lg border border-line bg-surface shadow-xl"
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="Application log"
       >
-        <div className="flex items-center justify-between gap-4 border-b border-neutral-800 px-4 py-3">
+        <div className="flex items-center justify-between gap-4 border-b border-line px-4 py-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-neutral-100">
+            <h2 className="text-sm font-semibold text-ink">
               Application log
             </h2>
-            <p className="mt-0.5 truncate text-[11px] text-neutral-500">
+            <p className="mt-0.5 truncate text-[11px] text-ink-faint">
               {path ?? 'No log file on this system.'}
             </p>
           </div>
@@ -53,36 +53,36 @@ export function LogViewerDialog({ onClose }: LogViewerDialogProps) {
             <button
               type="button"
               onClick={refresh}
-              className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+              className="rounded border border-line px-2 py-1 text-xs text-ink-muted hover:border-line-strong hover:text-ink"
             >
               Refresh
             </button>
             <button
               type="button"
               onClick={() => void window.core.showLogs()}
-              className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+              className="rounded border border-line px-2 py-1 text-xs text-ink-muted hover:border-line-strong hover:text-ink"
             >
               Reveal file
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+              className="rounded border border-line px-2 py-1 text-xs text-ink-muted hover:border-line-strong hover:text-ink"
             >
               Close
             </button>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto bg-neutral-950 p-4">
+        <div className="min-h-0 flex-1 overflow-auto bg-bg p-4">
           {lines === null ? (
-            <p className="text-sm text-neutral-400">Loading…</p>
+            <p className="text-sm text-ink-muted">Loading…</p>
           ) : lines.length === 0 ? (
-            <p className="text-sm text-neutral-400">
+            <p className="text-sm text-ink-muted">
               Nothing logged yet — that is a good sign.
             </p>
           ) : (
-            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-neutral-300">
+            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-ink-muted">
               {lines.join('\n')}
             </pre>
           )}

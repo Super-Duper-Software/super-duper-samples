@@ -373,6 +373,8 @@ describe('matchesLibraryFilter (pure)', () => {
     effectiveName: 'My Name',
     customTags: ['own-tag'],
     savedAt: 1,
+    derivedFrom: null,
+    editSpec: null,
   }
 
   it('composes dimensions with AND and matches tags across inherited + custom', () => {

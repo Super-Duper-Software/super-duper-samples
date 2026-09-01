@@ -1,20 +1,37 @@
 // Ticket 13 — the Library filter controls, mirroring the ticket-15 search
-// `FilterBar`. Presentation only: it reads and writes `useLibraryFilter`;
-// `useLibraryView` reacts to that store and re-reads the Library from the
-// database (no network). Filter state is shown as a row of removable chips with a
-// one-click "Clear all", so it is always visible and easily cleared.
+// `FilterBar`. The free-text "Find" box stays inline (the Library's primary
+// narrowing gesture); tag / duration / file-type / license live behind a
+// "Filters ▾" popover. Active constraints show as a row of removable chips with
+// a one-click "Clear all", so what is filtering the view is always visible.
+//
+// Presentation only: it reads and writes `useLibraryFilter`; `useLibraryView`
+// reacts to that store and re-reads the Library from the database (no network).
 
 import { memo, useState } from 'react'
 import type { ChangeEvent, KeyboardEvent } from 'react'
 import type { LibraryFilter } from '../../preload'
 import { useLibraryFilter, hasLibraryFilter } from '../store/useLibraryFilter'
 import { FILE_TYPES, LICENSE_OPTIONS } from '../lib/filterLabels'
-
-const FIELD =
-  'rounded border border-neutral-700 bg-neutral-900 px-1.5 py-1 text-xs text-neutral-200 focus:border-emerald-600 focus:outline-none'
+import { FilterPopover } from './FilterPopover'
+import {
+  DurationRange,
+  Field,
+  FILTER_CONTROL_CLASS,
+  StyledSelect,
+} from './filterFields'
 
 const numOrUndef = (v: string): number | undefined =>
   v === '' ? undefined : Number(v)
+
+/** Count of active constraints — drives the popover badge. */
+function filterCount(f: LibraryFilter): number {
+  let n = 0
+  if ((f.tags?.length ?? 0) > 0) n += f.tags!.length
+  if (f.durationMin != null || f.durationMax != null) n += 1
+  if (f.fileType) n += 1
+  if (f.license) n += 1
+  return n
+}
 
 export const LibraryFilterBar = memo(function LibraryFilterBar() {
   const filter = useLibraryFilter((s) => s.filter)
@@ -52,93 +69,77 @@ export const LibraryFilterBar = memo(function LibraryFilterBar() {
 
   return (
     <div className="mt-2 flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-neutral-400">
-        <label className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-ink-muted">
+        <label className="flex items-center gap-1.5">
           <span>Find</span>
           <input
             type="search"
             placeholder="name, author, tag…"
             aria-label="Filter the Library by text"
-            className={`${FIELD} w-48`}
+            className={`${FILTER_CONTROL_CLASS} w-56`}
             value={filter.text ?? ''}
             onChange={(e) => setFilter({ text: e.target.value || undefined })}
           />
         </label>
 
-        <label className="flex items-center gap-1">
-          <span>Tag</span>
-          <input
-            type="text"
-            placeholder="add tag + Enter"
-            aria-label="Add a tag to the Library filter"
-            className={`${FIELD} w-32`}
-            value={tagDraft}
-            onChange={(e) => setTagDraft(e.target.value)}
-            onKeyDown={onTagKeyDown}
-            onBlur={commitTag}
-          />
-        </label>
+        <FilterPopover count={filterCount(filter)} onClearAll={clearFilter}>
+          <Field label="Add tag" wide>
+            <input
+              type="text"
+              placeholder="type a tag, press Enter"
+              aria-label="Add a tag to the Library filter"
+              className={FILTER_CONTROL_CLASS}
+              value={tagDraft}
+              onChange={(e) => setTagDraft(e.target.value)}
+              onKeyDown={onTagKeyDown}
+              onBlur={commitTag}
+            />
+          </Field>
 
-        <label className="flex items-center gap-1">
-          <span>Duration</span>
-          <input
-            type="number"
-            min={0}
-            step="0.1"
-            inputMode="decimal"
-            placeholder="min"
-            aria-label="Minimum duration in seconds"
-            className={`${FIELD} w-16`}
-            value={filter.durationMin ?? ''}
-            onChange={onNum('durationMin')}
-          />
-          <span aria-hidden>–</span>
-          <input
-            type="number"
-            min={0}
-            step="0.1"
-            inputMode="decimal"
-            placeholder="max"
-            aria-label="Maximum duration in seconds"
-            className={`${FIELD} w-16`}
-            value={filter.durationMax ?? ''}
-            onChange={onNum('durationMax')}
-          />
-          <span>s</span>
-        </label>
+          <Field label="Duration" wide>
+            <DurationRange
+              min={filter.durationMin}
+              max={filter.durationMax}
+              onMin={onNum('durationMin')}
+              onMax={onNum('durationMax')}
+            />
+          </Field>
 
-        <select
-          aria-label="File type"
-          className={FIELD}
-          value={filter.fileType ?? ''}
-          onChange={(e) => setFilter({ fileType: e.target.value || undefined })}
-        >
-          <option value="">Any file type</option>
-          {FILE_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t.toUpperCase()}
-            </option>
-          ))}
-        </select>
+          <Field label="File type">
+            <StyledSelect
+              aria-label="File type"
+              value={filter.fileType ?? ''}
+              onChange={(e) => setFilter({ fileType: e.target.value || undefined })}
+            >
+              <option value="">Any</option>
+              {FILE_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t.toUpperCase()}
+                </option>
+              ))}
+            </StyledSelect>
+          </Field>
 
-        <select
-          aria-label="License"
-          className={FIELD}
-          value={filter.license ?? ''}
-          onChange={(e) =>
-            setFilter({
-              license: (e.target.value ||
-                undefined) as LibraryFilter['license'],
-            })
-          }
-        >
-          <option value="">Any license</option>
-          {LICENSE_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          <Field label="License">
+            <StyledSelect
+              aria-label="License"
+              value={filter.license ?? ''}
+              onChange={(e) =>
+                setFilter({
+                  license: (e.target.value ||
+                    undefined) as LibraryFilter['license'],
+                })
+              }
+            >
+              <option value="">Any</option>
+              {LICENSE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </StyledSelect>
+          </Field>
+        </FilterPopover>
       </div>
 
       {active && (
@@ -151,7 +152,7 @@ export const LibraryFilterBar = memo(function LibraryFilterBar() {
               key={`tag:${t}`}
               type="button"
               onClick={() => removeTag(t)}
-              className="inline-flex items-center gap-1 rounded border border-emerald-800/60 bg-emerald-950/50 px-1.5 py-0.5 text-[11px] text-emerald-200 hover:border-emerald-600 hover:text-emerald-100"
+              className="inline-flex items-center gap-1 rounded border border-accent-2 px-1.5 py-0.5 text-[11px] text-accent-2-text hover:bg-surface-raised"
               title="Remove this tag filter"
             >
               <span># {t}</span>
@@ -193,7 +194,7 @@ export const LibraryFilterBar = memo(function LibraryFilterBar() {
           <button
             type="button"
             onClick={clearFilter}
-            className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+            className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
           >
             Clear all
           </button>
@@ -214,7 +215,7 @@ function FilterPill({
     <button
       type="button"
       onClick={onRemove}
-      className="inline-flex items-center gap-1 rounded border border-emerald-800/60 bg-emerald-950/50 px-1.5 py-0.5 text-[11px] text-emerald-200 hover:border-emerald-600 hover:text-emerald-100"
+      className="inline-flex items-center gap-1 rounded border border-accent-2 px-1.5 py-0.5 text-[11px] text-accent-2-text hover:bg-surface-raised"
       title="Remove this filter"
     >
       <span>{label}</span>

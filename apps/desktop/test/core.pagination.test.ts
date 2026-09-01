@@ -10,7 +10,7 @@ function rowKeys(s: Sound): string[] {
 
 describe('core.search pagination', () => {
   it('reports hasMore when the loaded pages do not yet cover totalCount', async () => {
-    const { core } = await makeTestCore()
+    const { core } = await makeTestCore({ signedIn: true })
 
     // rain fixture: count 1873, 3 results on page 1.
     const first = await core.search('rain', { page: 1 })
@@ -20,7 +20,7 @@ describe('core.search pagination', () => {
   })
 
   it('reports hasMore=false on a fully-contained single page', async () => {
-    const { core } = await makeTestCore()
+    const { core } = await makeTestCore({ signedIn: true })
 
     // thunder fixture: count 2, 2 results, no next page.
     const only = await core.search('thunder', { page: 1 })
@@ -30,7 +30,7 @@ describe('core.search pagination', () => {
   })
 
   it('walks page N and returns a stable result shape each page', async () => {
-    const { core } = await makeTestCore()
+    const { core } = await makeTestCore({ signedIn: true })
 
     const p1 = await core.search('loops', { page: 1, pageSize: 3 })
     const p2 = await core.search('loops', { page: 2, pageSize: 3 })
@@ -60,7 +60,7 @@ describe('core.search pagination', () => {
   })
 
   it('a page past the end is an empty page, not a failure, and stops pagination', async () => {
-    const { core } = await makeTestCore()
+    const { core } = await makeTestCore({ signedIn: true })
 
     const past = await core.search('loops', { page: 3, pageSize: 3 })
 
@@ -78,7 +78,7 @@ describe('core.search pagination', () => {
         ],
       },
     })
-    const { core } = await makeTestCore({ gateway })
+    const { core } = await makeTestCore({ signedIn: true, gateway })
 
     await core.search('loops', { page: 1, pageSize: 3 })
     await core.search('loops', { page: 2, pageSize: 3 })

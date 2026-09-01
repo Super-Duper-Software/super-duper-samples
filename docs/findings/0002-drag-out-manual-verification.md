@@ -66,7 +66,7 @@ At the core seam, with a recording `DragHost` in place of Electron:
 
 ## 3. MANUAL VERIFICATION CHECKLIST (user must run)
 
-Build/run the real app (`pnpm --filter @freesound/desktop dev`), sign in, grant the
+Build/run the real app (`pnpm --filter @superduper/desktop dev`), sign in, grant the
 staging consent, run a search, press play on a result and wait for its row to show
 **ready**, then drag the row into each target. Record PASS / FAIL / NOTES.
 

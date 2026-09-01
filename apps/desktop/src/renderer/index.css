@@ -1,12 +1,18 @@
+/* ============================================================================
+   Renderer stylesheet. The BRAND lives in ../../brand - the single source of
+   truth, copied verbatim from Super Duper Software. This file only adapts it to
+   Tailwind v3 and adds app-level base rules. Never define a brand value here;
+   add or retune tokens in ../../brand/brand.css so the port stays clean.
+   ========================================================================= */
+
+@import '../../brand/fonts.css';
+@import '../../brand/brand.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  :root {
-    color-scheme: dark;
-  }
-
   html,
   body,
   #root {
@@ -15,8 +21,60 @@
 
   body {
     margin: 0;
-    background-color: theme('colors.neutral.950');
-    color: theme('colors.neutral.100');
+    background-color: var(--sd-bg);
+    color: var(--sd-ink);
+    font-family: var(--sd-font-ui);
+    font-stretch: var(--sd-wdth-ui);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: var(--sd-accent);
+    color: var(--sd-accent-on);
+  }
+
+  :focus-visible {
+    outline: var(--sd-border-heavy) solid var(--sd-focus);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  /* Data / labels voice: mono, tabular numerals (durations, sample rates…). */
+  .sd-mono {
+    font-family: var(--sd-font-mono);
+    letter-spacing: var(--sd-track-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Kicker / label. Mono, wide-tracked caps - the "system label" voice. */
+  .sd-eyebrow {
+    font-family: var(--sd-font-mono);
+    font-weight: var(--sd-weight-semibold);
+    font-size: var(--sd-text-eyebrow);
+    letter-spacing: var(--sd-track-eyebrow);
+    text-transform: uppercase;
+    line-height: 1;
+  }
+
+  .sd-heading {
+    font-family: var(--sd-font-display);
+    font-stretch: var(--sd-wdth-display);
+    font-weight: var(--sd-weight-bold);
+    letter-spacing: var(--sd-track-heading);
+    line-height: var(--sd-leading-heading);
+    text-transform: uppercase;
   }
 }
 
@@ -62,8 +120,8 @@
       ) /
       var(--pspan, 1) * 100%
   );
-  background-color: #fafafa;
-  box-shadow: 0 0 4px rgba(250, 250, 250, 0.7);
+  background-color: var(--sd-playhead);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--sd-playhead) 70%, transparent);
   pointer-events: none;
   will-change: left;
 }

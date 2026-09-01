@@ -1,10 +1,14 @@
-// The read-only half of "rebuild from sidecars" (ticket 14): walk the flat
-// content store, pair every `<id>.<ext>` Original with its mandatory `<id>.json`
-// sidecar (ADR-0002), parse each sidecar defensively, and classify what is
-// found. This function touches NO database and DELETES nothing — it only reads
-// and reports, so it is trivially safe to run on a worker thread (see
-// `rebuildWorker.ts`). The DB writes and the orphan-sidecar cleanup are the
-// caller's job (`rebuildService.ts`).
+// The read-only half of "rebuild from sidecars" (ticket 14, extended by ticket
+// 06 to Edits): walk the flat content store, pair every Original with its
+// mandatory `.json` sidecar (ADR-0002) — a Sound's is `<id>.json`, an Edit's is
+// `<parentId>-edited[-N].json` (ADR-0005) — parse each sidecar defensively, and
+// classify what is found. Pairing goes by the sidecar's own recorded
+// `file.name` rather than an id parsed from the filename, since an Edit's audio
+// basename does not start with its (negative) sound id. This function touches
+// NO database and DELETES nothing — it only reads and reports, so it is
+// trivially safe to run on a worker thread (see `rebuildWorker.ts`). The DB
+// writes and the orphan-sidecar cleanup are the caller's job
+// (`rebuildService.ts`).
 //
 // Robustness is the whole point: one unreadable or malformed sidecar is
 // collected into `malformed` and the scan keeps going — it never aborts the run.
@@ -101,6 +105,20 @@ function validateSidecar(v: unknown): Sidecar {
   ) {
     throw new Error('sound.license is missing — the License cannot be recovered')
   }
+  const file = o['file'] as Record<string, unknown> | undefined
+  if (!file || typeof file['name'] !== 'string') {
+    throw new Error('sidecar.file.name is missing — its audio cannot be located')
+  }
+  // An Edit's sidecar (ADR-0005): `derivedFrom` set requires `editSpec` too —
+  // both or neither, or the Edit cannot be reconstructed.
+  if (o['derivedFrom'] !== undefined) {
+    if (typeof o['derivedFrom'] !== 'number') {
+      throw new Error('derivedFrom is present but not numeric')
+    }
+    if (typeof o['editSpec'] !== 'object' || o['editSpec'] === null) {
+      throw new Error('an Edit sidecar (derivedFrom set) is missing its editSpec')
+    }
+  }
   return v as Sidecar
 }
 
@@ -124,15 +142,11 @@ export async function scanSidecars(
 
   // Half-written downloads leave `<name>.<tag>.part` — never treat one as real.
   const files = entries.filter((f) => !f.endsWith('.part'))
-  const jsonFiles = files.filter((f) => /^\d+\.json$/.test(f)).sort()
+  // A Sound sidecar is `<id>.json`; an Edit's is `<parentId>-edited[-N].json`
+  // (`nextEditPaths`, ADR-0005).
+  const jsonFiles = files.filter((f) => /^\d+(-edited(-\d+)?)?\.json$/.test(f)).sort()
   const audioFiles = files.filter((f) => !f.endsWith('.json'))
-
-  // First Original seen for each id (ids are unique in the store by construction).
-  const audioById = new Map<number, string>()
-  for (const name of audioFiles) {
-    const id = idFromBasename(name)
-    if (id != null && !audioById.has(id)) audioById.set(id, name)
-  }
+  const audioFileSet = new Set(audioFiles)
 
   const recovered: ScannedSidecar[] = []
   const orphanSidecars: string[] = []
@@ -148,8 +162,8 @@ export async function scanSidecars(
     try {
       const raw = await readFile(sidecarPath, 'utf8')
       const sidecar = validateSidecar(JSON.parse(raw))
-      const audioName = audioById.get(sidecar.soundId)
-      if (!audioName) {
+      const audioName = sidecar.file.name
+      if (!audioFileSet.has(audioName)) {
         // Sidecar present, Original gone: report, and the caller deletes the .json.
         orphanSidecars.push(sidecarPath)
       } else {

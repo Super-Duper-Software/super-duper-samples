@@ -15,9 +15,12 @@
 // (synchronously, or via a controllable promise to prove non-blocking) without
 // spawning a real thread.
 
+import { randomBytes } from 'node:crypto'
+import { rm } from 'node:fs/promises'
 import { Worker } from 'node:worker_threads'
 import type { DB } from '../db/index'
 import { getSoundsByIds } from '../db/sounds'
+import { getEditFieldsByIds } from '../db/edits'
 import {
   deletePeaksRecord,
   getPeaksRecord,
@@ -26,8 +29,13 @@ import {
 } from '../db/peaks'
 import { contentPaths, isOriginalOnDisk } from '../staging/contentStore'
 import { BASE_BUCKET_COUNT } from './computePeaks'
-import type { PeakResult } from './computeFromFile'
+import type { PeakResult, TrimWindow } from './computeFromFile'
 import type { PeakWorkerResponse } from './peakWorker'
+import type { AudioRenderRunner } from '../edits/editService'
+import type { Sound } from '../types'
+
+/** Containers `decodeAudioBuffer` reads directly — anything else needs a scratch PCM rendition. */
+const LOCALLY_DECODABLE_TYPES = new Set(['wav', 'aiff'])
 
 /** Peaks as the renderer consumes them: min/max floats in [-1, 1], interleaved. */
 export interface PeaksPayload {
@@ -53,6 +61,8 @@ export interface PeaksStatusChange {
 export type PeakRunner = (
   filePath: string,
   targetBuckets: number,
+  /** Slice the decode to this window (seconds) first — an Edit computed from its parent's decode (ticket 03). */
+  trim?: TrimWindow | null,
 ) => Promise<PeakResult>
 
 export interface PeakServiceDeps {
@@ -62,6 +72,12 @@ export interface PeakServiceDeps {
   peakWorkerPath?: string
   /** Test seam: replace the whole runner (in-process, or a controllable promise). Wins over `peakWorkerPath`. */
   runner?: PeakRunner
+  /**
+   * Ticket 03: when an Edit's parent is not a locally-decodable container, this
+   * renders a scratch PCM rendition of the Edit's own file for the peak runner
+   * to consume. The same seam `createEditService` uses for the export itself.
+   */
+  audioRenderRunner?: AudioRenderRunner
   /** Announce every transition (main forwards it to the renderer). */
   onStatusChange?: (change: PeaksStatusChange) => void
 }
@@ -86,7 +102,7 @@ const INT16_MAX = 32767
 
 /** The real runner: spawn a one-shot Worker thread and await its single message. */
 export function workerRunner(workerPath: string): PeakRunner {
-  return (filePath, targetBuckets) =>
+  return (filePath, targetBuckets, trim) =>
     new Promise<PeakResult>((resolve) => {
       let settled = false
       const done = (r: PeakResult): void => {
@@ -97,7 +113,7 @@ export function workerRunner(workerPath: string): PeakRunner {
       let worker: Worker
       try {
         worker = new Worker(workerPath, {
-          workerData: { filePath, targetBuckets },
+          workerData: { filePath, targetBuckets, trim },
         })
       } catch (err) {
         done({ ok: false, undecodable: false, error: msg(err) })
@@ -172,6 +188,101 @@ export function createPeakService(deps: PeakServiceDeps): PeakService {
     })
   }
 
+  function applyResult(soundId: number, result: PeakResult): void {
+    if (result.ok) {
+      putPeaksRecord(db, {
+        soundId,
+        sampleRate: result.value.sampleRate,
+        bucketCount: result.value.bucketCount,
+        data: Buffer.from(
+          result.value.data.buffer,
+          result.value.data.byteOffset,
+          result.value.data.byteLength,
+        ),
+      })
+      emit({ soundId, status: 'ready' })
+    } else if (result.undecodable) {
+      // Sentinel: remember "cannot decode" so we never try this Original again.
+      putPeaksRecord(db, {
+        soundId,
+        sampleRate: 0,
+        bucketCount: 0,
+        data: Buffer.alloc(0),
+      })
+      emit({ soundId, status: 'unavailable' })
+    } else {
+      // Transient (file vanished mid-read, worker crash): leave the cache
+      // empty so a later request retries.
+      emit({ soundId, status: 'unavailable' })
+    }
+  }
+
+  /** A regular Sound: peaks come straight off its own Original. */
+  function soundTask(soundId: number): (() => Promise<PeakResult>) | null {
+    const sound = getSoundsByIds(db, [soundId])[0]
+    if (!sound || !isOriginalOnDisk(dataDir, sound)) {
+      // Original not here (yet). Don't cache anything — a later download can
+      // trigger `requestPeaks` again.
+      return null
+    }
+    const filePath = contentPaths(dataDir, sound).original
+    return () => runner!(filePath, BASE_BUCKET_COUNT)
+  }
+
+  /**
+   * An Edit (ticket 03): when its parent's Original is a locally-decodable
+   * container, slice straight from the parent's decode at the Edit's own trim
+   * window — never decode the exported file. Otherwise render a scratch PCM
+   * copy of the Edit's own file for the runner to consume, then discard it.
+   */
+  function editTask(soundId: number): (() => Promise<PeakResult>) | null {
+    const editSound = getSoundsByIds(db, [soundId])[0]
+    const editFields = getEditFieldsByIds(db, [soundId]).get(soundId)
+    if (!editSound || !editFields || !editFields.localPath) return null
+    const { derivedFrom, localPath } = editFields
+    const trim = editFields.editSpec?.trim ?? null
+
+    const parent =
+      derivedFrom != null ? getSoundsByIds(db, [derivedFrom])[0] : undefined
+    if (
+      parent &&
+      isOriginalOnDisk(dataDir, parent) &&
+      LOCALLY_DECODABLE_TYPES.has(parent.type.toLowerCase())
+    ) {
+      const parentPath = contentPaths(dataDir, parent).original
+      return () => runner!(parentPath, BASE_BUCKET_COUNT, trim)
+    }
+
+    if (!deps.audioRenderRunner) return null // no render seam — never block
+    return () => computeViaScratchPcm(editSound, localPath)
+  }
+
+  /** Render the Edit's own file to a throwaway PCM copy, compute peaks from it, then delete it. */
+  async function computeViaScratchPcm(
+    editSound: Sound,
+    localPath: string,
+  ): Promise<PeakResult> {
+    const scratchPath = `${localPath}.peaks-scratch-${randomBytes(6).toString('hex')}.wav`
+    try {
+      await deps.audioRenderRunner!({
+        sourcePath: localPath,
+        spec: { trim: null, format: 'wav' },
+        outPath: scratchPath,
+        signal: new AbortController().signal,
+        metadata: {
+          title: editSound.name,
+          author: editSound.username,
+          licenseUrl: editSound.license.url,
+        },
+      })
+      return await runner!(scratchPath, BASE_BUCKET_COUNT, null)
+    } catch (err) {
+      return { ok: false, undecodable: false, error: msg(err) }
+    } finally {
+      await rm(scratchPath, { force: true }).catch(() => {})
+    }
+  }
+
   function requestPeaks(soundId: number): void {
     if (hasPeaksRecord(db, soundId)) {
       announceCached(soundId)
@@ -185,44 +296,14 @@ export function createPeakService(deps: PeakServiceDeps): PeakService {
       return
     }
 
-    const sound = getSoundsByIds(db, [soundId])[0]
-    if (!sound || !isOriginalOnDisk(dataDir, sound)) {
-      // Original not here (yet). Don't cache anything — a later download can
-      // trigger `requestPeaks` again.
+    const compute = soundId < 0 ? editTask(soundId) : soundTask(soundId)
+    if (!compute) {
       emit({ soundId, status: 'unavailable' })
       return
     }
 
-    const filePath = contentPaths(dataDir, sound).original
-    const task = runner(filePath, BASE_BUCKET_COUNT)
-      .then((result) => {
-        if (result.ok) {
-          putPeaksRecord(db, {
-            soundId,
-            sampleRate: result.value.sampleRate,
-            bucketCount: result.value.bucketCount,
-            data: Buffer.from(
-              result.value.data.buffer,
-              result.value.data.byteOffset,
-              result.value.data.byteLength,
-            ),
-          })
-          emit({ soundId, status: 'ready' })
-        } else if (result.undecodable) {
-          // Sentinel: remember "cannot decode" so we never try this Original again.
-          putPeaksRecord(db, {
-            soundId,
-            sampleRate: 0,
-            bucketCount: 0,
-            data: Buffer.alloc(0),
-          })
-          emit({ soundId, status: 'unavailable' })
-        } else {
-          // Transient (file vanished mid-read, worker crash): leave the cache
-          // empty so a later request retries.
-          emit({ soundId, status: 'unavailable' })
-        }
-      })
+    const task = compute()
+      .then((result) => applyResult(soundId, result))
       .catch(() => {
         emit({ soundId, status: 'unavailable' })
       })

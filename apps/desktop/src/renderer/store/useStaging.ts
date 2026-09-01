@@ -9,6 +9,8 @@
 import { create } from 'zustand'
 import type { StagingStatus } from '../../preload'
 import { useNotifications } from './useNotifications'
+import { useLibrary } from './useLibrary'
+import { useDownloadQuota } from './useDownloadQuota'
 
 export type { StagingStatus } from '../../preload'
 
@@ -44,6 +46,13 @@ try {
   window.core?.onStagingStatus?.((change) => {
     const prev = useStaging.getState().byId[change.soundId]
     useStaging.getState().note(change.soundId, change.status)
+    // A download just landed: an explicit "Download" also saved the Sound to the
+    // Library (the core wrote the row), and it spent one unit of the rolling
+    // 24 h quota — reflect both without a round-trip.
+    if (change.status === 'ready' && prev !== 'ready') {
+      useLibrary.getState().note(change.soundId, true)
+      void useDownloadQuota.getState().refresh()
+    }
     // Ticket 18 — a download that fails is surfaced, not just marked on the row:
     // a "downloading" chip that silently turns to "failed" is exactly the
     // slow-vs-broken ambiguity this ticket removes.

@@ -21,14 +21,22 @@
 //      Sounds listed again on their own, the prominent separate flag the spec
 //      asks for. A user shipping paid work deletes this block after acting on it.
 
-import type { Sound } from '../types'
+import type { LibrarySound } from '../types'
 import { requiresAttribution, restrictsCommercialUse } from './obligations'
 
-/** The per-Sound fields a Manifest is built from — `LibrarySound` satisfies this. */
+/**
+ * The per-Sound fields a Manifest is built from — `LibrarySound` satisfies this.
+ * `derivedFrom` is non-null exactly when the Sound is an Edit (ADR-0005); its
+ * author / License / URL are already the parent's own (`createEdit` copies
+ * them at render time), so this is only consulted for the "edited" marker.
+ * Optional (defaults to "not an Edit") so a plain `Sound` still satisfies this.
+ */
 export type ManifestSourceSound = Pick<
-  Sound,
+  LibrarySound,
   'id' | 'name' | 'username' | 'url' | 'license'
->
+> & {
+  derivedFrom?: LibrarySound['derivedFrom']
+}
 
 export interface ManifestEntry {
   soundId: number
@@ -46,6 +54,8 @@ export interface ManifestEntry {
   requiresAttribution: boolean
   /** True for the CC NonCommercial family (and anything unrecognised). */
   restrictsCommercialUse: boolean
+  /** True when this entry is an Edit (ADR-0005) — credited to its parent. */
+  isEdit: boolean
 }
 
 export interface ManifestSummary {
@@ -78,20 +88,33 @@ export interface ManifestInput {
 
 const EMPTY_MESSAGE = 'This collection is empty — nothing to attribute yet.'
 
-/** `"Title" by author — CC-BY` (+ inline NC note), then the Freesound URL. */
+/**
+ * The parenthetical note appended to a credit line: the NC warning and/or the
+ * "edited" marker (ADR-0005 — an Edit is credited to its parent but must read
+ * as unambiguously modified), comma-joined when both apply.
+ */
+function marker(e: ManifestEntry): string {
+  const parts: string[] = []
+  if (e.restrictsCommercialUse) parts.push('non-commercial use only')
+  if (e.isEdit) parts.push('edited')
+  return parts.length > 0 ? ` (${parts.join(', ')})` : ''
+}
+
+/** `"Title" by author — CC-BY` (+ inline NC/edited note), then the Freesound URL. */
 function creditLines(e: ManifestEntry): string {
-  const nc = e.restrictsCommercialUse ? ' (non-commercial use only)' : ''
-  return `"${e.title}" by ${e.author} — ${e.licenseName}${nc}\n${e.freesoundUrl}`
+  return `"${e.title}" by ${e.author} — ${e.licenseName}${marker(e)}\n${e.freesoundUrl}`
 }
 
 /** `"Title" by author — https://freesound.org/s/…` — one line, for CC0. */
 function creditLineShort(e: ManifestEntry): string {
-  return `"${e.title}" by ${e.author} — ${e.freesoundUrl}`
+  const edited = e.isEdit ? ' (edited)' : ''
+  return `"${e.title}" by ${e.author}${edited} — ${e.freesoundUrl}`
 }
 
 /** `"Title" by author — CC-BY-NC — https://freesound.org/s/…` — the NC recap. */
 function creditLineWithLicense(e: ManifestEntry): string {
-  return `"${e.title}" by ${e.author} — ${e.licenseName} — ${e.freesoundUrl}`
+  const edited = e.isEdit ? ' (edited)' : ''
+  return `"${e.title}" by ${e.author}${edited} — ${e.licenseName} — ${e.freesoundUrl}`
 }
 
 function toEntry(s: ManifestSourceSound): ManifestEntry {
@@ -104,6 +127,7 @@ function toEntry(s: ManifestSourceSound): ManifestEntry {
     freesoundUrl: s.url,
     requiresAttribution: requiresAttribution(s.license.name),
     restrictsCommercialUse: restrictsCommercialUse(s.license.name),
+    isEdit: (s.derivedFrom ?? null) !== null,
   }
 }
 

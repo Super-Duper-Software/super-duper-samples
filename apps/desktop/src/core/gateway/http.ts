@@ -32,12 +32,11 @@ function parseRetryAfter(header: string | null): number | undefined {
 }
 
 export interface HttpFreesoundGatewayConfig {
-  /** Freesound token-auth API key. Supplied by the main process from config. */
-  apiKey: string
   /**
    * Deployed ticket-06 token Worker base URL (`FREESOUND_TOKEN_WORKER_URL`). The
-   * Worker holds `client_secret`; this app never does. Required for OAuth
-   * sign-in; search/preview work without it.
+   * Worker holds `client_secret`; this app never does. Required — without it
+   * there is no way to obtain the bearer token that search and download both
+   * need (ADR-0004: the app bundles no API key).
    */
   tokenWorkerUrl?: string
   /** Override the API base. Must end with a slash. Defaults to the real API. */
@@ -64,25 +63,26 @@ interface WorkerErrorBody {
 }
 
 /**
- * Real gateway. Search and Preview hit `https://freesound.org/apiv2/...` with
- * token auth (`Authorization: Token <key>`), NOT OAuth, so they work signed-out.
- * Token exchange/refresh go to the Cloudflare token Worker; `getMe` goes to
- * Freesound with the bearer access token.
+ * Real gateway. Every Freesound call — search included — hits
+ * `https://freesound.org/apiv2/...` with the signed-in user's OAuth2 bearer
+ * token (`Authorization: Bearer <accessToken>`); ADR-0004 explains why no API
+ * key is bundled. Token exchange/refresh go to the Cloudflare token Worker.
  */
 export class HttpFreesoundGateway implements FreesoundGateway {
-  readonly #apiKey: string
   readonly #baseUrl: string
   readonly #tokenWorkerUrl: string | undefined
   readonly #fetch: typeof fetch
 
-  constructor(config: HttpFreesoundGatewayConfig) {
-    this.#apiKey = config.apiKey
+  constructor(config: HttpFreesoundGatewayConfig = {}) {
     this.#baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
     this.#tokenWorkerUrl = config.tokenWorkerUrl?.replace(/\/+$/, '')
     this.#fetch = config.fetchImpl ?? globalThis.fetch
   }
 
-  async search(params: GatewaySearchParams): Promise<RawSearchPage> {
+  async search(
+    params: GatewaySearchParams,
+    accessToken: string,
+  ): Promise<RawSearchPage> {
     const url = new URL('search/text/', this.#baseUrl)
     url.searchParams.set('query', params.query)
     url.searchParams.set('page', String(params.page))
@@ -99,13 +99,15 @@ export class HttpFreesoundGateway implements FreesoundGateway {
     let res: Response
     try {
       res = await this.#fetch(url, {
-        headers: { Authorization: `Token ${this.#apiKey}` },
+        headers: { Authorization: `Bearer ${accessToken}` },
       })
     } catch (err) {
       throw new NetworkError('Freesound search request failed', err)
     }
 
     if (!res.ok) {
+      // A 401 is a plain GatewayError(401) so the core's `authorized()` wrapper
+      // runs its single refresh + retry, exactly like getMe and download.
       throw new GatewayError(
         `Freesound search returned HTTP ${res.status}`,
         res.status,

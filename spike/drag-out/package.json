@@ -1,5 +1,5 @@
 {
-  "name": "@freesound/spike-drag-out",
+  "name": "@superduper/spike-drag-out",
   "version": "0.0.0",
   "private": true,
   "description": "Throwaway spike (ticket 01): drag an audio file out of an Electron window.",

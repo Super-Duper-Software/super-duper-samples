@@ -8,7 +8,7 @@ const tick = (ms: number) => new Promise((r) => setTimeout(r, ms))
 describe('debounce — core SearchController', () => {
   it('collapses rapid queries into a single gateway call for the trailing query', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ gateway, debounceMs: 25 })
+    const { core } = await makeTestCore({ signedIn: true, gateway, debounceMs: 25 })
 
     // Five "keystrokes" inside one debounce window. (thunder: single-page
     // fixture, so no next-page prefetch muddies the call count.)
@@ -31,7 +31,7 @@ describe('debounce — core SearchController', () => {
 
   it('a query issued after the window settles is a new gateway call', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ gateway, debounceMs: 15 })
+    const { core } = await makeTestCore({ signedIn: true, gateway, debounceMs: 15 })
 
     await core.searchDebounced('thunder')
     await tick(30)
@@ -46,7 +46,7 @@ describe('debounce — core SearchController', () => {
 
   it('a debounced query already in the cache costs no gateway call', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ gateway, debounceMs: 10 })
+    const { core } = await makeTestCore({ signedIn: true, gateway, debounceMs: 10 })
 
     await core.searchDebounced('thunder')
     const after = gateway.searchCallCount

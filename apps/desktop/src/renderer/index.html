@@ -1,5 +1,8 @@
 <!doctype html>
-<html lang="en">
+<!-- The app is always dark: it lives next to a DAW, and every DAW is dark.
+     `data-sd-theme` pins the brand's dark role tokens regardless of the OS
+     setting (see brand/BRAND.md §Light and dark). -->
+<html lang="en" data-sd-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,7 +10,7 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://cdn.freesound.org data:; media-src https://cdn.freesound.org"
     />
-    <title>Freesound</title>
+    <title>Super Duper Samples</title>
   </head>
   <body>
     <div id="root"></div>

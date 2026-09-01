@@ -37,9 +37,9 @@ export function TransportBar() {
   const hasSound = currentSoundId != null
 
   return (
-    <div className="shrink-0 border-t border-neutral-800 bg-neutral-950">
+    <div className="shrink-0 border-t border-line bg-bg">
       {currentSound && (
-        <div className="border-b border-neutral-900 px-4 pt-2">
+        <div className="border-b border-line px-4 pt-2">
           {/*
             Ticket 12: the full, zoomable, scrubbable waveform for the sound being
             auditioned. Draws from computed peaks once the Original is on disk and
@@ -52,16 +52,16 @@ export function TransportBar() {
             soundId={currentSound.id}
             url={currentSound.waveformUrls.m}
             active
-            className="h-16 w-full rounded bg-neutral-900/40"
+            className="h-16 w-full rounded bg-bg-inset"
           />
         </div>
       )}
-      <div className="flex items-center gap-4 px-4 py-2 text-xs text-neutral-300">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2 text-xs text-ink-muted">
         <button
           type="button"
           onClick={toggle}
           disabled={!hasSound}
-          className="grid h-7 w-7 place-items-center rounded-full border border-neutral-700 text-[11px] enabled:hover:border-neutral-500 disabled:opacity-40"
+          className="grid h-7 w-7 place-items-center rounded-full border border-line text-[11px] enabled:hover:border-line-strong disabled:opacity-40"
           aria-label={status === 'playing' ? 'Pause' : 'Play'}
         >
           {status === 'playing' ? '❚❚' : '▶'}
@@ -70,17 +70,17 @@ export function TransportBar() {
           type="button"
           onClick={stop}
           disabled={!hasSound}
-          className="rounded border border-neutral-700 px-2 py-1 enabled:hover:border-neutral-500 disabled:opacity-40"
+          className="rounded border border-line px-2 py-1 enabled:hover:border-line-strong disabled:opacity-40"
         >
           Stop
         </button>
 
-        <span className="w-28 shrink-0 tabular-nums text-neutral-500">
+        <span className="w-28 shrink-0 tabular-nums text-ink-faint">
           {statusLabel(status, hasSound)}
         </span>
 
         <label className="flex items-center gap-2">
-          <span className="text-neutral-500">Vol</span>
+          <span className="text-ink-faint">Vol</span>
           <input
             type="range"
             min={0}
@@ -88,10 +88,10 @@ export function TransportBar() {
             step={0.01}
             value={volume}
             onChange={(e) => setVolume(Number(e.target.value))}
-            className="h-1 w-28 accent-emerald-500"
+            className="h-1 w-28 accent-[var(--sd-accent-2)]"
             aria-label="Audition volume"
           />
-          <span className="w-8 tabular-nums text-neutral-500">
+          <span className="w-8 tabular-nums text-ink-faint">
             {Math.round(volume * 100)}
           </span>
         </label>
@@ -101,7 +101,7 @@ export function TransportBar() {
             type="checkbox"
             checked={loop}
             onChange={(e) => setLoop(e.target.checked)}
-            className="accent-emerald-500"
+            className="accent-[var(--sd-accent-2)]"
           />
           Loop
         </label>
@@ -111,10 +111,24 @@ export function TransportBar() {
             type="checkbox"
             checked={autoAdvance}
             onChange={(e) => setAutoAdvance(e.target.checked)}
-            className="accent-emerald-500"
+            className="accent-[var(--sd-accent-2)]"
           />
           Auto-advance
         </label>
+
+        {/*
+          Always-present way to support the app — the startup splash can be
+          dismissed for good, this cannot. Opens ko-fi.com/sparlos in the
+          user's browser (no Ko-fi code in the renderer; CSP untouched).
+        */}
+        <button
+          type="button"
+          onClick={() => void window.core.openSupportPage()}
+          title="Support this app on Ko-fi"
+          className="ml-auto rounded border border-accent-2 px-2 py-1 text-accent-2-text hover:bg-surface-raised"
+        >
+          <span aria-hidden>♥</span> Support
+        </button>
       </div>
     </div>
   )

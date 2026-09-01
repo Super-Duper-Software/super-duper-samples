@@ -116,10 +116,32 @@ export interface SearchPrefs {
 }
 
 /**
+ * The trim + encode instructions for an Edit (ADR-0005, spec 0002). Persisted
+ * verbatim as `sounds.edit_spec` JSON and passed to `createEdit`. Ticket 01
+ * (whole-file, no re-encode) only ever sees `trim: null` and `format` equal to
+ * the parent's own format; later tickets exercise the rest of the shape.
+ */
+export interface EditSpec {
+  /** `null` = whole file. */
+  trim: { startSec: number; endSec: number } | null
+  format: 'wav' | 'mp3' | 'flac' | 'ogg'
+  /** Omit to keep the source sample rate. */
+  sampleRate?: number
+  /** Omit to keep the source channel count. */
+  channels?: 1 | 2
+  /** Omit / false = no loudness normalise. */
+  normalize?: boolean
+}
+
+/**
  * A Library Sound plus the user's local overlay (ticket 13). `customName` and
  * `customTags` are the user's own vocabulary; the Freesound `name` / `tags`
  * inherited from {@link Sound} are still present and unchanged. `effectiveName`
  * is `customName ?? name` — the name that arrives in the DAW on a Drag-Out.
+ *
+ * `derivedFrom` / `editSpec` are non-null exactly when this row is an **Edit**
+ * (ADR-0005) — a derived local Sound with a negative `id`, born directly in the
+ * Library.
  */
 export interface LibrarySound extends Sound {
   /** The user's own name for this Sound, or `null` when they have not renamed it. */
@@ -130,6 +152,10 @@ export interface LibrarySound extends Sound {
   customTags: string[]
   /** Epoch ms the Sound was saved to the Library. */
   savedAt: number
+  /** The parent Sound's id, or `null` for an ordinary (non-Edit) Sound. */
+  derivedFrom: number | null
+  /** The spec this Edit was rendered from, or `null` for an ordinary Sound. */
+  editSpec: EditSpec | null
 }
 
 /**

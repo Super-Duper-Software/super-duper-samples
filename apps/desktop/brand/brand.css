@@ -1,0 +1,347 @@
+/* ============================================================================
+   SUPER DUPER SOFTWARE - brand definition
+   ----------------------------------------------------------------------------
+   Plain CSS custom properties. No framework, no build step, no Tailwind.
+   This file is the SINGLE SOURCE OF TRUTH for the brand and is designed to be
+   copied verbatim into any Super Duper product.
+
+   Consumers:
+     · superdupersoftware.net   Tailwind v4, via @theme mapping
+     · Super Duper Samples      Tailwind v3, via `theme.extend` -> var(--sd-*)
+     · anything else            just use the variables
+
+   Why variables and not a Tailwind config: the site is on Tailwind v4 (CSS-first
+   @theme) and the app is on Tailwind v3 (JS config). A shared config would not
+   port. Variables port to both - and to neither, if a future app drops Tailwind.
+
+   Direction: early-1990s GRAPHIC DESIGN - bold expanded type, flat saturated
+   colour, hard geometry. Deliberately NOT OS skeuomorphism, NOT terminal/CRT,
+   NOT GeoCities. See BRAND.md for the rationing rules on period ornament.
+   ========================================================================= */
+
+:root {
+	/* ==========================================================================
+     1. TYPEFACES
+     One variable family covers display and UI via its width axis.
+     ====================================================================== */
+	--sd-font-display:
+		"Archivo Variable", "Archivo", ui-sans-serif, system-ui, -apple-system,
+		"Segoe UI", Roboto, sans-serif;
+	--sd-font-ui:
+		"Archivo Variable", "Archivo", ui-sans-serif, system-ui, -apple-system,
+		"Segoe UI", Roboto, sans-serif;
+	--sd-font-mono:
+		"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+	/* Width axis (font-stretch). The display voice is EXPANDED; UI is normal.
+     Archivo's axis runs 62–125. We never go below 100 - condensed reads 2010s
+     startup, not 1993 software box. */
+	--sd-wdth-ui: 100%;
+	--sd-wdth-display: 125%;
+
+	/* Weights */
+	--sd-weight-regular: 400;
+	--sd-weight-medium: 500;
+	--sd-weight-semibold: 600;
+	--sd-weight-bold: 700;
+	--sd-weight-black: 900;
+
+	/* Tracking. Archivo Expanded set loose just looks wide, not designed -
+     display sizes MUST be tracked in. These values are load-bearing. */
+	--sd-track-display: -0.035em;
+	--sd-track-heading: -0.02em;
+	--sd-track-body: 0em;
+	--sd-track-mono: 0.01em;
+	--sd-track-eyebrow: 0.18em; /* kickers/labels are wide-tracked caps */
+
+	/* Line heights */
+	--sd-leading-display: 0.92;
+	--sd-leading-heading: 1.05;
+	--sd-leading-body: 1.55;
+	--sd-leading-mono: 1.7;
+
+	/* ==========================================================================
+     2. TYPE SCALE  (fluid; clamp min/preferred/max)
+     ====================================================================== */
+	--sd-text-eyebrow: 0.75rem;
+	--sd-text-xs: 0.8125rem;
+	--sd-text-sm: 0.9375rem;
+	--sd-text-base: 1.0625rem;
+	--sd-text-lg: clamp(1.125rem, 0.5vw + 1rem, 1.375rem);
+	--sd-text-xl: clamp(1.375rem, 1vw + 1.1rem, 1.75rem);
+	--sd-text-2xl: clamp(1.75rem, 2vw + 1.2rem, 2.5rem);
+	--sd-text-3xl: clamp(2.25rem, 4vw + 1rem, 3.75rem);
+	--sd-text-4xl: clamp(2.75rem, 7vw + 0.5rem, 6rem);
+	--sd-text-5xl: clamp(3.25rem, 11vw, 9.5rem);
+
+	/* ==========================================================================
+     3. PALETTE - raw ramps (mode-independent)
+     Never reference these directly in product code. Use the ROLE tokens in §4,
+     so light/dark and future retunes happen in one place.
+     ====================================================================== */
+
+	/* Primary - hot orange-red. Period-correct (early-90s packaging ran warm)
+     and category-correct (audio has been orange-amber since the VU meter). */
+	--sd-orange-50: #fff2ec;
+	--sd-orange-100: #ffdccb;
+	--sd-orange-200: #ffb894;
+	--sd-orange-300: #ff8f5c;
+	--sd-orange-400: #ff7038;
+	--sd-orange-500: #ff5a1f; /* THE brand colour */
+	--sd-orange-600: #e8420b;
+	--sd-orange-700: #bd3208;
+	--sd-orange-800: #92270a;
+	--sd-orange-900: #6b1e0a;
+
+	/* Secondary - desktop teal. The 1995 default-desktop nod. Used for state
+     (selection, playhead), never for primary action. */
+	--sd-teal-50: #e6fafa;
+	--sd-teal-100: #bff2f3;
+	--sd-teal-200: #80e3e6;
+	--sd-teal-300: #40d0d5;
+	--sd-teal-400: #14bcc3;
+	--sd-teal-500: #00a5ad;
+	--sd-teal-600: #00858c;
+	--sd-teal-700: #026a70;
+	--sd-teal-800: #06555a;
+	--sd-teal-900: #084145;
+
+	/* Neutrals - warm on the light end (paper), true on the dark end.
+     gray-300 is a deliberate wink at Win95 silver #C0C0C0.
+     gray-950 is #0A0A0A === Tailwind neutral-950, which Super Duper Samples
+     already ships - the app's existing ground stays valid. */
+	--sd-gray-0: #ffffff;
+	--sd-gray-50: #f7f6f4;
+	--sd-gray-100: #edebe7;
+	--sd-gray-200: #ddd9d3;
+	--sd-gray-300: #c3beb6;
+	--sd-gray-400: #9b958c;
+	--sd-gray-500: #6e6a63;
+	--sd-gray-600: #4e4b46;
+	--sd-gray-700: #35332f;
+	--sd-gray-800: #1f1e1c;
+	--sd-gray-900: #131211;
+	--sd-gray-950: #0a0a0a;
+
+	/* ==========================================================================
+     4. ROLE TOKENS - LIGHT (default)
+     :root is light. Dark overrides live in §5.
+     ====================================================================== */
+	--sd-bg: var(--sd-gray-50);
+	--sd-bg-inset: var(--sd-gray-100);
+	--sd-surface: var(--sd-gray-0);
+	--sd-surface-raised: var(--sd-gray-0);
+
+	--sd-ink: var(--sd-gray-950);
+	--sd-ink-muted: var(--sd-gray-600);
+	--sd-ink-faint: var(--sd-gray-500);
+	--sd-ink-inverse: var(--sd-gray-50);
+
+	--sd-line: var(--sd-gray-300);
+	--sd-line-strong: var(--sd-gray-950);
+
+	/* Action.
+     --sd-accent      flat brand fill (buttons, blocks). Not for small text.
+     --sd-accent-text contrast-safe orange for TEXT on --sd-bg. #FF5A1F on white
+                      is ~3:1 - fine for 24px+ display, NOT for body copy. */
+	--sd-accent: var(--sd-orange-500);
+	--sd-accent-hover: var(--sd-orange-600);
+	--sd-accent-text: var(--sd-orange-700);
+	--sd-accent-on: var(--sd-gray-0); /* text/icon ON --sd-accent */
+
+	--sd-accent-2: var(--sd-teal-600);
+	--sd-accent-2-text: var(--sd-teal-700);
+	--sd-accent-2-on: var(--sd-gray-0);
+
+	--sd-focus: var(--sd-teal-600);
+
+	/* ---- License semantics -------------------------------------------------
+     NOT brand colours. These carry legal consequence: CC-BY-NC makes commercial
+     use unlawful and must read as caution to someone scanning a moving list.
+
+     HARD RULE: license chips must differ by LABEL + SHAPE, never by hue alone.
+     The caution amber sits close enough to the brand orange that hue alone is
+     not a safe signal - and ~1 in 12 men cannot separate them at chip size.
+     Always render the licence code in mono; give caution a heavier border. */
+	--sd-license-open: var(--sd-teal-600); /* CC0 - free and clear      */
+	--sd-license-attribution: #4f5bd5; /* CC-BY - credit owed      */
+	--sd-license-caution: #b8860b; /* CC-BY-NC - non-commercial */
+	--sd-license-legacy: var(--sd-gray-500); /* Sampling+ - legacy terms  */
+
+	/* ---- Feedback ---------------------------------------------------------- */
+	--sd-ok: #1a7f4b;
+	--sd-warn: #b8860b;
+	--sd-error: #c02617;
+
+	/* ---- Audio ------------------------------------------------------------- */
+	--sd-wave: var(--sd-gray-400);
+	--sd-wave-played: var(--sd-orange-500);
+	--sd-playhead: var(--sd-gray-950);
+
+	/* ==========================================================================
+     5. GEOMETRY
+     The era had no rounded corners to speak of. Radius is near-zero by
+     design - it is what keeps "modern minimal" from drifting into 2020s SaaS.
+     ====================================================================== */
+	--sd-radius-none: 0px;
+	--sd-radius-sm: 2px;
+	--sd-radius-md: 3px;
+
+	--sd-border: 1px;
+	--sd-border-heavy: 2px;
+	--sd-border-block: 4px;
+
+	/* Space - 4px base */
+	--sd-space-1: 0.25rem;
+	--sd-space-2: 0.5rem;
+	--sd-space-3: 0.75rem;
+	--sd-space-4: 1rem;
+	--sd-space-6: 1.5rem;
+	--sd-space-8: 2rem;
+	--sd-space-12: 3rem;
+	--sd-space-16: 4rem;
+	--sd-space-24: 6rem;
+	--sd-space-32: 8rem;
+
+	--sd-measure: 62ch; /* max line length for body copy */
+	--sd-container: 76rem;
+
+	/* ==========================================================================
+     6. PERIOD ORNAMENT - RATIONED
+     The only skeuomorphic borrowings in the system. Three moments on the
+     marketing site, near-zero in the app. See BRAND.md §Rationing before
+     reaching for these. A brand that bevels everything is a costume.
+     ====================================================================== */
+	--sd-bevel-light: rgba(255, 255, 255, 0.85);
+	--sd-bevel-dark: rgba(0, 0, 0, 0.32);
+	--sd-bevel:
+		inset 1px 1px 0 0 var(--sd-bevel-light),
+		inset -1px -1px 0 0 var(--sd-bevel-dark);
+	--sd-bevel-pressed:
+		inset -1px -1px 0 0 var(--sd-bevel-light),
+		inset 1px 1px 0 0 var(--sd-bevel-dark);
+
+	/* Hard offset shadow, no blur. Era-correct: 90s print/UI drop shadows were
+     solid offsets, not the soft gaussian of modern material. */
+	--sd-shadow-hard: 4px 4px 0 0 var(--sd-line-strong);
+	--sd-shadow-hard-sm: 2px 2px 0 0 var(--sd-line-strong);
+
+	/* ==========================================================================
+     7. MOTION
+     Near-zero by policy. Pre-2000s UI had no transitions - things appeared.
+     On this brand the ONLY thing that should move is the product demo.
+     Hover feedback is fast enough to read as instant.
+     ====================================================================== */
+	--sd-dur-instant: 0ms;
+	--sd-dur-hover: 80ms;
+	--sd-ease: linear;
+}
+
+/* ============================================================================
+   5b. ROLE TOKENS - DARK
+   Dark is the PRIMARY mode for Super Duper Samples (it lives beside a DAW, and
+   every DAW on earth is dark). The marketing site runs light.
+
+   Both overrides are required: the media query for "system" (which stamps no
+   attribute), and the attribute for an explicit user choice, so a toggle wins
+   in both directions.
+   ========================================================================= */
+@media (prefers-color-scheme: dark) {
+	:root:not([data-sd-theme="light"]) {
+		color-scheme: dark;
+
+		--sd-bg: var(--sd-gray-950);
+		--sd-bg-inset: #000000;
+		--sd-surface: var(--sd-gray-900);
+		--sd-surface-raised: var(--sd-gray-800);
+
+		--sd-ink: var(--sd-gray-100);
+		--sd-ink-muted: var(--sd-gray-400);
+		--sd-ink-faint: var(--sd-gray-500);
+		--sd-ink-inverse: var(--sd-gray-950);
+
+		--sd-line: var(--sd-gray-700);
+		--sd-line-strong: var(--sd-gray-300);
+
+		/* On near-black, #FF5A1F clears 4.5:1 - the accent can be text here. */
+		--sd-accent: var(--sd-orange-500);
+		--sd-accent-hover: var(--sd-orange-400);
+		--sd-accent-text: var(--sd-orange-400);
+		--sd-accent-on: var(--sd-gray-950);
+
+		--sd-accent-2: var(--sd-teal-400);
+		--sd-accent-2-text: var(--sd-teal-300);
+		--sd-accent-2-on: var(--sd-gray-950);
+
+		--sd-focus: var(--sd-teal-300);
+
+		--sd-license-open: var(--sd-teal-300);
+		--sd-license-attribution: #8f97ee;
+		--sd-license-caution: #f5b700;
+		--sd-license-legacy: var(--sd-gray-400);
+
+		--sd-ok: #4ade80;
+		--sd-warn: #f5b700;
+		--sd-error: #ff6b5c;
+
+		--sd-wave: var(--sd-gray-600);
+		--sd-wave-played: var(--sd-orange-500);
+		--sd-playhead: var(--sd-gray-50);
+
+		--sd-bevel-light: rgba(255, 255, 255, 0.18);
+		--sd-bevel-dark: rgba(0, 0, 0, 0.7);
+	}
+}
+
+:root[data-sd-theme="dark"] {
+	color-scheme: dark;
+
+	--sd-bg: var(--sd-gray-950);
+	--sd-bg-inset: #000000;
+	--sd-surface: var(--sd-gray-900);
+	--sd-surface-raised: var(--sd-gray-800);
+
+	--sd-ink: var(--sd-gray-100);
+	--sd-ink-muted: var(--sd-gray-400);
+	--sd-ink-faint: var(--sd-gray-500);
+	--sd-ink-inverse: var(--sd-gray-950);
+
+	--sd-line: var(--sd-gray-700);
+	--sd-line-strong: var(--sd-gray-300);
+
+	--sd-accent: var(--sd-orange-500);
+	--sd-accent-hover: var(--sd-orange-400);
+	--sd-accent-text: var(--sd-orange-400);
+	--sd-accent-on: var(--sd-gray-950);
+
+	--sd-accent-2: var(--sd-teal-400);
+	--sd-accent-2-text: var(--sd-teal-300);
+	--sd-accent-2-on: var(--sd-gray-950);
+
+	--sd-focus: var(--sd-teal-300);
+
+	--sd-license-open: var(--sd-teal-300);
+	--sd-license-attribution: #8f97ee;
+	--sd-license-caution: #f5b700;
+	--sd-license-legacy: var(--sd-gray-400);
+
+	--sd-ok: #4ade80;
+	--sd-warn: #f5b700;
+	--sd-error: #ff6b5c;
+
+	--sd-wave: var(--sd-gray-600);
+	--sd-wave-played: var(--sd-orange-500);
+	--sd-playhead: var(--sd-gray-50);
+
+	--sd-bevel-light: rgba(255, 255, 255, 0.18);
+	--sd-bevel-dark: rgba(0, 0, 0, 0.7);
+}
+
+/* ============================================================================
+   8. REDUCED MOTION - brand-level, so every consumer inherits it
+   ========================================================================= */
+@media (prefers-reduced-motion: reduce) {
+	:root {
+		--sd-dur-hover: 0ms;
+	}
+}

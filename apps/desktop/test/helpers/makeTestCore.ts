@@ -5,8 +5,10 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   createCore,
+  type AudioRenderRunner,
   type Core,
   type DragHost,
+  type EditEvent,
   type LogSink,
   type PeakRunner,
   type PeaksStatusChange,
@@ -93,6 +95,12 @@ export async function makeTestCore(
     debounceMs?: number
     authPlatform?: FakeAuthPlatform
     scheduler?: FakeScheduler
+    /**
+     * Drive a full `core.signIn()` through the fakes before returning, so
+     * `core.search(...)` works. Search is OAuth-only now (ADR-0004) — a core
+     * that never signs in rejects every search with `NotSignedInError`.
+     */
+    signedIn?: boolean
     /** Ticket 08 — shrink the concurrency cap / backoff for staging tests. */
     stagingConcurrency?: number
     stagingMaxRetries?: number
@@ -112,6 +120,9 @@ export async function makeTestCore(
     onRebuildProgress?: (progress: RebuildProgress) => void
     /** Ticket 18 — capture the app log in memory so tests can assert on it. */
     logSink?: LogSink
+    /** Ticket 01 — in-process Edit render runner so tests never spawn ffmpeg. */
+    audioRenderRunner?: AudioRenderRunner
+    onEditProgress?: (event: EditEvent) => void
   } = {},
 ): Promise<TestCore> {
   const dataDir =
@@ -142,7 +153,14 @@ export async function makeTestCore(
     rebuildWorkerPath: opts.rebuildWorkerPath,
     onRebuildProgress: opts.onRebuildProgress,
     logSink: opts.logSink,
+    audioRenderRunner: opts.audioRenderRunner,
+    onEditProgress: opts.onEditProgress,
   })
+  if (opts.signedIn) {
+    // FakeAuthPlatform defaults to `loopback: 'echo-state'` and the fake gateway
+    // issues `fake-access-token`, so this resolves without a real browser.
+    await core.signIn()
+  }
   return {
     core,
     gateway,

@@ -111,7 +111,18 @@ export interface DownloadOriginalResult {
  * `NotImplemented` until then.
  */
 export interface FreesoundGateway {
-  search(params: GatewaySearchParams): Promise<RawSearchPage>
+  /**
+   * `GET /apiv2/search/text/` with `Authorization: Bearer <accessToken>`.
+   *
+   * ADR-0004: the app bundles no API key (it is the same string as
+   * `client_secret`), so search is an authenticated call like any other and MUST
+   * be invoked through the core's `authorized()` wrapper — a 401 then refreshes
+   * once and retries once. There is no signed-out search path.
+   */
+  search(
+    params: GatewaySearchParams,
+    accessToken: string,
+  ): Promise<RawSearchPage>
 
   /** ticket 04 — stream a Sound's Preview for auditioning. */
   getPreviewStream(soundId: number): Promise<never>

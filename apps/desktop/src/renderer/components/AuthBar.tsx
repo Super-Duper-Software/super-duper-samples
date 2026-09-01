@@ -1,6 +1,7 @@
-// The small "signed in as X / Sign out" area, plus the signed-out hint that
-// downloading and dragging need sign-in (requirement 12 — the actual gating is
-// tickets 08/09; this only surfaces the state).
+// The small "signed in as X / Sign out" area in the header. When signed out it
+// is just a compact "Sign in" button — the reason to sign in is spelled out by
+// <SignInGate/>, which replaces the Search view until the user is signed in
+// (ADR-0004). This button stays reachable from the Library / Collections tabs.
 
 import { useAuth } from '../hooks/useAuth'
 
@@ -9,15 +10,15 @@ export function AuthBar() {
 
   if (state.status === 'signedIn') {
     return (
-      <div className="flex items-center gap-2 text-xs text-neutral-400">
+      <div className="flex items-center gap-2 text-xs text-ink-muted">
         <span>
           Signed in as{' '}
-          <span className="font-medium text-neutral-200">{state.username}</span>
+          <span className="font-medium text-ink">{state.username}</span>
         </span>
         <button
           type="button"
           onClick={signOut}
-          className="rounded border border-neutral-700 px-2 py-0.5 text-neutral-300 hover:bg-neutral-800"
+          className="rounded border border-line px-2 py-0.5 text-ink-muted hover:bg-surface-raised"
         >
           Sign out
         </button>
@@ -29,16 +30,14 @@ export function AuthBar() {
 
   return (
     <div className="flex items-center gap-2 text-xs">
-      <span className="text-neutral-500">
-        {state.reauthRequired
-          ? 'Your session expired — sign in again to download & drag.'
-          : 'Sign in to download & drag.'}
-      </span>
+      {state.reauthRequired && (
+        <span className="text-ink-faint">Session expired.</span>
+      )}
       <button
         type="button"
         onClick={signIn}
         disabled={signingIn}
-        className="rounded border border-emerald-700 px-2 py-0.5 text-emerald-300 hover:bg-emerald-900/40 disabled:opacity-50"
+        className="rounded border border-accent-2 px-2 py-0.5 text-accent-2-text hover:bg-surface-raised disabled:opacity-50"
       >
         {signingIn
           ? 'Signing in…'
@@ -47,7 +46,7 @@ export function AuthBar() {
             : 'Sign in'}
       </button>
       {error && (
-        <span className="text-red-400" role="alert">
+        <span className="text-error" role="alert">
           {error}
         </span>
       )}

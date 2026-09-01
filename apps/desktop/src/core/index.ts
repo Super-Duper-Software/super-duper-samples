@@ -12,6 +12,7 @@ import type { FreesoundGateway, RawSearchPage } from './gateway/index'
 import type {
   CollectionRef,
   CollectionSummary,
+  EditSpec,
   LibraryFilter,
   LibrarySound,
   SearchFilter,
@@ -24,6 +25,7 @@ import type {
 import {
   DEFAULT_RETRY_AFTER_SECONDS,
   GatewayError,
+  NotSignedInError,
   ThrottledError,
 } from './errors'
 import {
@@ -50,6 +52,7 @@ import {
 } from './rebuild/rebuildService'
 import { getMeta, setMeta, UI_STATE_KEY } from './db/appMeta'
 import { getSoundsByIds, upsertSound, upsertSounds } from './db/sounds'
+import { getEditFieldsByIds, deleteSoundRow } from './db/edits'
 import {
   deleteLibraryEntry,
   getLibraryOverlay,
@@ -61,6 +64,12 @@ import {
   setCustomTags as dbSetCustomTags,
   type SortDir,
 } from './db/library'
+import {
+  createEditService,
+  type AudioRenderRunner,
+  type EditEvent,
+  type EditService,
+} from './edits/editService'
 import {
   addMembers,
   clearSoundFromAllCollections,
@@ -81,7 +90,11 @@ import {
   normaliseLibraryFilter,
   normaliseTags,
 } from './library/libraryFilter'
-import { contentPaths, isOriginalOnDisk } from './staging/contentStore'
+import {
+  contentPaths,
+  isOriginalOnDisk,
+  removeEditFiles,
+} from './staging/contentStore'
 import { deletePeaksRecord } from './db/peaks'
 import {
   createPeakService,
@@ -138,6 +151,7 @@ export {
   GatewayError,
   NetworkError,
   NotImplemented,
+  NotSignedInError,
   ThrottledError,
   DEFAULT_RETRY_AFTER_SECONDS,
   classifyError,
@@ -236,6 +250,14 @@ export type {
 } from './rebuild/rebuildService'
 export { decodeAudioBuffer, UndecodableAudioError } from './peaks/decodeAudio'
 export { computePeaks } from './peaks/computePeaks'
+export { pickEditName } from './edits/editName'
+export { resolveTrim, InvalidTrimError } from './edits/trim'
+export type {
+  AudioRenderInput,
+  AudioRenderResult,
+  AudioRenderRunner,
+  EditEvent,
+} from './edits/editService'
 export { buildManifest } from './manifest/buildManifest'
 export type {
   Manifest,
@@ -250,7 +272,7 @@ export {
 } from './manifest/obligations'
 
 const DEFAULT_PAGE_SIZE = 15
-const DEBOUNCE_MS = 250
+const DEBOUNCE_MS = 320
 
 /** `app_meta` key holding the persisted active sort + filter (ticket 15). */
 const SEARCH_PREFS_KEY = 'search_prefs'
@@ -374,22 +396,24 @@ function readLibrary(
   filter?: LibraryFilter,
 ): LibrarySound[] {
   const overlays = listLibraryOverlays(db, dir)
-  const sounds = getSoundsByIds(
-    db,
-    overlays.map((o) => o.soundId),
-  )
+  const ids = overlays.map((o) => o.soundId)
+  const sounds = getSoundsByIds(db, ids)
   const byId = new Map(sounds.map((s) => [s.id, s]))
+  const editFields = getEditFieldsByIds(db, ids)
 
   const hydrated: LibrarySound[] = []
   for (const o of overlays) {
     const sound = byId.get(o.soundId)
     if (!sound) continue // a lost `sounds` row — skip rather than throw
+    const edit = editFields.get(o.soundId)
     hydrated.push({
       ...sound,
       customName: o.customName,
       effectiveName: o.customName ?? sound.name,
       customTags: o.customTags,
       savedAt: o.savedAt,
+      derivedFrom: edit?.derivedFrom ?? null,
+      editSpec: edit?.editSpec ?? null,
     })
   }
 
@@ -413,6 +437,7 @@ function readCollectionSounds(
   const ids = listCollectionMemberIds(db, collectionId, dir)
   const sounds = getSoundsByIds(db, ids)
   const byId = new Map(sounds.map((s) => [s.id, s]))
+  const editFields = getEditFieldsByIds(db, ids)
 
   const hydrated: LibrarySound[] = []
   for (const id of ids) {
@@ -420,12 +445,15 @@ function readCollectionSounds(
     if (!sound) continue // a lost `sounds` row — skip rather than throw
     const o = getLibraryOverlay(db, id)
     if (!o) continue // no longer in the Library — skip
+    const edit = editFields.get(id)
     hydrated.push({
       ...sound,
       customName: o.customName,
       effectiveName: o.customName ?? sound.name,
       customTags: o.customTags,
       savedAt: o.savedAt,
+      derivedFrom: edit?.derivedFrom ?? null,
+      editSpec: edit?.editSpec ?? null,
     })
   }
   return hydrated
@@ -531,6 +559,17 @@ export interface CoreDeps {
   rebuildRunner?: RebuildRunner
   /** Broadcast sidecar-scan progress `{ done, total }` (main forwards it to the renderer). */
   onRebuildProgress?: (progress: RebuildProgress) => void
+
+  // ---- Edits (ticket 01) ------------------------------------------------
+  /**
+   * Test/production seam: renders one Edit (trim + encode, ticket 02;
+   * whole-file copy for now). Production wraps a spawned `ffmpeg-static`
+   * binary in `src/main`; tests inject a fake. When omitted, `createEdit`
+   * is a silent no-op — the core never spawns a binary itself.
+   */
+  audioRenderRunner?: AudioRenderRunner
+  /** Broadcast Edit render progress + terminal failure (main forwards it to the renderer). */
+  onEditProgress?: (event: EditEvent) => void
 }
 
 /** The command API. Later tickets add methods here; the bridge forwards them all. */
@@ -650,6 +689,22 @@ export interface Core {
    * it just refreshes the staged `last_access_at`.
    */
   stageOnAudition(soundId: number): void
+
+  /**
+   * Explicit, user-initiated download of a Sound's Original that ALSO saves the
+   * Sound to the Library once the bytes land (fire-and-forget). Backs the search
+   * row's "Download" button and the `s` shortcut. Unlike `stageOnAudition` it
+   * needs no first-run consent and never cancel-on-skips; a Sound already on
+   * disk is simply promoted into the Library. Every completed download is
+   * recorded against the rolling 24 h quota (`getDownloadsInLast24h`).
+   */
+  downloadToLibrary(soundId: number, sound?: Sound): void
+
+  /**
+   * Count of Originals downloaded from Freesound in the last rolling 24 h. Backs
+   * the always-visible "N downloads left" indicator (Freesound's cap is 2,000).
+   */
+  getDownloadsInLast24h(): number
 
   /** Cancel a sound's queued/in-flight staged download (renderer calls this on Stop). */
   cancelStaging(soundId: number): void
@@ -978,14 +1033,41 @@ export interface Core {
    */
   subscribeRebuildProgress(listener: (p: RebuildProgress) => void): () => void
 
+  // ---- Edits (ticket 01) ------------------------------------------------
+
+  /**
+   * Render `parentSoundId`'s Original into a new Edit — a derived local
+   * Sound with a negative id, born straight into the Library (ADR-0005).
+   * Resolves `{ editId }` once the file + sidecar are on disk and the
+   * `sounds` / `library_entries` rows are written. Resolves `null` — a
+   * silent no-op, never touching the gateway — when the parent is unknown,
+   * its Original is not on disk, or the render was cancelled via
+   * `cancelEdit`. Rejects on a genuine render failure.
+   */
+  createEdit(
+    parentSoundId: number,
+    spec: EditSpec,
+  ): Promise<{ editId: number } | null>
+
+  /** Abort an in-flight `createEdit` render for this parent. No-op if none is running. */
+  cancelEdit(parentSoundId: number): void
+
+  /**
+   * Subscribe to Edit render progress (`{ status: 'progress', progress }`)
+   * and terminal failure (`{ status: 'failed', error }`). Returns an
+   * unsubscribe function.
+   */
+  subscribeEditProgress(listener: (event: EditEvent) => void): () => void
+
   /** Release the database handle and cancel any pending debounced/refresh timers. */
   close(): void
 }
 
 /**
  * Stand-in when the core is built without `authPlatform` (some unit tests, and
- * any environment where OAuth is not configured). Search and Preview never touch
- * this — they are token-auth.
+ * any environment where OAuth is not configured). Its state stays `signedOut`,
+ * so `runSearch` rejects with `NotSignedInError` before it would ever reach
+ * `authorized()` here (ADR-0004: there is no token-auth fallback).
  */
 function unconfiguredAuth(
   onStateChange?: (s: AuthState) => void,
@@ -1052,6 +1134,7 @@ export function createCore(deps: CoreDeps): Core {
     dataDir: deps.dataDir,
     peakWorkerPath: deps.peakWorkerPath,
     runner: deps.computePeaksRunner,
+    audioRenderRunner: deps.audioRenderRunner,
     onStatusChange: deps.onPeaksStatusChange,
   })
 
@@ -1063,6 +1146,15 @@ export function createCore(deps: CoreDeps): Core {
     rebuildWorkerPath: deps.rebuildWorkerPath,
     runner: deps.rebuildRunner,
     onProgress: deps.onRebuildProgress,
+  })
+
+  // Edits (ticket 01). The render itself runs off the injected seam — the
+  // core never spawns `ffmpeg-static` (that binary boundary is `src/main`).
+  const edits: EditService = createEditService({
+    db,
+    dataDir: deps.dataDir,
+    runner: deps.audioRenderRunner,
+    onEvent: deps.onEditProgress,
   })
 
   const staging: StagingController = createStagingController({
@@ -1140,13 +1232,22 @@ export function createCore(deps: CoreDeps): Core {
       // `sort` / `filter` only ride along when they constrain something, so an
       // unfiltered query's gateway call is unchanged (and the fake records the
       // bare `{ query, page, pageSize }` older tests assert on).
-      raw = await gateway.search({
-        query: query.trim(),
-        page,
-        pageSize,
-        ...(sort ? { sort } : {}),
-        ...(filter ? { filter } : {}),
-      })
+      //
+      // ADR-0004: search is an authenticated call now — no bundled API key — so
+      // it goes through `authorized()`, which supplies a valid bearer token and
+      // does exactly one refresh + one retry on a 401.
+      raw = await auth.authorized((accessToken) =>
+        gateway.search(
+          {
+            query: query.trim(),
+            page,
+            pageSize,
+            ...(sort ? { sort } : {}),
+            ...(filter ? { filter } : {}),
+          },
+          accessToken,
+        ),
+      )
     } catch (err) {
       // A failure on a MISS propagates as a typed error and writes NOTHING —
       // no empty cache row, so a later retry still reaches the gateway.
@@ -1199,6 +1300,13 @@ export function createCore(deps: CoreDeps): Core {
         sounds: [],
         hasMore: false,
       })
+    }
+
+    // ADR-0004: no bundled API key means no signed-out search. Reject before any
+    // cache read or network call — the renderer shows its sign-in gate instead
+    // of a search error, and `authorized()` below would fail anyway.
+    if (auth.getState().status !== 'signedIn') {
+      return Promise.reject(new NotSignedInError())
     }
 
     // `sort` / `filter` are part of the params object, so `cacheKey` (a hash of
@@ -1292,6 +1400,9 @@ export function createCore(deps: CoreDeps): Core {
     getAuthState: () => auth.getState(),
     subscribeAuthState: (listener) => auth.subscribe(listener),
     stageOnAudition: (soundId) => staging.stageOnAudition(soundId),
+    downloadToLibrary: (soundId, sound) =>
+      staging.downloadToLibrary(soundId, sound),
+    getDownloadsInLast24h: () => staging.getDownloadsInLast24h(),
     cancelStaging: (soundId) => staging.cancelStaging(soundId),
     getStagingStatus: (ids) => staging.getStagingStatus(ids),
     getStagingConsent: () => staging.getStagingConsent(),
@@ -1354,7 +1465,13 @@ export function createCore(deps: CoreDeps): Core {
       return clean
     },
     deleteFromLibrary: async (soundId) => {
+      const isEdit = soundId < 0
       const sound = getSoundsByIds(db, [soundId])[0]
+      // An Edit's file lives at `local_path`, not a path derived from its id —
+      // resolve it BEFORE the transaction below drops the `sounds` row.
+      const editLocalPath = isEdit
+        ? getEditFieldsByIds(db, [soundId]).get(soundId)?.localPath
+        : null
       db.transaction(() => {
         deleteLibraryEntry(db, soundId)
         // Ticket 16: a Sound leaving the Library leaves every Collection too.
@@ -1363,13 +1480,24 @@ export function createCore(deps: CoreDeps): Core {
         clearSoundFromAllCollections(db, soundId)
         // Cached peaks (ticket 12) die with the Original.
         deletePeaksRecord(db, soundId)
+        // An Edit has no existence outside the Library (unlike a real Sound,
+        // which may reappear as a search result) — drop its `sounds` row too.
+        if (isEdit) deleteSoundRow(db, soundId)
       })()
-      if (sound) await removeContentFiles(deps.dataDir, sound)
+      if (isEdit) {
+        if (editLocalPath) await removeEditFiles(editLocalPath)
+      } else if (sound) {
+        await removeContentFiles(deps.dataDir, sound)
+      }
     },
     getPeaks: (soundId) => peakService.getPeaks(soundId),
     requestPeaks: (soundId) => peakService.requestPeaks(soundId),
     subscribePeaksStatus: (listener) => peakService.subscribe(listener),
     getContentPath: (soundId) => {
+      if (soundId < 0) {
+        const edit = getEditFieldsByIds(db, [soundId]).get(soundId)
+        return edit?.localPath ?? null
+      }
       const sound = getSoundsByIds(db, [soundId])[0]
       if (!sound || !isOriginalOnDisk(deps.dataDir, sound)) return null
       return contentPaths(deps.dataDir, sound).original
@@ -1427,11 +1555,16 @@ export function createCore(deps: CoreDeps): Core {
     rebuildFromSidecars: () => rebuild.rebuildFromSidecars(),
     subscribeRebuildProgress: (listener) => rebuild.subscribe(listener),
 
+    createEdit: (parentSoundId, spec) => edits.createEdit(parentSoundId, spec),
+    cancelEdit: (parentSoundId) => edits.cancelEdit(parentSoundId),
+    subscribeEditProgress: (listener) => edits.subscribe(listener),
+
     close: () => {
       controller.dispose()
       staging.close()
       peakService.close()
       rebuild.close()
+      edits.close()
       auth.close()
       dragRegistry.clear()
       db.close()

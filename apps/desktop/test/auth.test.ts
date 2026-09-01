@@ -10,7 +10,7 @@
 //   - sign-out preserves the Library
 //   - port-in-use surfaces the specific named error
 //   - a `state` mismatch on the callback is rejected
-//   - signed-out: search still works and does not touch the auth wrapper
+//   - signed-out: search is rejected (NotSignedInError) and never hits the gateway
 
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -309,9 +309,9 @@ describe('sign-out', () => {
     const gateway = makeFakeGateway()
     const { core, dataDir, dbPath } = await makeTestCore({ gateway })
 
-    await core.search('rain') // populates `sounds`
     await core.signIn()
     expect(core.getAuthState().status).toBe('signedIn')
+    await core.search('rain') // populates `sounds`
 
     const seed = openDb(dbPath)
     openDbs.push(seed)
@@ -352,21 +352,25 @@ describe('sign-out', () => {
 })
 
 describe('signed-out usability', () => {
-  it('search still works and never goes through the auth wrapper', async () => {
+  it('search is rejected while signed out and never reaches the gateway (ADR-0004: no bundled API key)', async () => {
     const gateway = makeFakeGateway()
     const { core } = await makeTestCore({ gateway })
 
-    const result = await core.search('rain')
+    await expect(core.search('rain')).rejects.toMatchObject({
+      name: 'NotSignedInError',
+    })
 
-    expect(result.sounds.length).toBeGreaterThan(0)
-    // The search made its normal token-auth gateway call...
-    expect(
-      gateway.calls.some((c) => c.query === 'rain' && c.page === 1),
-    ).toBe(true)
     expect(core.getAuthState().status).toBe('signedOut')
-    // ...and the OAuth 401-interceptor / refresh path was never involved.
+    // Nothing hit the network — not the search endpoint, not the OAuth paths.
+    expect(gateway.calls).toHaveLength(0)
     expect(gateway.refreshCalls).toHaveLength(0)
-    expect(gateway.getMeCalls).toHaveLength(0)
     expect(gateway.exchangeCalls).toHaveLength(0)
+  })
+
+  it('the Library still reads while signed out', async () => {
+    const { core } = await makeTestCore({ gateway: makeFakeGateway() })
+    // A local-only read must not throw just because there is no session.
+    expect(core.listLibrary()).toEqual([])
+    expect(core.getAuthState().status).toBe('signedOut')
   })
 })

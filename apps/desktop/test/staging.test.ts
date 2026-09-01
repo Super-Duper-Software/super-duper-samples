@@ -312,12 +312,15 @@ describe('core.stageOnAudition', () => {
 describe('staging gates', () => {
   it('does not stage anything while signed out (auditioning still works)', async () => {
     const gateway = makeFakeGateway()
-    const { core, dataDir, dbPath } = await makeTestCore({ gateway })
+    const { core, dataDir, dbPath } = await makeTestCore({ signedIn: true, gateway })
     cleanups.push(() => core.close())
     core.grantStagingConsent()
 
-    const result = await core.search('rain') // audition path (search + preview) still fine
+    // Seed a Sound row while signed in, then sign out for the actual assertion:
+    // search itself now needs a session (ADR-0004), staging is what must stay off.
+    const result = await core.search('rain')
     expect(result.sounds.length).toBeGreaterThan(0)
+    await core.signOut()
 
     core.stageOnAudition(RAIN.id)
     await sleep(60)
@@ -366,5 +369,75 @@ describe('staging gates', () => {
         value: string
       }).value,
     ).toBe(String(first))
+  })
+})
+
+// ─────────────────────────── core.downloadToLibrary ─────────────────────────
+
+describe('core.downloadToLibrary', () => {
+  it('downloads the Original, saves it to the Library (no staged row) and logs the download', async () => {
+    const { core, dataDir, dbPath } = await signedInCore()
+    await core.search('rain')
+
+    core.downloadToLibrary(RAIN.id)
+    await waitUntil(() => core.getStagingStatus([RAIN.id])[RAIN.id] === 'ready')
+
+    // Original landed on disk.
+    const original = join(dataDir, 'content', `${RAIN.id}.${RAIN.ext}`)
+    expect(readFileSync(original, 'utf8')).toBe(`FAKE-ORIGINAL:${RAIN.id}`)
+
+    // Saved to the Library, and NOT left Staged.
+    expect(core.getLibraryMembership([RAIN.id])[RAIN.id]).toBe(true)
+    const db = openTemp(dbPath)
+    expect(
+      db.prepare('SELECT COUNT(*) AS n FROM staged_entries').get() as { n: number },
+    ).toEqual({ n: 0 })
+
+    // Recorded against the rolling quota.
+    expect(core.getDownloadsInLast24h()).toBe(1)
+  })
+
+  it('needs no staging consent — an explicit download works before the first-run notice', async () => {
+    const { core } = await signedInCore({}, { consent: false })
+    await core.search('rain')
+
+    core.downloadToLibrary(RAIN.id)
+    await waitUntil(() => core.getStagingStatus([RAIN.id])[RAIN.id] === 'ready')
+
+    expect(core.getLibraryMembership([RAIN.id])[RAIN.id]).toBe(true)
+  })
+
+  it('does nothing while signed out', async () => {
+    const { core } = await makeTestCore({
+      signedIn: true,
+      gateway: makeFakeGateway(),
+    }).then((tc) => {
+      cleanups.push(() => tc.core.close())
+      return tc
+    })
+    await core.search('rain') // seed the Sound row while signed in
+    await core.signOut()
+
+    core.downloadToLibrary(RAIN.id)
+    await sleep(30)
+
+    expect(core.getStagingStatus([RAIN.id])[RAIN.id]).toBe('not-started')
+    expect(core.getLibraryMembership([RAIN.id])[RAIN.id]).toBe(false)
+    expect(core.getDownloadsInLast24h()).toBe(0)
+  })
+
+  it('getDownloadsInLast24h counts only the trailing 24 h', async () => {
+    const { core, dbPath } = await signedInCore()
+    const db = openTemp(dbPath)
+    const now = Date.now()
+    db.prepare('INSERT INTO download_log (sound_id, downloaded_at) VALUES (?, ?)').run(
+      1,
+      now - 2 * 60 * 60 * 1000,
+    )
+    db.prepare('INSERT INTO download_log (sound_id, downloaded_at) VALUES (?, ?)').run(
+      2,
+      now - 25 * 60 * 60 * 1000,
+    )
+    expect(core.getDownloadsInLast24h()).toBe(1)
   })
 })

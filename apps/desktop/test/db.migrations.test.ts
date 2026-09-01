@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { openDb, runMigrations } from '../src/core/db/index'
 import { createCore } from '../src/core'
 import { makeFakeGateway } from './helpers/makeTestCore'
+import { FakeAuthPlatform } from './helpers/fakeAuthPlatform'
+import { FakeScheduler } from './helpers/fakeScheduler'
 
 const dirs: string[] = []
 afterEach(async () => {
@@ -40,13 +42,14 @@ describe('database migrations', () => {
       'peaks',
       'auth',
       'app_meta',
+      'download_log',
       'schema_migrations',
     ]) {
       expect(tables).toContain(t)
     }
 
     // user_version tracks the highest applied migration id.
-    expect(db.pragma('user_version', { simple: true })).toBe(2)
+    expect(db.pragma('user_version', { simple: true })).toBe(4)
     db.close()
   })
 
@@ -70,6 +73,45 @@ describe('database migrations', () => {
     db.close()
   })
 
+  it('migration 003 adds the append-only download_log', async () => {
+    const db = openDb(await tempDbPath())
+
+    const cols = (
+      db.prepare("PRAGMA table_info('download_log')").all() as { name: string }[]
+    ).map((r) => r.name)
+    for (const c of ['id', 'sound_id', 'downloaded_at']) {
+      expect(cols).toContain(c)
+    }
+
+    db.prepare(
+      'INSERT INTO download_log (sound_id, downloaded_at) VALUES (1, 1000)',
+    ).run()
+    expect(
+      (
+        db
+          .prepare(
+            'SELECT COUNT(*) AS n FROM download_log WHERE downloaded_at >= 500',
+          )
+          .get() as { n: number }
+      ).n,
+    ).toBe(1)
+
+    db.close()
+  })
+
+  it('migration 004 adds the three nullable Edit columns to sounds', async () => {
+    const db = openDb(await tempDbPath())
+
+    const cols = (
+      db.prepare("PRAGMA table_info('sounds')").all() as { name: string }[]
+    ).map((r) => r.name)
+    for (const c of ['derived_from', 'edit_spec', 'local_path']) {
+      expect(cols).toContain(c)
+    }
+
+    db.close()
+  })
+
   it('opening an already-current database applies nothing', async () => {
     const dbPath = await tempDbPath()
 
@@ -79,7 +121,7 @@ describe('database migrations', () => {
     const second = openDb(dbPath)
     const result = runMigrations(second)
     expect(result.applied).toEqual([])
-    expect(second.pragma('user_version', { simple: true })).toBe(2)
+    expect(second.pragma('user_version', { simple: true })).toBe(4)
     second.close()
   })
 
@@ -87,13 +129,30 @@ describe('database migrations', () => {
     const dbPath = await tempDbPath()
     const dataDir = join(dbPath, '..')
 
-    const coreA = createCore({ gateway: makeFakeGateway(), dataDir, dbPath })
+    // Search needs a session now (ADR-0004), so give both cores the auth fakes.
+    const coreA = createCore({
+      gateway: makeFakeGateway(),
+      dataDir,
+      dbPath,
+      authPlatform: new FakeAuthPlatform(),
+      scheduler: new FakeScheduler(),
+      clientId: 'test-client-id',
+    })
+    await coreA.signIn()
     await coreA.search('rain')
     coreA.close()
 
     // A brand-new core, same file, fresh gateway that would THROW if hit.
     const gatewayB = makeFakeGateway({ failWith: new Error('must not call gateway') })
-    const coreB = createCore({ gateway: gatewayB, dataDir, dbPath })
+    const coreB = createCore({
+      gateway: gatewayB,
+      dataDir,
+      dbPath,
+      authPlatform: new FakeAuthPlatform(),
+      scheduler: new FakeScheduler(),
+      clientId: 'test-client-id',
+    })
+    await coreB.signIn()
     const again = await coreB.search('rain')
 
     expect(again.sounds.length).toBeGreaterThan(0)

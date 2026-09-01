@@ -1,5 +1,5 @@
 /**
- * @freesound/token-worker
+ * @superduper/token-worker
  *
  * A stateless Cloudflare Worker whose only job is to hold the Freesound OAuth2
  * `client_secret` and perform the two exchanges a public desktop client cannot

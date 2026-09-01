@@ -1,6 +1,6 @@
-# @freesound/desktop
+# @superduper/desktop
 
-The Freesound desktop client (Electron, built with electron-vite).
+The Super Duper Samples desktop client (Electron, built with electron-vite).
 
 Ticket 02 delivers the thinnest complete path: a search box in the renderer that
 returns a plain list of matching [Sound](../../CONTEXT.md) names, travelling
@@ -16,10 +16,10 @@ pnpm install
 cp apps/desktop/.env.example apps/desktop/.env
 #   FREESOUND_API_KEY=...   (https://freesound.org/apiv2/apply/)
 
-pnpm --filter @freesound/desktop dev      # hot reload across main + renderer
-pnpm --filter @freesound/desktop test     # Vitest, no Electron
-pnpm --filter @freesound/desktop build    # electron-vite production build
-pnpm --filter @freesound/desktop typecheck
+pnpm --filter @superduper/desktop dev      # hot reload across main + renderer
+pnpm --filter @superduper/desktop test     # Vitest, no Electron
+pnpm --filter @superduper/desktop build    # electron-vite production build
+pnpm --filter @superduper/desktop typecheck
 ```
 
 Search and Preview playback use **token auth only** — no OAuth, no sign-in. The
@@ -86,7 +86,7 @@ Automated tests cannot exercise the real browser round-trip. To check it by hand
 3. Put `FREESOUND_CLIENT_ID` (from Freesound) and `FREESOUND_TOKEN_WORKER_URL`
    (the deployed Worker) in `apps/desktop/.env`. Leave `FREESOUND_CLIENT_SECRET`
    out — it belongs only in the Worker.
-4. `pnpm --filter @freesound/desktop dev`, click **Sign in**, authorize in the
+4. `pnpm --filter @superduper/desktop dev`, click **Sign in**, authorize in the
    browser, confirm the username appears and survives a quit + relaunch.
 
 ## Database (ticket 05)
@@ -303,7 +303,7 @@ Auditioning (search + Preview) is unaffected — those are token-auth.
 Automated tests prove the core hands the right bytes to disk; only a person can
 watch it happen live:
 
-1. `pnpm --filter @freesound/desktop dev`, sign in (see Authentication above —
+1. `pnpm --filter @superduper/desktop dev`, sign in (see Authentication above —
    needs a deployed Worker + real Freesound credentials).
 2. Run a search. The amber consent banner appears once — click **OK, got it**.
 3. Press ▶ on a row. Within a second or two its chip goes

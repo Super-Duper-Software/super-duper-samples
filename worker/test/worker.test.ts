@@ -383,7 +383,7 @@ describe("soft abuse protection", () => {
   it("denies a disallowed Origin when an allowlist is configured", async () => {
     const res = await worker.fetch(
       post("/exchange", { code: "ok" }, { headers: { Origin: "https://evil.example" } }),
-      makeEnv({ ALLOWED_ORIGINS: "https://app.freesound-dnd.example" }),
+      makeEnv({ ALLOWED_ORIGINS: "https://app.super-duper-samples.example" }),
     );
     expect(res.status).toBe(403);
     await expectNoSecret(res);
@@ -391,8 +391,8 @@ describe("soft abuse protection", () => {
 
   it("allows a matching User-Agent substring", async () => {
     const res = await worker.fetch(
-      post("/exchange", { code: "ok" }, { headers: { "User-Agent": "freesound-dnd/1.0 Electron" } }),
-      makeEnv({ ALLOWED_USER_AGENTS: "freesound-dnd" }),
+      post("/exchange", { code: "ok" }, { headers: { "User-Agent": "super-duper-samples/1.0 Electron" } }),
+      makeEnv({ ALLOWED_USER_AGENTS: "super-duper-samples" }),
     );
     expect(res.status).toBe(200);
   });

@@ -16,12 +16,16 @@ describe('FakeFreesoundGateway', () => {
       pages: { rain: loadFixture('search-rain.json') },
     })
 
-    const page = await gateway.search({ query: 'rain', page: 1, pageSize: 15 })
+    const page = await gateway.search(
+      { query: 'rain', page: 1, pageSize: 15 },
+      'tok',
+    )
 
     expect(page.count).toBeGreaterThan(0)
     expect(page.results.length).toBe(3)
     expect(gateway.searchCallCount).toBe(1)
     expect(gateway.calls[0]).toEqual({ query: 'rain', page: 1, pageSize: 15 })
+    expect(gateway.searchTokens).toEqual(['tok'])
   })
 
   it('the ticket-04 preview stream still throws NotImplemented', async () => {
@@ -91,17 +95,16 @@ describe('HttpFreesoundGateway', () => {
     } as Response
   }
 
-  it('requests search/text with token auth and exactly the row field set', async () => {
+  it('requests search/text with the user Bearer token and exactly the row field set', async () => {
     const fetchImpl = vi.fn(
       (_url: URL, _init?: RequestInit) =>
         Promise.resolve(fakeResponse(loadFixture('search-rain.json'))),
     )
     const gateway = new HttpFreesoundGateway({
-      apiKey: 'test-key',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     })
 
-    await gateway.search({ query: 'rain', page: 2, pageSize: 15 })
+    await gateway.search({ query: 'rain', page: 2, pageSize: 15 }, 'user-access-token')
 
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     const [url, opts] = fetchImpl.mock.calls[0] as [URL, RequestInit]
@@ -110,16 +113,18 @@ describe('HttpFreesoundGateway', () => {
     expect(url.searchParams.get('page')).toBe('2')
     expect(url.searchParams.get('page_size')).toBe('15')
     expect(url.searchParams.get('fields')).toBe(SEARCH_FIELDS)
-    expect((opts.headers as Record<string, string>).Authorization).toBe('Token test-key')
+    expect((opts.headers as Record<string, string>).Authorization).toBe(
+      'Bearer user-access-token',
+    )
   })
 
   it('throws GatewayError on a non-ok response', async () => {
     const fetchImpl = vi.fn(async () =>
       fakeResponse({}, { ok: false, status: 429 }),
     ) as unknown as typeof fetch
-    const gateway = new HttpFreesoundGateway({ apiKey: 'k', fetchImpl })
+    const gateway = new HttpFreesoundGateway({ fetchImpl })
 
-    await expect(gateway.search({ query: 'x', page: 1, pageSize: 15 })).rejects.toMatchObject(
+    await expect(gateway.search({ query: 'x', page: 1, pageSize: 15 }, 'tok')).rejects.toMatchObject(
       { name: 'GatewayError', status: 429 },
     )
   })
@@ -128,15 +133,15 @@ describe('HttpFreesoundGateway', () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error('ECONNREFUSED')
     }) as unknown as typeof fetch
-    const gateway = new HttpFreesoundGateway({ apiKey: 'k', fetchImpl })
+    const gateway = new HttpFreesoundGateway({ fetchImpl })
 
     await expect(
-      gateway.search({ query: 'x', page: 1, pageSize: 15 }),
+      gateway.search({ query: 'x', page: 1, pageSize: 15 }, 'tok'),
     ).rejects.toBeInstanceOf(NetworkError)
   })
 
   it('does not implement the ticket-04 preview stream yet', async () => {
-    const gateway = new HttpFreesoundGateway({ apiKey: 'k' })
+    const gateway = new HttpFreesoundGateway()
     await expect(gateway.getPreviewStream()).rejects.toBeInstanceOf(NotImplemented)
   })
 
@@ -157,7 +162,7 @@ describe('HttpFreesoundGateway', () => {
         },
       },
     })) as unknown as typeof fetch
-    const gateway = new HttpFreesoundGateway({ apiKey: 'k', fetchImpl })
+    const gateway = new HttpFreesoundGateway({ fetchImpl })
 
     const res = await gateway.downloadOriginal(442827, 'the-access-token')
 
@@ -174,7 +179,7 @@ describe('HttpFreesoundGateway', () => {
       status: 401,
       headers: { get: () => null },
     })) as unknown as typeof fetch
-    const gateway = new HttpFreesoundGateway({ apiKey: 'k', fetchImpl })
+    const gateway = new HttpFreesoundGateway({ fetchImpl })
     await expect(gateway.downloadOriginal(1, 'stale')).rejects.toMatchObject({
       name: 'GatewayError',
       status: 401,
@@ -207,7 +212,6 @@ describe('HttpFreesoundGateway — token Worker (ticket 07)', () => {
       }),
     )
     const gateway = new HttpFreesoundGateway({
-      apiKey: 'k',
       tokenWorkerUrl: 'https://worker.example.dev/',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     })
@@ -239,7 +243,6 @@ describe('HttpFreesoundGateway — token Worker (ticket 07)', () => {
       }),
     ) as unknown as typeof fetch
     const gateway = new HttpFreesoundGateway({
-      apiKey: 'k',
       tokenWorkerUrl: 'https://worker.example.dev',
       fetchImpl,
     })
@@ -254,7 +257,6 @@ describe('HttpFreesoundGateway — token Worker (ticket 07)', () => {
       jsonResponse(503, { error: 'retry', upstream_status: 502, detail: 'bad gateway' }),
     ) as unknown as typeof fetch
     const gateway = new HttpFreesoundGateway({
-      apiKey: 'k',
       tokenWorkerUrl: 'https://worker.example.dev',
       fetchImpl,
     })
@@ -269,7 +271,6 @@ describe('HttpFreesoundGateway — token Worker (ticket 07)', () => {
       throw new Error('ECONNREFUSED')
     }) as unknown as typeof fetch
     const gateway = new HttpFreesoundGateway({
-      apiKey: 'k',
       tokenWorkerUrl: 'https://worker.example.dev',
       fetchImpl,
     })
@@ -282,7 +283,6 @@ describe('HttpFreesoundGateway — token Worker (ticket 07)', () => {
   it('getMe sends a Bearer token and returns the username; a 401 is a GatewayError(401)', async () => {
     const ok = vi.fn(async () => jsonResponse(200, { username: 'grace' }))
     const okGateway = new HttpFreesoundGateway({
-      apiKey: 'k',
       fetchImpl: ok as unknown as typeof fetch,
     })
     expect(await okGateway.getMe('AT')).toEqual({ username: 'grace' })
@@ -293,7 +293,7 @@ describe('HttpFreesoundGateway — token Worker (ticket 07)', () => {
     const unauth = vi.fn(async () =>
       jsonResponse(401, { detail: 'expired' }),
     ) as unknown as typeof fetch
-    const unauthGateway = new HttpFreesoundGateway({ apiKey: 'k', fetchImpl: unauth })
+    const unauthGateway = new HttpFreesoundGateway({ fetchImpl: unauth })
     await expect(unauthGateway.getMe('AT')).rejects.toMatchObject({
       name: 'GatewayError',
       status: 401,
@@ -301,7 +301,7 @@ describe('HttpFreesoundGateway — token Worker (ticket 07)', () => {
   })
 
   it('exchangeToken without a configured Worker URL fails clearly', async () => {
-    const gateway = new HttpFreesoundGateway({ apiKey: 'k' })
+    const gateway = new HttpFreesoundGateway()
     await expect(gateway.exchangeToken('c', 'r')).rejects.toThrow(
       /FREESOUND_TOKEN_WORKER_URL/,
     )

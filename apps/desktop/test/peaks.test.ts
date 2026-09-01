@@ -505,6 +505,7 @@ describe('a Sound with no downloaded Original has no computed peaks', () => {
   it('getPeaks is null and requestPeaks reports unavailable — the renderer keeps the Freesound image', async () => {
     const events: Array<{ soundId: number; status: string }> = []
     const tc = await makeTestCore({
+      signedIn: true,
       computePeaksRunner: countingRunner(),
       onPeaksStatusChange: (c) => events.push(c),
     })

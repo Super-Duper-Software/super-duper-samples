@@ -156,5 +156,59 @@ const m002: Migration = {
   `,
 }
 
+/**
+ * Migration 003 — the rolling download log.
+ *
+ * Every time an Original is fetched from Freesound it is recorded here, one row
+ * per download, with the epoch-ms instant it completed. Freesound caps a user at
+ * 2,000 Original downloads per rolling 24 h; the app counts the rows newer than
+ * `now - 24h` to show "N downloads left". Rows are never pruned here (a cheap
+ * background sweep can trim them later); the count query is bounded by the
+ * `downloaded_at` index.
+ */
+const m003: Migration = {
+  id: 3,
+  name: 'download-log',
+  up: /* sql */ `
+    CREATE TABLE download_log (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      sound_id      INTEGER NOT NULL,
+      downloaded_at INTEGER NOT NULL           -- epoch ms the Original landed
+    );
+
+    CREATE INDEX idx_download_log_at ON download_log (downloaded_at);
+  `,
+}
+
+/**
+ * Migration 004 — Edits (ticket 01, ADR-0005).
+ *
+ * An Edit is represented as an ordinary `sounds` row with a negative `id`
+ * (Freesound ids are always positive, so the two id spaces never collide),
+ * carrying three added nullable columns:
+ *
+ *   - `derived_from` — the parent Sound's id. NULL for every real (mirrored)
+ *     Sound; set for an Edit.
+ *   - `edit_spec`    — the trim + encode spec (JSON), as passed to `createEdit`.
+ *   - `local_path`   — absolute path to the Edit's file in the content store.
+ *     Unlike a real Sound's Original, which is always derivable as
+ *     `<id>.<ext>`, an Edit's file is named from its PARENT id plus a human
+ *     suffix (`<parentId>-edited.<ext>`, …), so the path is stored rather
+ *     than derived.
+ *
+ * The table is not empty at this point (real Sounds exist), but all three
+ * columns are nullable with no default — every existing row reads back NULL
+ * in all three, which is exactly "not an Edit". No backfill needed.
+ */
+const m004: Migration = {
+  id: 4,
+  name: 'edits',
+  up: /* sql */ `
+    ALTER TABLE sounds ADD COLUMN derived_from INTEGER;
+    ALTER TABLE sounds ADD COLUMN edit_spec    TEXT;
+    ALTER TABLE sounds ADD COLUMN local_path   TEXT;
+  `,
+}
+
 /** The migration list, in application order. Append only. */
-export const MIGRATIONS: readonly Migration[] = [m001, m002]
+export const MIGRATIONS: readonly Migration[] = [m001, m002, m003, m004]

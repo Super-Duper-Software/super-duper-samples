@@ -1,6 +1,9 @@
 // Real drag-out (ticket 09) — the milestone. Turns "this Sound's Original is on
 // disk" into an OS drag whose dropped file is a native-quality Original under a
-// name a DAW can live with.
+// name a DAW can live with. Ticket 04 extends the same path to an Edit (a
+// negative-id row whose file lives at its own `local_path`, not an id-named
+// content-store path) — it is a first-class Drag-Out source, refused the same
+// way an un-staged Original is refused when its render hasn't finished yet.
 //
 // Why the hardlink dance (ADR-0002, ADR-0003):
 //   - The content store names files by Freesound id (`321967.wav`). Dropping
@@ -27,6 +30,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import type { DB } from '../db/index'
+import { getEditFieldsByIds } from '../db/edits'
 import { getLibraryOverlay } from '../db/library'
 import { getSoundsByIds } from '../db/sounds'
 import type { Sound } from '../types'
@@ -48,17 +52,23 @@ const ILLEGAL_NAME_CHARS = /[/\\:*?"<>|]/g
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/g
 
 /**
- * A drag was requested for a Sound whose Original is not on disk yet. The
- * renderer shows `message` verbatim. Distinct type so the renderer never
- * mistakes it for a generic failure and never falls back to a Preview.
+ * A drag was requested for a Sound whose Original is not on disk yet, or an
+ * Edit (ticket 04) whose render has not finished (or whose file has gone
+ * missing). The renderer shows `message` verbatim. Distinct type so the
+ * renderer never mistakes it for a generic failure and never falls back to a
+ * Preview.
  */
 export class OriginalNotStagedError extends Error {
   readonly soundId: number
   constructor(soundId: number, soundName?: string) {
+    const label = soundName ?? (soundId < 0 ? `Edit ${soundId}` : `Sound ${soundId}`)
     super(
-      `“${soundName ?? `Sound ${soundId}`}” isn’t downloaded yet. Press play and ` +
-        `wait for it to finish staging before dragging it out — a Preview is ` +
-        `never dragged.`,
+      soundId < 0
+        ? `“${label}” isn’t ready yet. Wait for the render to finish before ` +
+          `dragging it out — a Preview is never dragged.`
+        : `“${label}” isn’t downloaded yet. Press play and ` +
+          `wait for it to finish staging before dragging it out — a Preview is ` +
+          `never dragged.`,
     )
     this.name = 'OriginalNotStagedError'
     this.soundId = soundId
@@ -84,6 +94,11 @@ export interface StartDragOptions {
 }
 
 export interface DragController {
+  /**
+   * `soundIds` may mix ordinary (positive) Sound ids with negative Edit ids
+   * (ticket 04) — an Edit drags out exactly like a Sound, just from its own
+   * `local_path` file rather than the id-named content-store path.
+   */
   startDrag(
     soundIds: number | readonly number[],
     opts?: StartDragOptions,
@@ -118,10 +133,12 @@ export function createDragController(deps: DragControllerDeps): DragController {
     idsInput: number | readonly number[],
     opts: StartDragOptions = {},
   ): DragStartResult {
-    // 1. Normalise the id list: dedupe, keep order, drop anything non-positive.
+    // 1. Normalise the id list: dedupe, keep order, drop non-integers and zero.
+    //    Negative ids are Edits (ticket 04) and are just as draggable as a
+    //    positive Sound id.
     const seen = new Set<number>()
     let ids = (Array.isArray(idsInput) ? idsInput : [idsInput]).filter((id) => {
-      if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) return false
+      if (typeof id !== 'number' || !Number.isInteger(id) || id === 0) return false
       if (seen.has(id)) return false
       seen.add(id)
       return true
@@ -134,22 +151,28 @@ export function createDragController(deps: DragControllerDeps): DragController {
       ids = [ids[0]!]
     }
 
-    // 3. Resolve every Sound and require its Original to be on disk RIGHT NOW.
-    //    Any missing Sound refuses the whole drag with a visible explanation.
+    // 3. Resolve every Sound (or Edit) and require its file to be on disk RIGHT
+    //    NOW. Any missing Sound, or an Edit still rendering (or one whose row
+    //    hasn't been inserted yet), refuses the whole drag with a visible
+    //    explanation.
+    const sources = new Map<number, string>()
     const sounds = ids.map((id) => {
       const sound = getSoundsByIds(db, [id])[0]
-      if (!sound || !isOriginalOnDisk(sound)) {
+      const src = sound ? resolveDragSource(sound) : null
+      if (!sound || !src) {
         throw new OriginalNotStagedError(id, sound?.name)
       }
+      sources.set(id, src)
       return sound
     })
 
-    // 4. Hardlink each Original into the drag dir under a human-readable name.
+    // 4. Hardlink each file into the drag dir under a human-readable name.
     //    A Library Sound the user has renamed drags out under THAT name (ticket
-    //    13); everything else uses the Freesound name. Either way the name is run
-    //    through the same filesystem sanitisation + `(2)`/`(3)` disambiguation.
+    //    13); everything else uses the Freesound name — an Edit uses its own
+    //    (possibly renamed) effective name the same way. Either way the name is
+    //    run through the same filesystem sanitisation + `(2)`/`(3)` disambiguation.
     const paths = sounds.map((sound) =>
-      hardlinkForDrag(sound, effectiveDragName(sound)),
+      hardlinkForDrag(sound, effectiveDragName(sound), sources.get(sound.id)!),
     )
 
     // 5. Resolve a guaranteed-non-empty icon.
@@ -179,6 +202,22 @@ export function createDragController(deps: DragControllerDeps): DragController {
   }
 
   /**
+   * The file a drag of this row should hand to the OS: the content-store
+   * Original for a real Sound, or an Edit's own `local_path` (ticket 04) —
+   * never a path derived from an Edit's negative id, which names nothing on
+   * disk. Returns `null` when that file isn't there yet, which for an Edit
+   * covers both "still rendering" and "row not inserted yet" (both look like
+   * "no such id" to `getSoundsByIds`, which is caught by the caller).
+   */
+  function resolveDragSource(sound: Sound): string | null {
+    if (sound.id < 0) {
+      const localPath = getEditFieldsByIds(db, [sound.id]).get(sound.id)?.localPath
+      return localPath && existsSync(localPath) ? localPath : null
+    }
+    return isOriginalOnDisk(sound) ? contentPaths(dataDir, sound).original : null
+  }
+
+  /**
    * The name the dropped file should carry: the user's custom Library name when
    * they have set one (ticket 13), otherwise the Freesound name. A blank/whitespace
    * custom name is ignored. Sanitisation happens later in `sanitiseStem`.
@@ -190,12 +229,13 @@ export function createDragController(deps: DragControllerDeps): DragController {
   }
 
   /**
-   * Link the Sound's Original into `<dataDir>/drag/` as `<pretty name>.<ext>`.
-   * Reuses an existing link to the SAME Original; disambiguates a different
-   * Sound that sanitises to the same name with ` (2)`, ` (3)`, …
+   * Link `srcPath` — a Sound's Original, or an Edit's own file (ticket 04) —
+   * into `<dataDir>/drag/` as `<pretty name>.<ext>`. Reuses an existing link
+   * to the SAME file; disambiguates a different Sound/Edit that sanitises to
+   * the same name with ` (2)`, ` (3)`, …
    */
-  function hardlinkForDrag(sound: Sound, displayName: string): string {
-    const src = contentPaths(dataDir, sound).original
+  function hardlinkForDrag(sound: Sound, displayName: string, srcPath: string): string {
+    const src = srcPath
     const ext = extForSound(sound)
     const dir = join(dataDir, DRAG_DIRNAME)
     mkdirSync(dir, { recursive: true })

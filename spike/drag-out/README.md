@@ -1,4 +1,4 @@
-# @freesound/spike-drag-out
+# @superduper/spike-drag-out
 
 **Throwaway spike — ticket 01.** Discarded after the findings doc is written. Do not
 build on this code. No tests, no abstractions, no reuse.
@@ -11,8 +11,8 @@ editor / file manager, and exercises the variants ticket 09 depends on.
 From the repo root:
 
 ```
-pnpm --filter @freesound/spike-drag-out install
-pnpm --filter @freesound/spike-drag-out start
+pnpm --filter @superduper/spike-drag-out install
+pnpm --filter @superduper/spike-drag-out start
 ```
 
 Or from this directory:

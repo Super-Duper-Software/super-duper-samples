@@ -21,6 +21,7 @@ import { rm } from 'node:fs/promises'
 import type { DB } from '../db/index'
 import { upsertSound } from '../db/sounds'
 import { saveLibraryEntry, hasLibraryEntry } from '../db/library'
+import { findEditIdByLocalPath, insertEditSoundRow, nextEditId } from '../db/edits'
 import { CONTENT_DIRNAME } from '../staging/contentStore'
 import {
   scanSidecars,
@@ -185,6 +186,46 @@ export function createRebuildService(deps: RebuildServiceDeps): RebuildService {
 
     const apply = db.transaction((items: ScannedSidecar[]) => {
       for (const item of items) {
+        if (item.sidecar.derivedFrom != null) {
+          // An Edit (ticket 06, ADR-0005): ids are not stable across a rebuild
+          // (nothing external references them), so re-mint one instead of
+          // trusting the sidecar's old, possibly-colliding negative id. The
+          // Edit's own file path is what makes a re-run idempotent — see
+          // `findEditIdByLocalPath`. The parent Sound need not exist: every
+          // field required to attribute the Edit lives in its own sidecar.
+          const existingId = findEditIdByLocalPath(db, item.audioPath)
+          if (existingId != null) {
+            alreadyPresent += 1
+            recovered.push({
+              soundId: existingId,
+              name: item.sidecar.sound.name,
+              author: item.sidecar.sound.username,
+              license: item.sidecar.sound.license.name,
+              audioFile: item.audioName,
+            })
+            continue
+          }
+          const editId = nextEditId(db)
+          // The sidecar's `sound.id` is the Edit's OLD (stale) id; `insertEditSoundRow`
+          // only reads the non-id fields and takes `editId` as the row's actual id.
+          insertEditSoundRow(db, {
+            editId,
+            parentSoundId: item.sidecar.derivedFrom,
+            editSpec: item.sidecar.editSpec!,
+            localPath: item.audioPath,
+            sound: item.sidecar.sound,
+          })
+          saveLibraryEntry(db, editId, item.sidecar.downloadedAt || Date.now())
+          recovered.push({
+            soundId: editId,
+            name: item.sidecar.sound.name,
+            author: item.sidecar.sound.username,
+            license: item.sidecar.sound.license.name,
+            audioFile: item.audioName,
+          })
+          continue
+        }
+
         if (hasLibraryEntry(db, item.soundId)) alreadyPresent += 1
         upsertSound(db, item.sidecar.sound)
         // `saveLibraryEntry` is INSERT ... ON CONFLICT DO NOTHING, so a re-run

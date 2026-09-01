@@ -21,10 +21,10 @@ import { selectRowCollections, useCollections } from '../store/useCollections'
 import { selectRowChecked, useMultiSelect } from '../store/useMultiSelect'
 import { formatDuration } from '../lib/format'
 import { waveformIconDataUrl } from '../lib/dragIcon'
+import { CollectionMenu } from './CollectionMenu'
 import { LicenseChip } from './LicenseChip'
 import { StagingChip } from './StagingChip'
 import { Waveform } from './Waveform'
-import { CollectionMenu } from './CollectionMenu'
 
 export interface ResultRowProps {
   sound: Sound
@@ -70,41 +70,54 @@ function ResultRowImpl({
   // affordances: checkbox, Collection badges, rename / tags / remove.
   const isLibraryVariant = variant === 'library' || variant === 'collection'
 
-  // Ticket 16: which Collections this Sound belongs to (row badges).
-  const memberOf = useCollections(useShallow(selectRowCollections(sound.id)))
-  const ensureMemberships = useCollections((s) => s.ensureMemberships)
-  useEffect(() => {
-    if (isLibraryVariant) ensureMemberships([sound.id])
-  }, [sound.id, isLibraryVariant, ensureMemberships])
-
-  // Ticket 16: minimal checkbox multi-select for batch "add to collection".
-  const { checked } = useMultiSelect(useShallow(selectRowChecked(sound.id)))
-  const toggleChecked = useMultiSelect((s) => s.toggle)
-
-  // Ticket 16: on a search row, save the Sound AND file it in one action.
-  const onSaveInto = useCallback(
-    (collectionId: number) => {
-      void (async () => {
-        try {
-          await window.core?.saveToLibrary?.(sound.id, sound, [collectionId])
-        } catch {
-          return
-        }
-        useLibrary.getState().note(sound.id, true)
-        await useCollections.getState().load()
-        await useCollections.getState().refreshMemberships([sound.id])
-      })()
-    },
-    [sound],
-  )
-
-  // Ticket 11: Library membership for the "Saved" badge. Mirrors the staging
-  // pattern — a `useShallow` slice so only this row re-renders when it flips.
+  // Ticket 11 (revised): Library membership. A row is "downloaded" exactly when
+  // it is in the Library — the download IS the save. A `useShallow` slice so only
+  // this row re-renders when it flips. (Declared here because the Collections
+  // row affordances below depend on it in the search variant.)
   const { inLibrary } = useLibrary(useShallow(selectRowLibrary(sound.id)))
   const ensureLibrary = useLibrary((s) => s.ensure)
   useEffect(() => {
     ensureLibrary([sound.id])
   }, [sound.id, ensureLibrary])
+
+  // Ticket 16: which Collections this Sound belongs to (row badges).
+  //
+  // Library / collection rows always show membership. A search row shows it too
+  // once the Sound is downloaded (in the Library) — a downloaded search result
+  // can be filed straight into a Collection without a trip to the Library.
+  const showCollections = isLibraryVariant || inLibrary
+  const memberOf = useCollections(useShallow(selectRowCollections(sound.id)))
+  const ensureMemberships = useCollections((s) => s.ensureMemberships)
+  useEffect(() => {
+    if (showCollections) ensureMemberships([sound.id])
+  }, [sound.id, showCollections, ensureMemberships])
+
+  const onAddToCollection = useCallback(
+    (collectionId: number) => {
+      void useCollections.getState().addSounds(collectionId, [sound.id])
+    },
+    [sound.id],
+  )
+
+  // Ticket 16: minimal checkbox multi-select for batch "add to collection".
+  const { checked } = useMultiSelect(useShallow(selectRowChecked(sound.id)))
+  const toggleChecked = useMultiSelect((s) => s.toggle)
+
+  // Search row: the "Download" action downloads the Original and saves it to the
+  // Library in one step. Reused for the "Retry" state after a failed download.
+  const onDownload = useCallback(() => {
+    void useLibrary.getState().save(sound)
+  }, [sound])
+
+  // Search row: hovering the "Downloaded" pill arms a one-click delete (remove
+  // from the Library, unlink the Original). No modal — the hover reveal is the
+  // confirmation.
+  const [armDelete, setArmDelete] = useState(false)
+  const onDeleteFromLibrary = useCallback(() => {
+    setArmDelete(false)
+    void useLibrary.getState().remove(sound.id)
+    useStaging.getState().note(sound.id, 'not-started')
+  }, [sound.id])
 
   // Ticket 13: the user's local overlay is carried on the Sound in the Library
   // view (`variant="library"`). `customName ?? name` is what a Drag-Out delivers.
@@ -201,7 +214,9 @@ function ResultRowImpl({
         flashNotice(
           stagingStatus === 'failed'
             ? "This sound's Original could not be downloaded — it can't be dragged out."
-            : 'Still preparing this sound. Press play and wait for “ready” before dragging.',
+            : stagingStatus === 'queued' || stagingStatus === 'downloading'
+              ? 'Still downloading this sound — wait for “Downloaded” before dragging.'
+              : 'Download this sound first (the ⬇ Download button), then drag it out.',
         )
         return
       }
@@ -236,11 +251,11 @@ function ResultRowImpl({
       onMouseDown={handleSelect}
       onFocus={handleSelect}
       className={[
-        'absolute inset-x-0 flex items-center gap-3 border-b border-neutral-800 px-3',
+        'absolute inset-x-0 flex items-center gap-3 border-b border-line px-3',
         'cursor-default select-none outline-none',
         selected
-          ? 'bg-neutral-800 ring-1 ring-inset ring-emerald-500'
-          : 'hover:bg-neutral-900',
+          ? 'bg-surface-raised ring-1 ring-inset ring-focus'
+          : 'hover:bg-surface',
       ].join(' ')}
       style={{ top: 0, height: size, transform: `translateY(${start}px)` }}
     >
@@ -251,7 +266,7 @@ function ResultRowImpl({
           onMouseDown={(e) => e.stopPropagation()}
           onChange={() => toggleChecked(sound.id)}
           aria-label={`Select ${displayName} for batch actions`}
-          className="h-3.5 w-3.5 shrink-0 accent-emerald-500"
+          className="h-3.5 w-3.5 shrink-0 accent-[var(--sd-accent-2)]"
         />
       )}
 
@@ -263,8 +278,8 @@ function ResultRowImpl({
         className={[
           'grid h-7 w-7 shrink-0 place-items-center rounded-full border text-[11px]',
           isCurrent
-            ? 'border-emerald-500 bg-emerald-600/20 text-emerald-300'
-            : 'border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100',
+            ? 'border-accent-2 text-accent-2-text'
+            : 'border-line text-ink-muted hover:border-line-strong hover:text-ink',
         ].join(' ')}
       >
         {isLoading ? '…' : isPlaying ? '❚❚' : '▶'}
@@ -297,11 +312,11 @@ function ResultRowImpl({
                 }
               }}
               placeholder="blank = Freesound name"
-              className="min-w-0 flex-1 rounded border border-emerald-600 bg-neutral-900 px-1.5 py-0.5 text-sm text-neutral-100 placeholder:text-neutral-600 focus:outline-none"
+              className="min-w-0 flex-1 rounded border border-focus bg-surface px-1.5 py-0.5 text-sm text-ink placeholder:text-ink-faint focus:outline-none"
             />
           ) : (
             <span
-              className="truncate text-sm font-medium text-neutral-100"
+              className="truncate text-sm font-medium text-ink"
               title={
                 customName
                   ? `${customName}  (Freesound: ${sound.name})`
@@ -313,50 +328,82 @@ function ResultRowImpl({
           )}
           {isLibraryVariant && customName && (
             <span
-              className="shrink-0 truncate text-[11px] italic text-neutral-500"
+              className="shrink-0 truncate text-[11px] italic text-ink-faint"
               title={`Freesound name: ${sound.name}`}
             >
               aka {sound.name}
             </span>
           )}
-          <span className="shrink-0 text-xs text-neutral-500">
+          <span className="shrink-0 text-xs text-ink-faint">
             {sound.username}
           </span>
         </div>
         <div className="mt-0.5 flex items-center gap-2 overflow-hidden">
-          <span className="shrink-0 text-xs tabular-nums text-neutral-400">
+          <span className="shrink-0 text-xs tabular-nums text-ink-muted">
             {formatDuration(sound.duration)}
           </span>
           {failed && (
             <span
-              className="shrink-0 rounded border border-red-800/70 bg-red-950/60 px-1 text-[10px] font-medium uppercase tracking-wide text-red-300"
+              className="shrink-0 rounded border border-error px-1 text-[10px] font-medium uppercase tracking-wide text-error"
               title="This Preview failed to load — try again or pick another sound"
             >
               preview failed
             </span>
           )}
-          <StagingChip status={stagingStatus} />
-          {variant === 'search' && inLibrary && (
-            <span
-              className="shrink-0 rounded border border-emerald-800/70 bg-emerald-950/60 px-1 text-[10px] font-medium uppercase tracking-wide text-emerald-300"
-              title="Already in your Library"
-            >
-              ♥ saved
-            </span>
-          )}
-          {variant === 'search' && (
-            <CollectionMenu
-              label="＋ list"
-              onPick={onSaveInto}
-              className="shrink-0 rounded border border-neutral-700 px-1 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
-              title="Save to your Library and add to a collection in one step"
-            />
-          )}
-          {isLibraryVariant &&
+          {/* Library / collection rows use the chip for drag-readiness; on a
+              search row the Download button below carries the same state. */}
+          {isLibraryVariant && <StagingChip status={stagingStatus} />}
+          {variant === 'search' &&
+            (stagingStatus === 'queued' || stagingStatus === 'downloading' ? (
+              <span
+                className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint"
+                title="Downloading this sound's Original from Freesound"
+              >
+                Downloading…
+              </span>
+            ) : stagingStatus === 'failed' && !inLibrary ? (
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={onDownload}
+                className="shrink-0 rounded border border-error px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-error hover:bg-surface-raised"
+                title="The download failed — try again"
+              >
+                ↻ Retry download
+              </button>
+            ) : inLibrary ? (
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onMouseEnter={() => setArmDelete(true)}
+                onMouseLeave={() => setArmDelete(false)}
+                onClick={onDeleteFromLibrary}
+                className={[
+                  'w-[104px] shrink-0 rounded border px-1.5 py-0.5 text-center text-[10px] font-medium uppercase tracking-wide',
+                  armDelete
+                    ? 'border-error text-error hover:bg-surface-raised'
+                    : 'border-ok text-ok',
+                ].join(' ')}
+                title="In your Library — click to remove it and delete the downloaded Original"
+              >
+                {armDelete ? 'Delete?' : '✓ Downloaded'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={onDownload}
+                className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-muted hover:border-line-strong hover:text-ink"
+                title="Download this sound's Original from Freesound and save it to your Library"
+              >
+                ⬇ Download
+              </button>
+            ))}
+          {showCollections &&
             memberOf.map((c) => (
               <span
                 key={`col:${c.id}`}
-                className="shrink-0 truncate rounded border border-sky-800/70 bg-sky-950/50 px-1 text-[10px] text-sky-300"
+                className="shrink-0 truncate rounded border border-accent-2 px-1 text-[10px] text-accent-2-text"
                 title={`In the collection “${c.name}”`}
               >
                 {c.name}
@@ -370,7 +417,7 @@ function ResultRowImpl({
                   type="button"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={() => onRemoveTag(t)}
-                  className="inline-flex shrink-0 items-center gap-0.5 rounded border border-emerald-700/70 bg-emerald-950/60 px-1 text-[10px] text-emerald-300 hover:border-emerald-500 hover:text-emerald-100"
+                  className="inline-flex shrink-0 items-center gap-0.5 rounded border border-ok px-1 text-[10px] text-ok hover:bg-surface-raised"
                   title="Your tag — click to remove"
                 >
                   <span># {t}</span>
@@ -395,14 +442,14 @@ function ResultRowImpl({
                     }
                   }}
                   placeholder="tag + Enter"
-                  className="w-28 shrink-0 rounded border border-emerald-600 bg-neutral-900 px-1 text-[10px] text-neutral-100 placeholder:text-neutral-600 focus:outline-none"
+                  className="w-28 shrink-0 rounded border border-focus bg-surface px-1 text-[10px] text-ink placeholder:text-ink-faint focus:outline-none"
                 />
               ) : (
                 <button
                   type="button"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={startAddTag}
-                  className="shrink-0 rounded border border-neutral-700 px-1 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
+                  className="shrink-0 rounded border border-line px-1 text-[10px] text-ink-muted hover:border-line-strong hover:text-ink"
                   title="Add your own tag"
                 >
                   + tag
@@ -410,7 +457,7 @@ function ResultRowImpl({
               )}
               {sound.tags.length > 0 && (
                 <span
-                  className="min-w-0 truncate text-[11px] text-neutral-600"
+                  className="min-w-0 truncate text-[11px] text-ink-faint"
                   title={`From Freesound: ${sound.tags.join(', ')}`}
                 >
                   {sound.tags.join(' · ')}
@@ -419,7 +466,7 @@ function ResultRowImpl({
             </span>
           ) : (
             <span
-              className="min-w-0 flex-1 truncate text-xs text-neutral-500"
+              className="min-w-0 flex-1 truncate text-xs text-ink-faint"
               title={sound.tags.join(', ')}
             >
               {sound.tags.join(' · ')}
@@ -428,13 +475,27 @@ function ResultRowImpl({
         </div>
       </div>
 
+      {/* Search row: once the Sound is downloaded, file it into a Collection
+          without leaving the search results. Rendered outside the metadata
+          row's `overflow-hidden` so the dropdown is not clipped. */}
+      {variant === 'search' && inLibrary && (
+        <div className="flex shrink-0 items-center">
+          <CollectionMenu
+            label="＋ Collection ▾"
+            onPick={onAddToCollection}
+            title="Add this downloaded sound to a collection"
+            className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
+          />
+        </div>
+      )}
+
       {isLibraryVariant && (
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={startRename}
-            className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+            className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
             title="Give this sound your own name (used on drag-out)"
           >
             Rename
@@ -443,7 +504,7 @@ function ResultRowImpl({
             type="button"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => void window.core.revealInFinder(sound.id)}
-            className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+            className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
             title="Reveal the Original in Finder / Explorer"
           >
             Reveal
@@ -452,7 +513,7 @@ function ResultRowImpl({
             type="button"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => void window.core.openFreesoundPage(sound.id)}
-            className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+            className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
             title="Open this sound's page on freesound.org"
           >
             Page
@@ -461,7 +522,7 @@ function ResultRowImpl({
             type="button"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={() => onRemove?.(sound)}
-            className="rounded border border-red-900/70 px-1.5 py-0.5 text-[11px] text-red-300 hover:border-red-600 hover:text-red-100"
+            className="rounded border border-error px-1.5 py-0.5 text-[11px] text-error hover:bg-surface-raised"
             title={
               removeTitle ?? 'Remove from the Library and delete its files'
             }
@@ -474,7 +535,7 @@ function ResultRowImpl({
       {sound.license.name.includes('NC') && (
         <span
           role="alert"
-          className="shrink-0 rounded border border-amber-500 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-200"
+          className="shrink-0 rounded border border-license-caution bg-surface-raised px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-license-caution"
           title="Non-commercial license — this Sound may not be used in paid work"
         >
           ⚠ Non-commercial
@@ -486,7 +547,7 @@ function ResultRowImpl({
       {dragNotice && (
         <div
           role="alert"
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 truncate bg-amber-950/95 px-3 py-0.5 text-[11px] text-amber-100"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 truncate bg-surface-raised px-3 py-0.5 text-[11px] text-warn"
         >
           {dragNotice}
         </div>
@@ -505,7 +566,7 @@ export const ResultRow = memo(ResultRowImpl)
 // row's `useShallow` selector output shallow-equal.
 //
 // Manual (needs the Electron GUI, not available in CI):
-//   1. `pnpm --filter @freesound/desktop dev`, run a search, press ▶ on a row.
+//   1. `pnpm --filter @superduper/desktop dev`, run a search, press ▶ on a row.
 //   2. React DevTools → Profiler → gear → "Highlight updates when components
 //      render". While the playhead sweeps the waveform, NO row outline flashes.
 //      Only when you start a different track do exactly two rows flash (the old

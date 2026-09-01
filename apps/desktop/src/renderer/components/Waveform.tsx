@@ -25,6 +25,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type {
+  DragEvent as ReactDragEvent,
   PointerEvent as ReactPointerEvent,
   WheelEvent as ReactWheelEvent,
 } from 'react'
@@ -127,8 +128,8 @@ export const Waveform = memo(function Waveform({
         dpr: window.devicePixelRatio || 1,
         windowStart: zoom.start,
         windowEnd: zoom.end,
-        color: 'rgba(52, 211, 153, 0.85)', // emerald-400/85
-        midColor: 'rgba(52, 211, 153, 0.25)',
+        color: 'rgba(255, 90, 31, 0.9)', // --sd-wave-played (hot orange)
+        midColor: 'rgba(255, 90, 31, 0.3)',
       },
     )
   }, [peaks, zoom])
@@ -200,6 +201,20 @@ export const Waveform = memo(function Waveform({
     e.currentTarget.releasePointerCapture?.(e.pointerId)
   }, [])
 
+  // While this row is the audition target the waveform is a scrub surface, so a
+  // drag across it must NOT start the row's native OS drag-out. Letting it
+  // through made the browser cancel the pointer stream mid-scrub (so a click-
+  // drag seek silently did nothing) and kicked off a file drag ("goes crazy").
+  // A background row keeps the waveform as a normal part of the drag handle.
+  const onDragStart = useCallback(
+    (e: ReactDragEvent<HTMLDivElement>) => {
+      if (!active) return
+      e.preventDefault()
+      e.stopPropagation()
+    },
+    [active],
+  )
+
   // ---- zoom (wheel over an active canvas waveform) -----------------
   const onWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
@@ -233,6 +248,7 @@ export const Waveform = memo(function Waveform({
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
+      onDragStart={onDragStart}
       onDoubleClick={resetZoom}
       onWheel={onWheel}
       className={`relative overflow-hidden ${active ? 'cursor-pointer' : ''} ${className ?? ''}`}
@@ -246,7 +262,7 @@ export const Waveform = memo(function Waveform({
       ) : (
         <div
           aria-hidden="true"
-          className="waveform-mask absolute inset-0 bg-emerald-400/80"
+          className="waveform-mask absolute inset-0 bg-[var(--sd-wave-played)]"
           style={maskStyle}
         />
       )}
@@ -267,7 +283,7 @@ export const Waveform = memo(function Waveform({
             e.stopPropagation()
             resetZoom()
           }}
-          className="absolute right-0.5 top-0.5 rounded bg-neutral-900/80 px-1 text-[9px] leading-tight text-neutral-300 hover:text-neutral-100"
+          className="absolute right-0.5 top-0.5 rounded bg-surface-raised px-1 text-[9px] leading-tight text-ink-muted hover:text-ink"
           title="Reset zoom (or double-click the waveform)"
         >
           1:1

@@ -16,11 +16,13 @@
 // synchronous in-process runner instead and this file is never loaded.
 
 import { parentPort, workerData } from 'node:worker_threads'
-import { computePeaksFromFile } from './computeFromFile'
+import { computePeaksFromFile, type TrimWindow } from './computeFromFile'
 
 export interface PeakWorkerRequest {
   filePath: string
   targetBuckets: number
+  /** Slice the decode to this window (seconds) before the sweep — an Edit sliced from its parent (ticket 03). */
+  trim?: TrimWindow | null
 }
 
 export type PeakWorkerResponse =
@@ -36,8 +38,8 @@ export type PeakWorkerResponse =
 async function run(): Promise<void> {
   const port = parentPort
   if (!port) return
-  const { filePath, targetBuckets } = workerData as PeakWorkerRequest
-  const result = await computePeaksFromFile(filePath, targetBuckets)
+  const { filePath, targetBuckets, trim } = workerData as PeakWorkerRequest
+  const result = await computePeaksFromFile(filePath, targetBuckets, trim)
   if (result.ok) {
     const { sampleRate, bucketCount, data } = result.value
     // Copy into a standalone ArrayBuffer we can hand over by transfer.

@@ -9,33 +9,33 @@ import { useNotifications } from '../store/useNotifications'
 
 const KIND_STYLE: Record<ErrorKind, { ring: string; badge: string; label: string }> = {
   network: {
-    ring: 'border-amber-600/70 bg-amber-950/70',
-    badge: 'bg-amber-500/20 text-amber-200',
+    ring: 'border-warn bg-surface',
+    badge: 'bg-surface-raised text-warn',
     label: 'Connection',
   },
   throttled: {
-    ring: 'border-amber-600/70 bg-amber-950/70',
-    badge: 'bg-amber-500/20 text-amber-200',
+    ring: 'border-warn bg-surface',
+    badge: 'bg-surface-raised text-warn',
     label: 'Rate limit',
   },
   auth: {
-    ring: 'border-sky-600/70 bg-sky-950/70',
-    badge: 'bg-sky-500/20 text-sky-200',
+    ring: 'border-accent-2 bg-surface',
+    badge: 'bg-surface-raised text-accent-2-text',
     label: 'Sign-in',
   },
   download: {
-    ring: 'border-red-700/70 bg-red-950/70',
-    badge: 'bg-red-500/20 text-red-200',
+    ring: 'border-error bg-surface',
+    badge: 'bg-surface-raised text-error',
     label: 'Download',
   },
   disk: {
-    ring: 'border-red-700/70 bg-red-950/70',
-    badge: 'bg-red-500/20 text-red-200',
+    ring: 'border-error bg-surface',
+    badge: 'bg-surface-raised text-error',
     label: 'Disk',
   },
   unknown: {
-    ring: 'border-neutral-600 bg-neutral-900',
-    badge: 'bg-neutral-700/60 text-neutral-200',
+    ring: 'border-line-strong bg-surface',
+    badge: 'bg-surface-raised text-ink',
     label: 'Error',
   },
 }
@@ -62,7 +62,7 @@ export function NotificationHost() {
                 >
                   {style.label}
                 </span>
-                <span className="text-xs font-semibold text-neutral-100">
+                <span className="text-xs font-semibold text-ink">
                   {n.title}
                 </span>
               </div>
@@ -70,16 +70,16 @@ export function NotificationHost() {
                 type="button"
                 onClick={() => dismiss(n.id)}
                 aria-label="Dismiss"
-                className="-mr-1 -mt-1 shrink-0 rounded px-1 text-neutral-400 hover:text-neutral-100"
+                className="-mr-1 -mt-1 shrink-0 rounded px-1 text-ink-muted hover:text-ink"
               >
                 ×
               </button>
             </div>
-            <p className="mt-1 text-[11px] leading-relaxed text-neutral-300">
+            <p className="mt-1 text-[11px] leading-relaxed text-ink-muted">
               {n.detail}
             </p>
             {!n.actionable && (
-              <p className="mt-1 text-[10px] italic text-neutral-500">
+              <p className="mt-1 text-[10px] italic text-ink-faint">
                 Nothing you need to do here.
               </p>
             )}

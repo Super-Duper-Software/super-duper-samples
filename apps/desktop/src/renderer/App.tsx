@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { AuthBar } from './components/AuthBar'
+import { SignInGate } from './components/SignInGate'
 import { FilterBar } from './components/FilterBar'
 import { LibraryFilterBar } from './components/LibraryFilterBar'
 import { ResultList } from './components/ResultList'
-import { StagingConsentBanner } from './components/StagingConsentBanner'
 import { RebuildBanner } from './components/RebuildBanner'
+import { DownloadQuota } from './components/DownloadQuota'
 import { TransportBar } from './components/TransportBar'
 import { CollectionsPanel } from './components/CollectionsPanel'
 import { ManifestPanel } from './components/ManifestPanel'
@@ -13,7 +14,9 @@ import { AddToCollectionBar } from './components/AddToCollectionBar'
 import { NotificationHost } from './components/NotificationHost'
 import { ShortcutsDialog } from './components/ShortcutsDialog'
 import { LogViewerDialog } from './components/LogViewerDialog'
+import { SupportSplash } from './components/SupportSplash'
 import { useNotifications } from './store/useNotifications'
+import { useAuth } from './hooks/useAuth'
 import { useSearch } from './hooks/useSearch'
 import { useLibraryView } from './hooks/useLibraryView'
 import { useCollectionView } from './hooks/useCollectionView'
@@ -37,6 +40,7 @@ export default function App() {
   const [showManifest, setShowManifest] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
+  const [showSupport, setShowSupport] = useState(false)
   const [query, setQuery] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -56,6 +60,7 @@ export default function App() {
         if (cancelled) return
         if (s.view) setView(s.view as View)
         if (typeof s.query === 'string') setQuery(s.query)
+        if (!s.supportPromptDismissed) setShowSupport(true)
         restore.current = {
           openCollectionId: s.openCollectionId ?? null,
           selectedSoundId: s.selectedSoundId ?? null,
@@ -99,8 +104,12 @@ export default function App() {
     void useCollections.getState().load()
   }, [])
 
+  // ADR-0004 — search runs on the user's OAuth token; there is no signed-out
+  // search. Until signed in, the Search view shows <SignInGate/> and no query
+  // fires. Library + Collections stay reachable (local-only).
+  const authed = useAuth().state.status === 'signedIn'
   const { status, error, sounds, totalCount, hasMore, loadingMore, loadMore } =
-    useSearch(query, sort, filter, prefsReady && uiReady)
+    useSearch(query, sort, filter, prefsReady && uiReady && authed)
   const library = useLibraryView(view === 'library', libraryFilter)
   const libraryFiltered = hasLibraryFilter(libraryFilter)
 
@@ -254,8 +263,8 @@ export default function App() {
       className={[
         'rounded px-2 py-1 text-xs font-medium',
         view === v
-          ? 'bg-neutral-800 text-neutral-100 ring-1 ring-inset ring-emerald-500'
-          : 'text-neutral-400 hover:text-neutral-200',
+          ? 'bg-surface-raised text-ink ring-1 ring-inset ring-focus'
+          : 'text-ink-muted hover:text-ink',
       ].join(' ')}
     >
       {label}
@@ -263,25 +272,25 @@ export default function App() {
   )
 
   return (
-    <main className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
-      <header className="shrink-0 border-b border-neutral-800 p-4">
-        <div className="mb-3 flex items-baseline justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-semibold">Freesound</h1>
+    <main className="flex h-screen flex-col bg-bg text-ink">
+      <header className="shrink-0 border-b border-line p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 className="text-lg font-semibold">Super Duper Samples</h1>
             <div className="flex items-center gap-1">
               {tab('search', 'Search')}
               {tab('library', 'Library')}
               {tab('collections', 'Collections')}
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             {showResults && (
-              <span className="text-xs text-neutral-400" aria-live="polite">
+              <span className="text-xs text-ink-muted" aria-live="polite">
                 {formatResultCount(totalCount)}
               </span>
             )}
             {view === 'library' && library.status === 'ok' && (
-              <span className="text-xs text-neutral-400" aria-live="polite">
+              <span className="text-xs text-ink-muted" aria-live="polite">
                 {library.sounds.length}{' '}
                 {library.sounds.length === 1 ? 'sound' : 'sounds'}
               </span>
@@ -289,18 +298,19 @@ export default function App() {
             {view === 'collections' &&
               openCollection &&
               collection.status === 'ok' && (
-                <span className="text-xs text-neutral-400" aria-live="polite">
+                <span className="text-xs text-ink-muted" aria-live="polite">
                   {collection.sounds.length}{' '}
                   {collection.sounds.length === 1 ? 'sound' : 'sounds'}
                 </span>
               )}
+            <DownloadQuota />
             <AuthBar />
             <button
               type="button"
               onClick={() => setShowShortcuts(true)}
               title="Keyboard shortcuts (?)"
               aria-label="Keyboard shortcuts"
-              className="rounded border border-neutral-700 px-1.5 py-0.5 text-xs text-neutral-400 hover:border-neutral-500 hover:text-neutral-100"
+              className="rounded border border-line px-1.5 py-0.5 text-xs text-ink-muted hover:border-line-strong hover:text-ink"
             >
               ?
             </button>
@@ -308,33 +318,35 @@ export default function App() {
         </div>
 
         {view === 'search' ? (
-          <>
-            <input
-              ref={inputRef}
-              type="search"
-              className="w-full rounded border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-emerald-600 focus:outline-none"
-              placeholder="Search sounds…  (press s to save the selected sound · ? for shortcuts)"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={onInputKeyDown}
-              autoFocus
-            />
-            <FilterBar />
-          </>
+          authed ? (
+            <>
+              <input
+                ref={inputRef}
+                type="search"
+                className="w-full rounded border border-line bg-surface px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-focus focus:outline-none"
+                placeholder="Search sounds…  (press s to download the selected sound · ? for shortcuts)"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={onInputKeyDown}
+                autoFocus
+              />
+              <FilterBar />
+            </>
+          ) : null
         ) : view === 'library' ? (
           <>
-            <div className="flex items-center gap-2 text-xs text-neutral-400">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
               <span>Sorted by date saved</span>
               <button
                 type="button"
                 onClick={() =>
                   library.setDir(library.dir === 'desc' ? 'asc' : 'desc')
                 }
-                className="rounded border border-neutral-700 px-1.5 py-0.5 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+                className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
               >
                 {library.dir === 'desc' ? 'Newest first' : 'Oldest first'}
               </button>
-              <span className="text-neutral-600">
+              <span className="text-ink-faint">
                 · select a row and press Delete to remove it · tick rows to add
                 them to a collection
               </span>
@@ -342,7 +354,7 @@ export default function App() {
             <LibraryFilterBar />
           </>
         ) : (
-          <div className="flex items-center gap-2 text-xs text-neutral-400">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
             {openCollection ? (
               <>
                 <button
@@ -353,11 +365,11 @@ export default function App() {
                     useResultSelection.getState().clear()
                     useMultiSelect.getState().clear()
                   }}
-                  className="rounded border border-neutral-700 px-1.5 py-0.5 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+                  className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
                 >
                   ‹ All collections
                 </button>
-                <span className="font-medium text-neutral-200">
+                <span className="font-medium text-ink">
                   {openCollection.name}
                 </span>
                 <button
@@ -367,7 +379,7 @@ export default function App() {
                       collection.dir === 'desc' ? 'asc' : 'desc',
                     )
                   }
-                  className="rounded border border-neutral-700 px-1.5 py-0.5 text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+                  className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
                 >
                   {collection.dir === 'desc'
                     ? 'Newest added first'
@@ -376,12 +388,12 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setShowManifest(true)}
-                  className="rounded border border-emerald-700 bg-emerald-600/10 px-1.5 py-0.5 text-emerald-300 hover:border-emerald-500 hover:text-emerald-100"
+                  className="rounded border border-accent-2 px-1.5 py-0.5 text-accent-2-text hover:bg-surface-raised"
                   title="Generate the attribution credits this collection owes"
                 >
                   Generate manifest
                 </button>
-                <span className="text-neutral-600">
+                <span className="text-ink-faint">
                   · removing a sound here keeps it in your Library
                 </span>
               </>
@@ -395,20 +407,20 @@ export default function App() {
         )}
       </header>
 
-      <StagingConsentBanner />
       <RebuildBanner />
 
       <section className="relative min-h-0 flex-1">
-        {view === 'search' && (
+        {view === 'search' && !authed && <SignInGate />}
+        {view === 'search' && authed && (
           <>
             {status === 'loading' && (
-              <p className="p-4 text-sm text-neutral-400" aria-live="polite">
+              <p className="p-4 text-sm text-ink-muted" aria-live="polite">
                 Searching…
               </p>
             )}
 
             {status === 'error' && error && (
-              <p className="p-4 text-sm text-red-400" role="alert">
+              <p className="p-4 text-sm text-error" role="alert">
                 {error.kind === 'throttled'
                   ? `Rate-limited by Freesound${
                       error.retryAfter != null
@@ -422,8 +434,8 @@ export default function App() {
             )}
 
             {status === 'ok' && sounds.length === 0 && (
-              <div className="p-4 text-sm text-neutral-400">
-                <p className="font-medium text-neutral-300">
+              <div className="p-4 text-sm text-ink-muted">
+                <p className="font-medium text-ink-muted">
                   Nothing matched “{query.trim()}”
                   {activeChips.length > 0 ? ' with these filters.' : '.'}
                 </p>
@@ -443,7 +455,7 @@ export default function App() {
                               useSearchPrefs.getState().removeFilter(k),
                             )
                           }
-                          className="inline-flex items-center gap-1 rounded border border-amber-800/60 bg-amber-950/40 px-1.5 py-0.5 text-[11px] text-amber-200 hover:border-amber-600 hover:text-amber-100"
+                          className="inline-flex items-center gap-1 rounded border border-warn px-1.5 py-0.5 text-[11px] text-warn hover:bg-surface-raised"
                           title="Remove this filter"
                         >
                           <span>{c.label}</span>
@@ -453,7 +465,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => useSearchPrefs.getState().clearFilter()}
-                        className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+                        className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
                       >
                         Clear all filters
                       </button>
@@ -474,6 +486,7 @@ export default function App() {
                 loadingMore={loadingMore}
                 loadMore={loadMore}
                 onFocusSearch={focusSearch}
+                resetKey={`${query.trim()} ${sort} ${JSON.stringify(filter)}`}
               />
             )}
           </>
@@ -483,7 +496,7 @@ export default function App() {
           <div className="flex h-full flex-col">
             <AddToCollectionBar />
             {library.status === 'error' && (
-              <p className="p-4 text-sm text-red-400" role="alert">
+              <p className="p-4 text-sm text-error" role="alert">
                 Could not read the Library.
               </p>
             )}
@@ -491,29 +504,28 @@ export default function App() {
             {library.status === 'ok' &&
               library.sounds.length === 0 &&
               (libraryFiltered ? (
-                <div className="p-4 text-sm text-neutral-400">
-                  <p className="font-medium text-neutral-300">
+                <div className="p-4 text-sm text-ink-muted">
+                  <p className="font-medium text-ink-muted">
                     No Library sounds match this filter.
                   </p>
                   <button
                     type="button"
                     onClick={() => useLibraryFilter.getState().clearFilter()}
-                    className="mt-2 rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
+                    className="mt-2 rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
                   >
                     Clear all filters
                   </button>
                 </div>
               ) : (
-                <div className="p-4 text-sm text-neutral-400">
-                  <p className="font-medium text-neutral-300">
+                <div className="p-4 text-sm text-ink-muted">
+                  <p className="font-medium text-ink-muted">
                     Your Library is empty.
                   </p>
                   <p className="mt-1">
-                    Search for a sound, select it, and press{' '}
-                    <kbd className="rounded border border-neutral-700 px-1">
-                      s
-                    </kbd>{' '}
-                    to keep it here.
+                    Search for a sound, then press{' '}
+                    <kbd className="rounded border border-line px-1">s</kbd> or
+                    its <span className="font-medium">Download</span> button to
+                    fetch the Original and keep it here.
                   </p>
                 </div>
               ))}
@@ -544,18 +556,18 @@ export default function App() {
           <div className="flex h-full flex-col">
             <AddToCollectionBar />
             {collection.status === 'error' && (
-              <p className="p-4 text-sm text-red-400" role="alert">
+              <p className="p-4 text-sm text-error" role="alert">
                 Could not read this collection.
               </p>
             )}
             {collection.status === 'ok' && collection.sounds.length === 0 && (
-              <div className="p-4 text-sm text-neutral-400">
-                <p className="font-medium text-neutral-300">
+              <div className="p-4 text-sm text-ink-muted">
+                <p className="font-medium text-ink-muted">
                   “{openCollection.name}” has no sounds yet.
                 </p>
                 <p className="mt-1">
-                  Add sounds from your Library (tick rows, then “Add to
-                  collection”) or from a search result’s “＋ list” menu.
+                  Add sounds from your Library — tick rows, then “Add to
+                  collection”.
                 </p>
               </div>
             )}
@@ -598,6 +610,15 @@ export default function App() {
         />
       )}
       {showLogs && <LogViewerDialog onClose={() => setShowLogs(false)} />}
+      {showSupport && (
+        <SupportSplash
+          onDismiss={(dontShowAgain) => {
+            setShowSupport(false)
+            if (dontShowAgain)
+              void window.core.setUiState({ supportPromptDismissed: true })
+          }}
+        />
+      )}
     </main>
   )
 }

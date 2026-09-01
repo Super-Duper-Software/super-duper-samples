@@ -15,17 +15,24 @@ import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Sound } from '../types'
+import type { EditSpec, Sound } from '../types'
 
 /** Subdirectory of `dataDir` that holds every staged / library Original. */
 export const CONTENT_DIRNAME = 'content'
 
-/** Bump when the sidecar shape changes so ticket 14 can migrate old files. */
-export const SIDECAR_SCHEMA_VERSION = 1
+/**
+ * Bump when the sidecar shape changes so ticket 14 can migrate old files.
+ * v2 (ticket 01, ADR-0005) adds the optional `derivedFrom` / `editSpec` fields
+ * for an Edit's sidecar; every existing field is unchanged.
+ */
+export const SIDECAR_SCHEMA_VERSION = 2
 
 /**
  * The sidecar document. Everything ticket 14 needs to reconstruct a `sounds` row
  * (+ a `library_entries` row for files that were saved) from the directory alone.
+ *
+ * `derivedFrom` / `editSpec` are set only for an Edit's sidecar (ADR-0005) —
+ * the parent Sound's id and the spec the Edit was rendered from.
  */
 export interface Sidecar {
   schemaVersion: number
@@ -39,6 +46,10 @@ export interface Sidecar {
   file: { name: string; ext: string; byteSize: number }
   /** The full Sound metadata, verbatim — mirrors the core `Sound` type. */
   sound: Sound
+  /** The parent Sound's id — set only for an Edit's sidecar. */
+  derivedFrom?: number
+  /** The spec this Edit was rendered from — set only for an Edit's sidecar. */
+  editSpec?: EditSpec
 }
 
 /** Lower-cased, dot-free extension for a Sound, from its Freesound `type`. */
@@ -122,4 +133,98 @@ export async function writeOriginal(
   }
 
   return { paths, byteSize, sidecar }
+}
+
+// ---- Edits (ticket 01, ADR-0005) ------------------------------------------
+//
+// An Edit's file is NOT named `<id>.<ext>` — a negative id is not a basename
+// we want on disk. It is named from its PARENT's id plus a human suffix:
+// `<parentId>-edited.<ext>`, `<parentId>-edited-2.<ext>`, … The first free
+// suffix is found by disk presence, independent of any `sounds` row (so a
+// stray leftover file is never silently overwritten).
+
+export interface EditPaths {
+  dir: string
+  original: string
+  sidecar: string
+}
+
+/** The first unused `<parentId>-edited[-N].<ext>` original + sidecar pair. */
+export function nextEditPaths(
+  dataDir: string,
+  parentSoundId: number,
+  ext: string,
+): EditPaths {
+  const dir = join(dataDir, CONTENT_DIRNAME)
+  const base = (suffix: string) => join(dir, `${parentSoundId}-edited${suffix}.${ext}`)
+  let suffix = ''
+  let n = 2
+  while (existsSync(base(suffix))) {
+    suffix = `-${n}`
+    n++
+  }
+  return { dir, original: base(suffix), sidecar: join(dir, `${parentSoundId}-edited${suffix}.json`) }
+}
+
+export interface WriteEditResult {
+  byteSize: number
+  sidecar: Sidecar
+}
+
+/**
+ * Finalise a rendered Edit: the renderer already wrote the audio to
+ * `tmpOriginalPath` (see `AudioRenderRunner`); this writes the sidecar and
+ * atomically renames both into place at `paths`, in the same
+ * sidecar-then-original order `writeOriginal` uses — the invariant "the
+ * Original exists ⇒ its sidecar exists" holds for an Edit too.
+ */
+export async function finalizeEditFiles(
+  editSound: Sound,
+  parentSoundId: number,
+  editSpec: EditSpec,
+  paths: EditPaths,
+  tmpOriginalPath: string,
+  byteSize: number,
+  now: number,
+): Promise<WriteEditResult> {
+  await mkdir(paths.dir, { recursive: true })
+
+  const sidecar: Sidecar = {
+    schemaVersion: SIDECAR_SCHEMA_VERSION,
+    soundId: editSound.id,
+    freesoundUrl: editSound.url,
+    downloadedAt: now,
+    author: { username: editSound.username },
+    license: { url: editSound.license.url, name: editSound.license.name },
+    file: {
+      name: paths.original.slice(paths.dir.length + 1),
+      ext: editSound.type,
+      byteSize,
+    },
+    sound: editSound,
+    derivedFrom: parentSoundId,
+    editSpec,
+  }
+
+  const tag = randomBytes(6).toString('hex')
+  const tmpSidecar = `${paths.sidecar}.${tag}.part`
+
+  try {
+    await writeFile(tmpSidecar, JSON.stringify(sidecar, null, 2), 'utf8')
+    await rename(tmpSidecar, paths.sidecar)
+    await rename(tmpOriginalPath, paths.original)
+  } catch (err) {
+    await rm(tmpSidecar, { force: true })
+    await rm(tmpOriginalPath, { force: true })
+    throw err
+  }
+
+  return { byteSize, sidecar }
+}
+
+/** Remove an Edit's file + sidecar (derived from `local_path`). Missing files are not an error. */
+export async function removeEditFiles(localPath: string): Promise<void> {
+  const sidecar = localPath.replace(/\.[^./\\]+$/, '.json')
+  await rm(localPath, { force: true })
+  await rm(sidecar, { force: true })
 }

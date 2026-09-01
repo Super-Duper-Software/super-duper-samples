@@ -20,11 +20,14 @@ import {
   rmSync,
   statSync,
 } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   createRecordingDragHost,
   OriginalNotStagedError,
+  type AudioRenderRunner,
+  type EditSpec,
   type RecordingDragHost,
 } from '../src/core'
 import { openDb, type DB } from '../src/core/db/index'
@@ -63,17 +66,48 @@ async function waitUntil(pred: () => boolean, ms = 3000): Promise<void> {
  * plus the host and a `base` Sound (321967) to clone for crafted fixtures.
  */
 async function dragCore(
-  opts: { multiFileDragSupported?: boolean } = {},
+  opts: {
+    multiFileDragSupported?: boolean
+    audioRenderRunner?: AudioRenderRunner
+  } = {},
 ) {
   const host = createRecordingDragHost({
     multiFileDragSupported: opts.multiFileDragSupported ?? false,
   })
-  const tc = await makeTestCore({ gateway: makeFakeGateway(), dragHost: host })
+  const tc = await makeTestCore({
+    gateway: makeFakeGateway(),
+    dragHost: host,
+    audioRenderRunner: opts.audioRenderRunner,
+  })
   cleanups.push(() => tc.core.close())
   await tc.core.signIn()
   tc.core.grantStagingConsent()
   const base = (await tc.core.search('rain')).sounds.find((s) => s.id === RAIN_ID)!
   return { ...tc, host: host as RecordingDragHost, base }
+}
+
+const WHOLE_FILE_SPEC: EditSpec = { trim: null, format: 'wav' }
+
+/** A fast, deterministic Edit render: copies fixed bytes to `outPath` (ticket 01). */
+function fakeEditRunner(bytes = 'FAKE-EDIT-BYTES'): AudioRenderRunner {
+  return async ({ outPath }) => {
+    await writeFile(outPath, bytes)
+    return { byteSize: Buffer.byteLength(bytes), durationSec: 3 }
+  }
+}
+
+/** An Edit render that waits until `release()` is called (ticket 04's "still rendering"). */
+function controllableEditRunner(): { runner: AudioRenderRunner; release: () => void } {
+  let release!: () => void
+  const gate = new Promise<void>((res) => {
+    release = res
+  })
+  const runner: AudioRenderRunner = async ({ outPath }) => {
+    await gate
+    await writeFile(outPath, 'RELEASED-EDIT-BYTES')
+    return { byteSize: 18, durationSec: 2 }
+  }
+  return { runner, release }
 }
 
 function openTemp(dbPath: string): DB {
@@ -278,5 +312,67 @@ describe('core.startDrag — not configured', () => {
 
     expect(tc.core.getDragCapabilities().multiSound).toBe(false)
     expect(() => tc.core.startDrag(RAIN_ID)).toThrow(/not configured/i)
+  })
+})
+
+describe('core.startDrag — dragging an Edit out (ticket 04)', () => {
+  it('drags an Edit as a hardlink to its OWN file under its effective name — not the content-store path', async () => {
+    const { core, dataDir } = await dragCore({
+      audioRenderRunner: fakeEditRunner('EDIT-BYTES'),
+    })
+    await stageRain(core)
+    const { editId } = (await core.createEdit(RAIN_ID, WHOLE_FILE_SPEC))!
+    expect(editId).toBeLessThan(0)
+
+    const res = core.startDrag(editId)
+
+    // human-readable basename derived from the Edit's own (picked) name
+    const name = basename(res.filePath)
+    expect(name).toMatch(/edited/i)
+    expect(name.endsWith('.wav')).toBe(true)
+    expect(res.filePath.startsWith(join(dataDir, 'drag'))).toBe(true)
+
+    // it is a hardlink to the EDIT's own file, never the id-named content-store scheme
+    const editLocalPath = join(dataDir, 'content', `${RAIN_ID}-edited.wav`)
+    expect(res.filePath).not.toBe(editLocalPath)
+    expect(statSync(res.filePath).ino).toBe(statSync(editLocalPath).ino)
+    expect(readFileSync(res.filePath, 'utf8')).toBe('EDIT-BYTES')
+  })
+
+  it('refuses a drag for an Edit whose render has not finished — never a fallback', async () => {
+    const { runner, release } = controllableEditRunner()
+    const { core, host, dataDir } = await dragCore({ audioRenderRunner: runner })
+    await stageRain(core)
+
+    const pending = core.createEdit(RAIN_ID, WHOLE_FILE_SPEC)
+    // The negative-id row does not exist until the render finishes, so a drag
+    // requested for it now is refused exactly like an un-staged Sound.
+    expect(() => core.startDrag(-1)).toThrow(OriginalNotStagedError)
+    expect(host.drags).toHaveLength(0)
+    expect(existsSync(join(dataDir, 'drag'))).toBe(false)
+
+    release()
+    const result = await pending
+    expect(result!.editId).toBe(-1)
+
+    // now that the render is done, the same id drags out fine
+    const res = core.startDrag(-1)
+    expect(existsSync(res.filePath)).toBe(true)
+  })
+
+  it('a mixed drag of a Sound and an Edit hands over both', async () => {
+    const { core, host } = await dragCore({
+      multiFileDragSupported: true,
+      audioRenderRunner: fakeEditRunner('EDIT-BYTES'),
+    })
+    await stageRain(core)
+    const { editId } = (await core.createEdit(RAIN_ID, WHOLE_FILE_SPEC))!
+
+    const res = core.startDrag([RAIN_ID, editId])
+
+    expect(res.soundIds).toEqual([RAIN_ID, editId])
+    expect(res.extraFilePaths).toHaveLength(1)
+    expect(readFileSync(host.last!.filePath, 'utf8')).toBe(`FAKE-ORIGINAL:${RAIN_ID}`)
+    expect(readFileSync(host.last!.extraFilePaths[0]!, 'utf8')).toBe('EDIT-BYTES')
   })
 })

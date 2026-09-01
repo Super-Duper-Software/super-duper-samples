@@ -1,6 +1,6 @@
 # Context
 
-Ubiquitous language for the Freesound desktop client. This file is a glossary only —
+Ubiquitous language for the Super Duper Samples desktop client. This file is a glossary only —
 no implementation details, no decisions, no roadmap. Decisions live in `docs/adr/`.
 
 ## Sound

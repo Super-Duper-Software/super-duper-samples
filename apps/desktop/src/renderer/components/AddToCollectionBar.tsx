@@ -26,7 +26,7 @@ export function AddToCollectionBar() {
   if (count === 0) return null
 
   return (
-    <div className="flex items-center gap-3 border-b border-neutral-800 bg-neutral-900/80 px-4 py-1.5 text-xs text-neutral-300">
+    <div className="flex items-center gap-3 border-b border-line bg-surface-raised px-4 py-1.5 text-xs text-ink-muted">
       <span className="tabular-nums">
         {count} {count === 1 ? 'sound' : 'sounds'} selected
       </span>
@@ -38,7 +38,7 @@ export function AddToCollectionBar() {
       <button
         type="button"
         onClick={clear}
-        className="rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
+        className="rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink"
       >
         Clear selection
       </button>

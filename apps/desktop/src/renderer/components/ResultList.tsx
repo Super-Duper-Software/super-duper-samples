@@ -49,6 +49,12 @@ export interface ResultListProps {
   removeLabel?: string
   /** Override the per-row remove button tooltip. */
   removeTitle?: string
+  /**
+   * Changing this scrolls the list back to the top and drops the selection —
+   * e.g. a new query / sort / filter. Leave unset for lists that should keep
+   * their scroll position across updates (Library / Collection).
+   */
+  resetKey?: string | number
 }
 
 export function ResultList({
@@ -61,6 +67,7 @@ export function ResultList({
   onRemove,
   removeLabel,
   removeTitle,
+  resetKey,
 }: ResultListProps) {
   const parentRef = useRef<HTMLDivElement>(null)
 
@@ -147,16 +154,52 @@ export function ResultList({
     }
   }, [virtualItems, hasMore, loadingMore, loadMore, sounds.length])
 
-  // Scroll the selected row into view and move DOM focus onto it, so arrow keys
-  // keep working from the list.
+  // Scroll the selected row into view and move DOM focus onto it — but ONLY when
+  // the selection itself changes (keyboard nav / a click), never on scroll.
+  // `virtualItems` is deliberately kept OUT of the deps: with it in, this ran on
+  // every scroll frame and yanked the viewport back to the selected row, so the
+  // user could not scroll past a highlighted row.
+  const focusPendingRef = useRef<number | null>(null)
   useEffect(() => {
-    if (selectedIndex < 0) return
+    if (selectedIndex < 0) {
+      focusPendingRef.current = null
+      return
+    }
+    focusPendingRef.current = selectedIndex
     virtualizer.scrollToIndex(selectedIndex, { align: 'auto' })
+  }, [selectedIndex, virtualizer])
+
+  // When the selection jumps outside the rendered window the target row is not
+  // in the DOM yet; focus it once it mounts, then clear the flag so later
+  // scrolls don't re-focus it and fight the user.
+  useEffect(() => {
+    const want = focusPendingRef.current
+    if (want == null) return
     const node = parentRef.current?.querySelector<HTMLElement>(
-      `[data-index="${selectedIndex}"]`,
+      `[data-index="${want}"]`,
     )
-    node?.focus()
-  }, [selectedIndex, virtualizer, virtualItems])
+    if (node) {
+      node.focus({ preventScroll: true })
+      focusPendingRef.current = null
+    }
+  }, [virtualItems])
+
+  // A new query / sort / filter resets the list: scroll to the top and drop a
+  // now-meaningless selection. Skipped on first mount so a restored selection
+  // (ticket 18) survives. Declared AFTER the selection-scroll effect so that on
+  // a commit where the query changed this runs last and its scroll-to-top wins
+  // over the outgoing selection's scroll-into-view.
+  const resetArmed = useRef(false)
+  useEffect(() => {
+    if (!resetArmed.current) {
+      resetArmed.current = true
+      return
+    }
+    focusPendingRef.current = null
+    useResultSelection.getState().clear()
+    virtualizer.scrollToOffset(0)
+    if (parentRef.current) parentRef.current.scrollTop = 0
+  }, [resetKey, virtualizer])
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     // Don't let list shortcuts fire while the user is typing in an inline
@@ -202,8 +245,9 @@ export function ResultList({
       }
       case 's':
       case 'S': {
-        // Ticket 11: one keystroke saves the selected Sound to the Library.
-        // Instant and idempotent — pressing it again on a saved row is harmless.
+        // Ticket 11 (revised): one keystroke downloads the selected Sound's
+        // Original and saves it to the Library. Idempotent — pressing it again on
+        // an already-downloaded row is harmless.
         e.preventDefault()
         const sound = sounds[useResultSelection.getState().selectedIndex]
         if (sound) void useLibrary.getState().save(sound)
@@ -261,7 +305,7 @@ export function ResultList({
       </div>
 
       {loadingMore && (
-        <div className="py-2 text-center text-xs text-neutral-500">
+        <div className="py-2 text-center text-xs text-ink-faint">
           Loading more…
         </div>
       )}

@@ -90,6 +90,8 @@ export interface FakeFreesoundGatewayConfig {
 export class FakeFreesoundGateway implements FreesoundGateway {
   /** Every `search` call, in order. */
   readonly calls: GatewaySearchParams[] = []
+  /** The access token passed to every `search` call, in order. */
+  readonly searchTokens: string[] = []
   /** `[code, redirectUri]` for every `exchangeToken` call, in order. */
   readonly exchangeCalls: Array<[string, string]> = []
   /** The `refreshToken` argument for every `refreshToken` call, in order. */
@@ -135,7 +137,10 @@ export class FakeFreesoundGateway implements FreesoundGateway {
     this.#getMe401Left = times
   }
 
-  async search(params: GatewaySearchParams): Promise<RawSearchPage> {
+  async search(
+    params: GatewaySearchParams,
+    accessToken: string,
+  ): Promise<RawSearchPage> {
     // Record the FULL params — including the ticket-15 `sort` and a copy of the
     // structured `filter` — so a test can assert exactly what the core asked
     // for. Fixtures are still served by `query` alone (tests assert on the
@@ -144,6 +149,7 @@ export class FakeFreesoundGateway implements FreesoundGateway {
       ...params,
       ...(params.filter ? { filter: { ...params.filter } } : {}),
     })
+    this.searchTokens.push(accessToken)
 
     if (this.#config.throttle) {
       const { retryAfter } = this.#config.throttle

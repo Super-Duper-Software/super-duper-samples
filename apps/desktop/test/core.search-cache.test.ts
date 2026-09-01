@@ -7,7 +7,7 @@ import { loadFixture, makeFakeGateway, makeTestCore } from './helpers/makeTestCo
 describe('core.search — SQLite cache', () => {
   it('a repeated query makes no gateway call (cache hit)', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ gateway })
+    const { core } = await makeTestCore({ signedIn: true, gateway })
 
     await core.search('thunder')
     const callsAfterFirst = gateway.searchCallCount
@@ -21,7 +21,7 @@ describe('core.search — SQLite cache', () => {
     const gateway = new FakeFreesoundGateway({
       pages: { thunder: loadFixture('search-thunder.json') }, // count 2, hasMore=false
     })
-    const { core } = await makeTestCore({ gateway })
+    const { core } = await makeTestCore({ signedIn: true, gateway })
 
     await core.search('thunder', { pageSize: 200 })
 
@@ -30,7 +30,7 @@ describe('core.search — SQLite cache', () => {
 
   it('returning to a previous query after moving away is instant and gateway-call-free', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ gateway })
+    const { core } = await makeTestCore({ signedIn: true, gateway })
 
     await core.search('rain') // miss
     await core.search('thunder') // miss, different query
@@ -45,7 +45,7 @@ describe('core.search — SQLite cache', () => {
 
   it('cached and live results are identical in shape', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ gateway })
+    const { core } = await makeTestCore({ signedIn: true, gateway })
 
     const live = await core.search('rain') // gateway
     const cached = await core.search('rain') // SQLite
@@ -58,7 +58,7 @@ describe('core.search — SQLite cache', () => {
   })
 
   it('persists Sound metadata from the search response into the sounds table', async () => {
-    const { core, dbPath } = await makeTestCore()
+    const { core, dbPath } = await makeTestCore({ signedIn: true })
 
     const res = await core.search('rain')
 
@@ -76,7 +76,7 @@ describe('core.search — SQLite cache', () => {
 
   it('a connectivity failure on a cache MISS throws and persists nothing (no bogus empty cache row)', async () => {
     const gateway = makeFakeGateway({ failWith: new NetworkError('offline') })
-    const { core, dbPath } = await makeTestCore({ gateway })
+    const { core, dbPath } = await makeTestCore({ signedIn: true, gateway })
 
     await expect(core.search('rain')).rejects.toBeInstanceOf(NetworkError)
 

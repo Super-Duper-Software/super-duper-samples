@@ -1,23 +1,29 @@
 // An informational chip showing a Sound's License short name (CONTEXT.md
 // § License). It is NOT a filter and NOT a badge of quality — it names an
-// obligation attached to the audio. Non-commercial licenses read in amber so a
-// commercial user notices them; everything else is quiet on the dark ground.
+// obligation attached to the audio. It maps to the brand's licence-semantic
+// tokens (brand/BRAND.md § Colour), not to brand colours.
+//
+// Brand HARD RULE: licence chips must differ by LABEL + SHAPE, never by hue
+// alone — the caution token sits close to the brand orange and ~1 in 12 men
+// cannot separate them at chip size. So the code is always set in mono, and the
+// non-commercial chip carries a heavier (2px) border.
 
 import { memo } from 'react'
 
-/** Tailwind classes per license family, tuned for the dark theme. */
+/** Brand licence-semantic classes per family, for the always-dark app. */
 function chipClasses(name: string): string {
-  if (name === 'CC0') return 'border-emerald-700/60 bg-emerald-950/60 text-emerald-300'
-  if (name.includes('NC')) return 'border-amber-700/60 bg-amber-950/60 text-amber-300'
-  if (name.startsWith('CC-BY')) return 'border-sky-700/60 bg-sky-950/60 text-sky-300'
-  if (name === 'Sampling+') return 'border-violet-700/60 bg-violet-950/60 text-violet-300'
-  return 'border-neutral-700 bg-neutral-800 text-neutral-300'
+  if (name === 'CC0') return 'border-license-open text-license-open'
+  if (name.includes('NC'))
+    return 'border-2 border-license-caution text-license-caution'
+  if (name.startsWith('CC-BY')) return 'border-license-attribution text-license-attribution'
+  if (name === 'Sampling+') return 'border-license-legacy text-license-legacy'
+  return 'border-line bg-surface-raised text-ink-muted'
 }
 
 export const LicenseChip = memo(function LicenseChip({ name }: { name: string }) {
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${chipClasses(
+      className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide ${chipClasses(
         name,
       )}`}
       title={`License: ${name}`}

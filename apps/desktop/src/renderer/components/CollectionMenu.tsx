@@ -1,13 +1,28 @@
 // A small dropdown for picking a Collection — or creating one inline (ticket 16).
 // Used in two places:
-//   - on a search row ("＋" — save the Sound and file it in one action)
+//   - on a downloaded search row ("＋ Collection" — file the Sound in one action)
 //   - in the batch bar over the Library / a Collection ("Add to collection ▾")
 //
 // Presentation only: it calls back with the chosen Collection id. The "New
 // collection" field creates through `useCollections` and then picks the result,
 // so filing a brand-new Collection is still one gesture.
+//
+// The panel is rendered through a portal to <body> and positioned `fixed`
+// against the trigger's rect. A search row is `position: absolute` with a
+// `transform` (the virtualizer), which both clips overflow and traps `z-index`
+// inside the row's own stacking context — an in-flow dropdown would be drawn
+// behind the following rows and show their hover background through it. The
+// portal escapes both.
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { useCollections } from '../store/useCollections'
 
 export interface CollectionMenuProps {
@@ -20,6 +35,8 @@ export interface CollectionMenuProps {
   title?: string
 }
 
+const PANEL_WIDTH = 224 // w-56
+
 export function CollectionMenu({
   label,
   onPick,
@@ -28,7 +45,9 @@ export function CollectionMenu({
 }: CollectionMenuProps) {
   const [open, setOpen] = useState(false)
   const [newName, setNewName] = useState('')
-  const rootRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const collections = useCollections((s) => s.collections)
   const load = useCollections((s) => s.load)
   const create = useCollections((s) => s.create)
@@ -38,10 +57,47 @@ export function CollectionMenu({
     if (open) void load()
   }, [open, load])
 
+  // Anchor the panel to the trigger, right-aligned, flipping above the trigger
+  // if it would overflow the viewport bottom. Recomputed on scroll / resize
+  // while open so it tracks the row as the list scrolls.
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null)
+      return
+    }
+    const place = () => {
+      const t = triggerRef.current?.getBoundingClientRect()
+      if (!t) return
+      const panelH = panelRef.current?.offsetHeight ?? 0
+      const below = t.bottom + 4
+      const flip = panelH > 0 && below + panelH > window.innerHeight
+      setPos({
+        top: flip ? Math.max(4, t.top - 4 - panelH) : below,
+        left: Math.max(
+          4,
+          Math.min(t.right - PANEL_WIDTH, window.innerWidth - PANEL_WIDTH - 4),
+        ),
+      })
+    }
+    place()
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+    }
+  }, [open, collections.length])
+
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (
+        !triggerRef.current?.contains(target) &&
+        !panelRef.current?.contains(target)
+      ) {
+        setOpen(false)
+      }
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
@@ -70,8 +126,9 @@ export function CollectionMenu({
   }, [create, newName, pick])
 
   return (
-    <div ref={rootRef} className="relative inline-block">
+    <div className="relative inline-block">
       <button
+        ref={triggerRef}
         type="button"
         onMouseDown={(e) => e.stopPropagation()}
         onClick={() => setOpen((v) => !v)}
@@ -80,69 +137,79 @@ export function CollectionMenu({
         title={title}
         className={
           className ??
-          'rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100'
+          'rounded border border-line px-1.5 py-0.5 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink'
         }
       >
         {label}
       </button>
 
-      {open && (
-        <div
-          role="menu"
-          onMouseDown={(e) => e.stopPropagation()}
-          className="absolute right-0 z-20 mt-1 w-56 rounded border border-neutral-700 bg-neutral-900 p-1 shadow-lg"
-        >
-          <div className="max-h-52 overflow-auto">
-            {collections.length === 0 && (
-              <p className="px-2 py-1.5 text-[11px] text-neutral-500">
-                No collections yet.
-              </p>
-            )}
-            {collections.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                role="menuitem"
-                onClick={() => pick(c.id)}
-                className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs text-neutral-200 hover:bg-neutral-800"
-              >
-                <span className="truncate">{c.name}</span>
-                <span className="shrink-0 tabular-nums text-[10px] text-neutral-500">
-                  {c.count}
-                </span>
-              </button>
-            ))}
-          </div>
+      {open &&
+        createPortal(
+          <div
+            ref={panelRef}
+            role="menu"
+            onMouseDown={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              top: pos?.top ?? -9999,
+              left: pos?.left ?? -9999,
+              width: PANEL_WIDTH,
+              visibility: pos ? 'visible' : 'hidden',
+            }}
+            className="z-50 rounded border border-line bg-surface p-1 text-ink shadow-xl"
+          >
+            <div className="max-h-52 overflow-auto">
+              {collections.length === 0 && (
+                <p className="px-2 py-1.5 text-[11px] text-ink-faint">
+                  No collections yet.
+                </p>
+              )}
+              {collections.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => pick(c.id)}
+                  className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-xs text-ink hover:bg-surface-raised"
+                >
+                  <span className="truncate">{c.name}</span>
+                  <span className="shrink-0 tabular-nums text-[10px] text-ink-faint">
+                    {c.count}
+                  </span>
+                </button>
+              ))}
+            </div>
 
-          <div className="mt-1 flex items-center gap-1 border-t border-neutral-800 pt-1">
-            <label htmlFor={fieldId} className="sr-only">
-              New collection name
-            </label>
-            <input
-              id={fieldId}
-              type="text"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  void onCreate()
-                }
-              }}
-              placeholder="New collection…"
-              className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-1 text-xs text-neutral-100 placeholder:text-neutral-600 focus:border-emerald-600 focus:outline-none"
-            />
-            <button
-              type="button"
-              onClick={() => void onCreate()}
-              disabled={newName.trim() === ''}
-              className="shrink-0 rounded border border-neutral-700 px-1.5 py-1 text-[11px] text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 disabled:opacity-40"
-            >
-              Add
-            </button>
-          </div>
-        </div>
-      )}
+            <div className="mt-1 flex items-center gap-1 border-t border-line pt-1">
+              <label htmlFor={fieldId} className="sr-only">
+                New collection name
+              </label>
+              <input
+                id={fieldId}
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void onCreate()
+                  }
+                }}
+                placeholder="New collection…"
+                className="min-w-0 flex-1 rounded border border-line bg-bg px-1.5 py-1 text-xs text-ink placeholder:text-ink-faint focus:border-focus focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => void onCreate()}
+                disabled={newName.trim() === ''}
+                className="shrink-0 rounded border border-line px-1.5 py-1 text-[11px] text-ink-muted hover:border-line-strong hover:text-ink disabled:opacity-40"
+              >
+                Add
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }

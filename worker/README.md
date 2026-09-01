@@ -1,4 +1,4 @@
-# @freesound/token-worker
+# @superduper/token-worker
 
 A stateless Cloudflare Worker that holds the Freesound OAuth2 `client_secret` and
 performs the two token exchanges a public desktop client cannot do for itself
@@ -49,7 +49,7 @@ and is never logged.
 
 ```sh
 cp .dev.vars.example .dev.vars      # then edit in your real client secret
-pnpm --filter @freesound/token-worker exec wrangler dev
+pnpm --filter @superduper/token-worker exec wrangler dev
 ```
 
 `.dev.vars` is git-ignored and supplies `FREESOUND_CLIENT_SECRET` locally.
@@ -67,8 +67,8 @@ curl -sS -X POST http://localhost:8787/exchange \
 ## Tests
 
 ```sh
-pnpm --filter @freesound/token-worker test
-pnpm --filter @freesound/token-worker exec tsc --noEmit
+pnpm --filter @superduper/token-worker test
+pnpm --filter @superduper/token-worker exec tsc --noEmit
 ```
 
 Vitest drives the exported `worker.fetch(request, env)` as HTTP-in / HTTP-out
@@ -92,13 +92,13 @@ Prerequisites: a Cloudflare account, `wrangler` v4 (available globally), and
    in the repo):
 
    ```sh
-   pnpm --filter @freesound/token-worker exec wrangler secret put FREESOUND_CLIENT_SECRET
+   pnpm --filter @superduper/token-worker exec wrangler secret put FREESOUND_CLIENT_SECRET
    ```
 
 3. **Deploy:**
 
    ```sh
-   pnpm --filter @freesound/token-worker exec wrangler deploy
+   pnpm --filter @superduper/token-worker exec wrangler deploy
    ```
 
    `wrangler deploy` prints the deployed URL (e.g.
@@ -112,8 +112,8 @@ Prerequisites: a Cloudflare account, `wrangler` v4 (available globally), and
 2. Push the new value and redeploy:
 
    ```sh
-   pnpm --filter @freesound/token-worker exec wrangler secret put FREESOUND_CLIENT_SECRET
-   pnpm --filter @freesound/token-worker exec wrangler deploy
+   pnpm --filter @superduper/token-worker exec wrangler secret put FREESOUND_CLIENT_SECRET
+   pnpm --filter @superduper/token-worker exec wrangler deploy
    ```
 
 3. Confirm `/exchange` and `/refresh` still work against the live URL.

@@ -14,7 +14,7 @@ function StagingChipImpl({ status }: { status: StagingStatus }) {
     case 'queued':
       return (
         <span
-          className={`${BASE} border border-neutral-700 text-neutral-400`}
+          className={`${BASE} border border-line text-ink-muted`}
           title="Queued to download so this Sound can be dragged out"
         >
           queued
@@ -23,7 +23,7 @@ function StagingChipImpl({ status }: { status: StagingStatus }) {
     case 'downloading':
       return (
         <span
-          className={`${BASE} border border-sky-800/70 bg-sky-950/50 text-sky-300`}
+          className={`${BASE} border border-accent-2 text-accent-2-text`}
           title="Downloading the Original — draggable in a moment"
         >
           <span className="mr-1 inline-block animate-spin">◐</span>downloading
@@ -32,7 +32,7 @@ function StagingChipImpl({ status }: { status: StagingStatus }) {
     case 'ready':
       return (
         <span
-          className={`${BASE} border border-emerald-800/70 bg-emerald-950/50 text-emerald-300`}
+          className={`${BASE} border border-ok text-ok`}
           title="The Original is on disk — ready to drag out"
         >
           ready
@@ -41,7 +41,7 @@ function StagingChipImpl({ status }: { status: StagingStatus }) {
     case 'failed':
       return (
         <span
-          className={`${BASE} border border-red-800/70 bg-red-950/60 text-red-300`}
+          className={`${BASE} border border-error text-error`}
           title="This Sound's Original could not be downloaded — it is unavailable, not just slow"
         >
           unavailable

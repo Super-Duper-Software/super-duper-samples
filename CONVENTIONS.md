@@ -35,9 +35,8 @@ Each package has `.env.example` (committed) and `.env` (git-ignored). Known keys
 
 | Key | Package | Purpose |
 |---|---|---|
-| `FREESOUND_API_KEY` | apps/desktop | Token auth for search + preview (no OAuth) |
-| `FREESOUND_CLIENT_ID` | apps/desktop | OAuth authorization-code grant (public part) |
-| `FREESOUND_TOKEN_WORKER_URL` | apps/desktop | Deployed ticket-06 Worker base URL |
+| `FREESOUND_CLIENT_ID` | apps/desktop | OAuth authorization-code grant (public part). Required — no API key is bundled, so search runs on the user OAuth token (ADR-0004) |
+| `FREESOUND_TOKEN_WORKER_URL` | apps/desktop | Deployed ticket-06 Worker base URL. Required (see above) |
 | `FREESOUND_CLIENT_ID` | worker | OAuth client id |
 | `FREESOUND_CLIENT_SECRET` | worker | **Worker secret only** (`wrangler secret put`). Never in code, response, or log. |
 

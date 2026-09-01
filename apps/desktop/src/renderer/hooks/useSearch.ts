@@ -62,6 +62,10 @@ export function useSearch(
   const [status, setStatus] = useState<SearchStatus>('idle')
   const [error, setError] = useState<SearchError | null>(null)
   const [sounds, setSounds] = useState<Sound[]>([])
+  // Read the current results synchronously from inside the query effect without
+  // adding `sounds` to its deps.
+  const soundsRef = useRef<Sound[]>([])
+  soundsRef.current = sounds
   const [totalCount, setTotalCount] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -96,7 +100,10 @@ export function useSearch(
       return
     }
 
-    setStatus('loading')
+    // Keep the existing results on screen while a refined query is in flight —
+    // only show a bare "Searching…" state when there is nothing to show yet.
+    // Blowing the list away on every keystroke read as "not debounced".
+    setStatus(soundsRef.current.length > 0 ? 'ok' : 'loading')
     setError(null)
     inFlightPage.current = 1
 

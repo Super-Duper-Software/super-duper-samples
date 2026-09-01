@@ -27,6 +27,13 @@ export interface UiState {
   openCollectionId?: number | null
   /** The Sound row that was selected, so the cursor lands back on it. */
   selectedSoundId?: number | null
+  /**
+   * Set once the user dismisses the Ko-fi support splash with "don't show
+   * again" / "already donated". There is no way to detect a real donation
+   * (Ko-fi only reports those server-side), so this is self-reported and
+   * simply suppresses the splash on every later startup.
+   */
+  supportPromptDismissed?: boolean
 }
 
 export const EMPTY_UI_STATE: UiState = {}
@@ -85,6 +92,8 @@ export function normaliseUiState(raw: unknown): UiState {
   const sid = r['selectedSoundId']
   if (sid === null) out.selectedSoundId = null
   else if (num(sid) !== undefined) out.selectedSoundId = num(sid)
+
+  if (r['supportPromptDismissed'] === true) out.supportPromptDismissed = true
 
   return out
 }

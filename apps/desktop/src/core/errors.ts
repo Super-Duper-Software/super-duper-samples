@@ -97,6 +97,19 @@ export class AuthError extends Error {
 }
 
 /**
+ * A search (or any Freesound read) was attempted while signed out. Since the app
+ * bundles no API key (ADR-0004), search now requires an OAuth2 bearer token, so
+ * the core rejects before touching the network. The renderer shows its sign-in
+ * gate rather than a search error.
+ */
+export class NotSignedInError extends Error {
+  constructor(message = 'Sign in with your Freesound account to search.') {
+    super(message)
+    this.name = 'NotSignedInError'
+  }
+}
+
+/**
  * Writing to disk failed — out of space, permission denied, path gone (ticket
  * 18). `ENOSPC` is called out separately because it is the one the user can act
  * on (free space) versus a permissions problem they usually cannot.
@@ -192,6 +205,7 @@ export function classifyError(e: unknown): ClassifiedError {
 
   if (
     name === 'AuthError' ||
+    name === 'NotSignedInError' ||
     name === 'ReauthRequiredError' ||
     name === 'OAuthStateMismatchError' ||
     name === 'SignInCancelledError' ||
@@ -200,7 +214,10 @@ export function classifyError(e: unknown): ClassifiedError {
     return {
       kind: 'auth',
       title: 'Sign-in needed',
-      detail: 'Sign in with your Freesound account to download Originals and drag them out.',
+      detail:
+        name === 'NotSignedInError'
+          ? 'Sign in with your Freesound account to search.'
+          : 'Sign in with your Freesound account to download Originals and drag them out.',
       actionable: true,
       retryAfter: null,
     }

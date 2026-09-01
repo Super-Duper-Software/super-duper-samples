@@ -33,7 +33,11 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: 'Space', description: 'Play / pause the selected sound' },
       { keys: 'J', description: 'Select and play the next sound' },
       { keys: 'K', description: 'Select and play the previous sound' },
-      { keys: 'S', description: 'Save the selected sound to your Library' },
+      {
+        keys: 'S',
+        description:
+          'Download the selected sound’s Original and save it to your Library',
+      },
       {
         keys: 'Delete / Backspace',
         description:

@@ -68,6 +68,14 @@ describe('normaliseUiState — a stored blob is advisory, never load-bearing', (
     expect(normaliseUiState('garbage')).toEqual({})
     expect(normaliseUiState(42)).toEqual({})
   })
+
+  it('keeps supportPromptDismissed only when it is exactly true', () => {
+    expect(normaliseUiState({ supportPromptDismissed: true })).toEqual({
+      supportPromptDismissed: true,
+    })
+    expect(normaliseUiState({ supportPromptDismissed: false })).toEqual({})
+    expect(normaliseUiState({ supportPromptDismissed: 'yes' })).toEqual({})
+  })
 })
 
 describe('mergeUiState — a patch touches only the keys it names', () => {
@@ -95,6 +103,15 @@ describe('mergeUiState — a patch touches only the keys it names', () => {
     expect(mergeUiState(base, { view: undefined, query: 'x' })).toEqual({
       view: 'library',
       query: 'x',
+    })
+  })
+
+  it('folds in supportPromptDismissed without disturbing the other keys', () => {
+    const base = normaliseUiState({ view: 'library', query: 'rain' })
+    expect(mergeUiState(base, { supportPromptDismissed: true })).toEqual({
+      view: 'library',
+      query: 'rain',
+      supportPromptDismissed: true,
     })
   })
 })
@@ -154,7 +171,7 @@ describe('the app log', () => {
     const gateway = makeFakeGateway()
     // Make every search reject like a dead connection.
     gateway.search = () => Promise.reject(new NetworkError('offline'))
-    const { core } = await makeTestCore({ gateway, logSink: sink })
+    const { core } = await makeTestCore({ signedIn: true, gateway, logSink: sink })
 
     await expect(core.search('rain')).rejects.toThrow()
     expect(sink.lines.some((l) => /search failed/.test(l))).toBe(true)

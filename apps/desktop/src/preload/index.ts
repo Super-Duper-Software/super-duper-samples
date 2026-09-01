@@ -115,6 +115,8 @@ export interface CoreApi {
   ): Promise<void>
   /** Reveal the log file in Finder / Explorer (main-process `shell`). */
   showLogs(): Promise<void>
+  /** Open the Ko-fi support page in the user's default browser. */
+  openSupportPage(): Promise<void>
 
   // ---- auth (ticket 07) --------------------------------------------------
   /** Start interactive sign-in via the system browser. Resolves to the new state. */
@@ -132,6 +134,14 @@ export interface CoreApi {
   // ---- staging (ticket 08) --------------------------------------------
   /** Enqueue a background download of a Sound's Original (called on audition). Fire-and-forget. */
   stageOnAudition(soundId: number): Promise<void>
+  /**
+   * Explicitly download a Sound's Original AND save it to the Library once the
+   * bytes land. Fire-and-forget; progress arrives via `onStagingStatus`. Backs
+   * the search row's "Download" button and the `s` shortcut.
+   */
+  downloadToLibrary(soundId: number, sound?: Sound): Promise<void>
+  /** Originals downloaded from Freesound in the last rolling 24 h (quota cap: 2,000). */
+  getDownloadsInLast24h(): Promise<number>
   /** Cancel a sound's queued/in-flight staged download. */
   cancelStaging(soundId: number): Promise<void>
   /** Per-sound staging status for the row indicators. */
@@ -344,6 +354,7 @@ const api: CoreApi = {
     ipcRenderer.invoke('core:invoke', 'log', [level, message, meta]),
   // Named channel: needs Electron `shell`, which cannot live in core.
   showLogs: () => ipcRenderer.invoke('core:showLogs'),
+  openSupportPage: () => ipcRenderer.invoke('core:openSupportPage'),
 
   signIn: () => ipcRenderer.invoke('core:invoke', 'signIn', []),
   signOut: () => ipcRenderer.invoke('core:invoke', 'signOut', []),
@@ -356,6 +367,10 @@ const api: CoreApi = {
 
   stageOnAudition: (soundId) =>
     ipcRenderer.invoke('core:invoke', 'stageOnAudition', [soundId]),
+  downloadToLibrary: (soundId, sound) =>
+    ipcRenderer.invoke('core:invoke', 'downloadToLibrary', [soundId, sound]),
+  getDownloadsInLast24h: () =>
+    ipcRenderer.invoke('core:invoke', 'getDownloadsInLast24h', []),
   cancelStaging: (soundId) =>
     ipcRenderer.invoke('core:invoke', 'cancelStaging', [soundId]),
   getStagingStatus: (ids) =>

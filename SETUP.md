@@ -38,8 +38,8 @@ Needs a Cloudflare account. From `worker/`:
 # one-time
 wrangler login                       # or export CLOUDFLARE_API_TOKEN
 # set the non-secret client id in wrangler.toml [vars] FREESOUND_CLIENT_ID
-pnpm --filter @freesound/token-worker exec wrangler secret put FREESOUND_CLIENT_SECRET
-pnpm --filter @freesound/token-worker exec wrangler deploy
+pnpm --filter @superduper/token-worker exec wrangler secret put FREESOUND_CLIENT_SECRET
+pnpm --filter @superduper/token-worker exec wrangler deploy
 ```
 
 Copy the printed `https://…workers.dev` URL. Rotation and local‑dev (`.dev.vars` +
@@ -85,7 +85,7 @@ Node; if you switch Node major versions or move to packaged-Electron you'll need
 
 ```
 pnpm install
-pnpm --filter @freesound/desktop dev
+pnpm --filter @superduper/desktop dev
 ```
 
 Search and Preview audition work with just `FREESOUND_API_KEY`. Sign-in, staged

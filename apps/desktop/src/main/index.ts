@@ -7,6 +7,7 @@ import { existsSync, renameSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
+import ffmpegStaticPath from 'ffmpeg-static'
 import {
   assessStartup,
   createCore,
@@ -24,6 +25,7 @@ import {
 import { HttpFreesoundGateway } from '../core/gateway/http'
 import { createElectronAuthPlatform } from './authPlatform'
 import { createElectronDragHost } from './dragHost'
+import { createFfmpegAudioRenderRunner } from './ffmpegRunner'
 import { loadConfig } from './config'
 
 /**
@@ -84,6 +86,11 @@ function createWindow(core: Core): void {
   const win = new BrowserWindow({
     width: bounds.width,
     height: bounds.height,
+    // Users dock this beside a DAW at half-screen, so the layout is built to
+    // hold together down to MIN_WINDOW_WIDTH — enforce that as the drag-resize
+    // floor too, not just when restoring stored bounds (see usableBounds).
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     ...(bounds.x !== undefined && bounds.y !== undefined
       ? { x: bounds.x, y: bounds.y }
       : {}),
@@ -167,6 +174,14 @@ function registerIpc(core: Core): void {
     const url = core.getFreesoundUrl(soundId)
     if (url) return shell.openExternal(url)
   })
+
+  // The Ko-fi support splash. The renderer can only ask to open this one fixed
+  // page (it never passes a URL), so this cannot become a general "open any
+  // link" hole. Opens in the user's real browser — no Ko-fi script or frame is
+  // ever loaded into the renderer, so the strict CSP in index.html is untouched.
+  ipcMain.handle('core:openSupportPage', () =>
+    shell.openExternal('https://ko-fi.com/sparlos'),
+  )
 
   // Ticket 18 — reveal the app's own log file so a user filing a bug can attach
   // it. `shell` cannot live in core; the core supplies only the path.
@@ -257,7 +272,6 @@ void app.whenReady().then(() => {
   }
 
   const gateway = new HttpFreesoundGateway({
-    apiKey: config.freesoundApiKey,
     tokenWorkerUrl: config.tokenWorkerUrl,
   })
   const dragIconFallbackPath = resolveDragIconPath()
@@ -286,6 +300,12 @@ void app.whenReady().then(() => {
       fallbackIconPath: dragIconFallbackPath,
     }),
     dragIconFallbackPath,
+    // Ticket 02 — the real Edit renderer: one `ffmpeg-static` invocation per
+    // export. `ffmpeg-static` resolves to `null` on an unsupported platform;
+    // `createEdit` degrades to its documented silent no-op when omitted.
+    audioRenderRunner: ffmpegStaticPath
+      ? createFfmpegAudioRenderRunner(ffmpegStaticPath)
+      : undefined,
   })
 
   registerIpc(core)

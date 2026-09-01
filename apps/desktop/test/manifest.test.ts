@@ -10,6 +10,7 @@
 //   - an empty Collection is handled with a message, not a blank document
 // plus the pure `buildManifest` text renderer and the `obligations` predicates.
 
+import { writeFile } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
 import { writeOriginal } from '../src/core/staging/contentStore'
 import { buildManifest } from '../src/core/manifest/buildManifest'
@@ -19,7 +20,18 @@ import {
 } from '../src/core/manifest/obligations'
 import type { FreesoundGateway } from '../src/core/gateway/index'
 import type { Sound } from '../src/core/types'
+import type { AudioRenderRunner, EditSpec } from '../src/core'
 import { makeTestCore } from './helpers/makeTestCore'
+
+const WHOLE_FILE_SPEC: EditSpec = { trim: null, format: 'wav' }
+
+/** A fast, deterministic fake `audioRenderRunner` — copies fixed bytes to `outPath`. */
+function fakeRunner(bytes = 'FAKE-EDIT-BYTES'): AudioRenderRunner {
+  return async ({ outPath }) => {
+    await writeFile(outPath, bytes)
+    return { byteSize: Buffer.byteLength(bytes), durationSec: 3 }
+  }
+}
 
 const cleanups: Array<() => void> = []
 afterEach(() => {
@@ -81,8 +93,14 @@ function fakeSound(id: number, over: Partial<Sound> = {}): Sound {
 }
 
 /** A core with no network and the given Sounds seeded on disk + in the Library. */
-async function offlineCoreWithLibrary(sounds: Sound[]) {
-  const tc = await makeTestCore({ gateway: deadGateway() })
+async function offlineCoreWithLibrary(
+  sounds: Sound[],
+  opts: { audioRenderRunner?: AudioRenderRunner } = {},
+) {
+  const tc = await makeTestCore({
+    gateway: deadGateway(),
+    audioRenderRunner: opts.audioRenderRunner,
+  })
   cleanups.push(() => {
     try {
       tc.core.close()
@@ -328,5 +346,83 @@ describe('core.generateManifest', () => {
     const m = core.generateManifest(c.id)
     expect(m.entries).toEqual([])
     expect(m.text).toMatch(/nothing to attribute/i)
+  })
+})
+
+// ───────────────────────── Edits in the Manifest (ticket 05) ──────────────────────────
+
+describe('Edits in the Attribution Manifest (ticket 05)', () => {
+  it("credits an Edit to its parent's author, License and URL, marked as edited", async () => {
+    const { core } = await offlineCoreWithLibrary(
+      [
+        fakeSound(1, {
+          name: 'Rain on tin',
+          username: 'fieldrec',
+          license: LICENSES.by,
+        }),
+      ],
+      { audioRenderRunner: fakeRunner() },
+    )
+    const { editId } = (await core.createEdit(1, WHOLE_FILE_SPEC))!
+
+    const c = core.createCollection('With an edit')
+    core.addToCollection(c.id, [editId])
+    const m = core.generateManifest(c.id)
+
+    expect(m.entries).toHaveLength(1)
+    expect(m.entries[0]).toMatchObject({
+      soundId: editId,
+      author: 'fieldrec',
+      licenseName: 'CC-BY',
+      licenseUrl: LICENSES.by.url,
+      freesoundUrl: 'https://freesound.org/s/1/',
+      isEdit: true,
+    })
+    expect(m.text).toContain('by fieldrec')
+    expect(m.text).toContain('(edited)')
+    expect(m.text).toContain('https://freesound.org/s/1/')
+  })
+
+  it('flags and segregates an Edit of a CC-BY-NC Sound exactly like its parent', async () => {
+    const { core } = await offlineCoreWithLibrary(
+      [fakeSound(1, { name: 'Thunder', username: 'sky', license: LICENSES.byNc })],
+      { audioRenderRunner: fakeRunner() },
+    )
+    const { editId } = (await core.createEdit(1, WHOLE_FILE_SPEC))!
+
+    const c = core.createCollection('Paid job')
+    core.addToCollection(c.id, [editId])
+    const m = core.generateManifest(c.id)
+
+    expect(m.summary.nonCommercial).toBe(1)
+    expect(m.entries[0].restrictsCommercialUse).toBe(true)
+    // the inline flag AND the "edited" marker both show up on the credit line
+    expect(m.text).toContain('(non-commercial use only, edited)')
+    // and the Edit is listed apart, in the dedicated NC block
+    const ncIdx = m.text.indexOf(
+      'Non-commercial licenses — not cleared for commercial use:',
+    )
+    expect(ncIdx).toBeGreaterThan(-1)
+    const ncBlock = m.text.slice(ncIdx)
+    expect(ncBlock).toContain('by sky (edited)')
+  })
+
+  it('remains an unchanged snapshot when the Edit is later renamed or removed', async () => {
+    const { core } = await offlineCoreWithLibrary(
+      [fakeSound(1, { name: 'Rain on tin', license: LICENSES.by })],
+      { audioRenderRunner: fakeRunner() },
+    )
+    const { editId } = (await core.createEdit(1, WHOLE_FILE_SPEC))!
+    const c = core.createCollection('Snapshot with an edit')
+    core.addToCollection(c.id, [editId])
+
+    const first = core.generateManifest(c.id)
+    const firstText = first.text
+
+    core.setCustomName(editId, 'Renamed edit')
+    core.removeFromCollection(c.id, editId)
+
+    expect(first.text).toBe(firstText)
+    expect(first.entries).toHaveLength(1)
   })
 })

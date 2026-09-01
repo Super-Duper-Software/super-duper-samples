@@ -36,7 +36,7 @@ electron exit=0
 ```
 
 `node --check` passes on `main.js`, `preload.js`, `renderer.js`, `generate-wav.mjs`,
-`make-icon.mjs`. `pnpm --filter @freesound/spike-drag-out start` is wired
+`make-icon.mjs`. `pnpm --filter @superduper/spike-drag-out start` is wired
 (`prestart` regenerates `asset/sample.wav` + `asset/icon.png`, then `electron .`).
 
 **Result: PASS (shell only).** The Electron shell launches and the IPC/preload wiring
@@ -188,7 +188,7 @@ Caveats for ticket 09:
 
 The spike cannot drive a real GUI drag into another application, and there is no
 Windows machine in this environment. The user must run the spike
-(`pnpm --filter @freesound/spike-drag-out start`) and complete every row below on
+(`pnpm --filter @superduper/spike-drag-out start`) and complete every row below on
 real hardware. Record PASS / FAIL / NOTES for each.
 
 ### §A — macOS

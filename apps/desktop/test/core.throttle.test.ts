@@ -11,7 +11,7 @@ import { makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
 describe('core.search — 429 throttling', () => {
   it('surfaces a 429 as a typed ThrottledError carrying retryAfter (not a generic failure)', async () => {
     const gateway = new FakeFreesoundGateway({ throttle: { retryAfter: 42 } })
-    const { core } = await makeTestCore({ gateway })
+    const { core } = await makeTestCore({ signedIn: true, gateway })
 
     const err = await core.search('rain').catch((e: unknown) => e)
 
@@ -25,7 +25,7 @@ describe('core.search — 429 throttling', () => {
 
   it('applies a sane default retry window when the response gives no Retry-After', async () => {
     const gateway = new FakeFreesoundGateway({ throttle: {} })
-    const { core } = await makeTestCore({ gateway })
+    const { core } = await makeTestCore({ signedIn: true, gateway })
 
     const err = await core.search('rain').catch((e: unknown) => e)
 
@@ -35,7 +35,7 @@ describe('core.search — 429 throttling', () => {
 
   it('a 429 on a cache miss writes no cache row', async () => {
     const gateway = new FakeFreesoundGateway({ throttle: { retryAfter: 10 } })
-    const { core, dbPath } = await makeTestCore({ gateway })
+    const { core, dbPath } = await makeTestCore({ signedIn: true, gateway })
 
     await core.search('rain').catch(() => {})
 
@@ -51,7 +51,7 @@ describe('core.search — 429 throttling', () => {
     const gateway = makeFakeGateway({
       failWith: new GatewayError('server error', 500),
     })
-    const { core } = await makeTestCore({ gateway })
+    const { core } = await makeTestCore({ signedIn: true, gateway })
 
     const err = await core.search('rain').catch((e: unknown) => e)
 

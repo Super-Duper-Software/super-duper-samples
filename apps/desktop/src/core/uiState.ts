@@ -43,8 +43,13 @@ export interface UiState {
 
 export const EMPTY_UI_STATE: UiState = {}
 
-/** Smallest window we will restore to — a stored tiny/offscreen size is ignored. */
-export const MIN_WINDOW_WIDTH = 640
+/**
+ * Smallest window we will restore to — a stored tiny/offscreen size is ignored.
+ * The width floor is 360: the width the "rail" layout (spec 0003) is designed
+ * against, below which the two-line result row and the segmented tab bar stop
+ * working. The height floor is unchanged.
+ */
+export const MIN_WINDOW_WIDTH = 360
 export const MIN_WINDOW_HEIGHT = 480
 
 const VIEWS: readonly ShellView[] = ['search', 'library', 'collections', 'edit']

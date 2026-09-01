@@ -35,6 +35,81 @@ polish) are done. Next: 19 (package / sign / notarize / update) — the last tic
 - `worker`: 30 vitest tests, `tsc --noEmit` clean.
 - `spike/drag-out`: syntax-checked only (throwaway).
 
+## Spec 0003 — responsive rail layout
+
+Tickets 01 (`layoutForWidth` / `useViewport` / `MIN_WINDOW_WIDTH` 360) and 02
+(`OverflowMenu` primitive) landed with no user-visible change. Ticket 03 (below)
+is the first with a visible effect and needs a manual pass.
+
+### Ticket 03 — result row minimalism (wide layout) — what landed
+
+- **`src/renderer/components/ResultRow.tsx`** (wide layout only — no `isRail`
+  branch, no `useViewport`; the rail row is ticket 04):
+  - **Fixed-width trailing licence slot.** The NC pill and the `LicenseChip` no
+    longer sit side by side. One `w-24`, right-aligned `<div>` is always
+    rendered and holds *either* the `⚠ Non-commercial` pill (now `border-2`, per
+    the `LicenseChip` brand rule — label + heavier border, never hue alone) *or*
+    the `LicenseChip`, never both. With the slot a constant width the visible
+    action button(s) to its left line up across search / Library / Collection.
+  - **Visible actions vs `⋯`.** A per-row `OverflowMenu` renders on every
+    variant, immediately left of the licence slot.
+    - **Search:** `⬇ Download` / `✓ Downloaded` (and the Downloading… / Retry
+      states) stay in the metadata line as before. `⋯` = Open Freesound page,
+      Add to collection (disabled until the Sound is in the Library; replaces the
+      inline `＋ Collection ▾`).
+    - **Library:** `✂ Edit` stays on the row. `⋯` = Add to collection, Edit
+      tags, Rename, Reveal in Finder, Open Freesound page, Remove from Library
+      (destructive style in the menu — no longer a bare red button on every row).
+    - **Collection:** `✂ Edit` and `Remove from collection` stay on the row. `⋯`
+      = Add to collection, Edit tags, Rename, Reveal in Finder, Open Freesound
+      page.
+  - **"Add to collection" from `⋯`.** Uses the item's `opensNestedPicker` flag.
+    `CollectionMenu` has no imperative open, so it is mounted invisibly beside
+    the `⋯` trigger and its button is `.click()`ed when a nonce bumps; the pick
+    calls `useCollections.addSounds(id, [sound.id])` for that one Sound only —
+    the batch multi-select bar is untouched — and then remounts the
+    `OverflowMenu` (via a `key`) to dismiss it, since it exposes no close handle.
+  - **Custom tags are read-only chips** on the row (no inline `×`, no `+ tag`
+    input). `⋯` → "Edit tags" arms an inline editor (the previous removable-chip
+    + add-tag UI, plus a `✓ done` button) in place; tag authoring also still
+    lives in the Edit view (`EditView` untouched).
+  - **Freesound's own tag list is off the row body** — it is now only a `title`
+    tooltip on the metadata line (`Freesound tags: …`).
+  - Row keyboard navigation, whole-row drag-out, the play button, waveform,
+    checkbox and Collection-membership badges are unchanged.
+- **Shared files:** none modified. `LicenseChip.tsx` and `ResultList.tsx` were
+  read but not touched; `OverflowMenu` / `CollectionMenu` are consumed as-is.
+- `tsc --noEmit` clean, `electron-vite build` clean, 323 vitest tests pass
+  (no renderer component tests, per spec 0001).
+
+### Needs manual verification (spec 0003 ticket 03 — wide layout, ~900px width)
+
+- **Alignment:** in each of a search list, the Library and an open Collection,
+  the licence slot is the same width on every row and the button(s) to its left
+  (Download / ✂ Edit / Remove from collection / `⋯`) line up row to row.
+- **Licence slot:** a CC0 / CC-BY / CC-BY-NC / Sampling+ Sound each shows the
+  right single thing; a non-commercial Sound shows only the `⚠ Non-commercial`
+  pill (heavier border), never also a chip; the slot holds its width when empty
+  is not possible (it always has content) but stays put as rows scroll.
+- **Search `⋯`:** Open Freesound page works; "Add to collection" is disabled
+  until the row is downloaded, then opens `CollectionMenu`, and picking a
+  collection files just that Sound (no change to any checked-row batch bar) and
+  closes both menus. The old inline `＋ Collection ▾` is gone.
+- **Library `⋯`:** Add to collection, Edit tags, Rename, Reveal, Open Freesound
+  page, Remove from Library all work; Remove reads destructive in the menu and
+  still runs the existing confirm.
+- **Collection `⋯`:** same set minus Remove; `Remove from collection` is still a
+  one-click button on the row and leaves the Sound in the Library.
+- **Tags:** custom tags show as plain `# tag` chips with no remove affordance;
+  `⋯` → "Edit tags" reveals the inline editor (remove chip, `+ tag`, `✓ done`);
+  hovering the metadata line shows the Freesound tag list as a tooltip and it is
+  nowhere in the row body.
+- **`⋯` menu itself:** opens below-right, flips above near the viewport bottom,
+  is arrow-key / Home / End / Enter navigable, closes on Esc / outside-click /
+  after an action.
+- Keyboard list nav (↑/↓, J/K, Space, S, Delete) and whole-row drag-out into a
+  DAW still behave exactly as before.
+
 ## Ticket 18 — what landed
 
 - **Persisted shell state — no migration.** `src/core/uiState.ts` is a pure

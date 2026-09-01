@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { AuthBar } from './components/AuthBar'
+import { OverflowMenu } from './components/OverflowMenu'
+import type { OverflowMenuItem } from './components/OverflowMenu'
 import { SignInGate } from './components/SignInGate'
 import { FilterBar } from './components/FilterBar'
 import { LibraryFilterBar } from './components/LibraryFilterBar'
@@ -23,6 +25,7 @@ import { useLibraryView } from './hooks/useLibraryView'
 import { useCollectionView } from './hooks/useCollectionView'
 import { formatResultCount } from './lib/format'
 import { activeFilterChips } from './lib/filterLabels'
+import { useViewport } from './lib/viewport'
 import { useResultSelection } from './store/useResultSelection'
 import { useLibrary } from './store/useLibrary'
 import { useCollections } from './store/useCollections'
@@ -148,7 +151,9 @@ export default function App() {
   // ADR-0004 — search runs on the user's OAuth token; there is no signed-out
   // search. Until signed in, the Search view shows <SignInGate/> and no query
   // fires. Library + Collections stay reachable (local-only).
-  const authed = useAuth().state.status === 'signedIn'
+  const auth = useAuth()
+  const authed = auth.state.status === 'signedIn'
+  const { isRail } = useViewport()
   const { status, error, sounds, totalCount, hasMore, loadingMore, loadMore } =
     useSearch(query, sort, filter, prefsReady && uiReady && authed)
   const library = useLibraryView(view === 'library', libraryFilter)
@@ -290,16 +295,18 @@ export default function App() {
 
   const showResults = view === 'search' && status === 'ok' && sounds.length > 0
 
+  const selectView = (v: View) => {
+    setView(v)
+    useResultSelection.getState().clear()
+    useMultiSelect.getState().clear()
+    setShowManifest(false)
+    if (v !== 'collections') setOpenCollection(null)
+  }
+
   const tab = (v: View, label: string) => (
     <button
       type="button"
-      onClick={() => {
-        setView(v)
-        useResultSelection.getState().clear()
-        useMultiSelect.getState().clear()
-        setShowManifest(false)
-        if (v !== 'collections') setOpenCollection(null)
-      }}
+      onClick={() => selectView(v)}
       aria-pressed={view === v}
       className={[
         'rounded px-2 py-1 text-xs font-medium',
@@ -312,139 +319,209 @@ export default function App() {
     </button>
   )
 
+  // Rail layout — the tabs become a full-width segmented control, equal thirds.
+  const segTab = (v: View, label: string) => (
+    <button
+      type="button"
+      onClick={() => selectView(v)}
+      aria-pressed={view === v}
+      className={[
+        'w-full rounded px-2 py-1.5 text-center text-xs font-medium',
+        view === v
+          ? 'bg-surface-raised text-ink ring-1 ring-inset ring-focus'
+          : 'text-ink-muted hover:text-ink',
+      ].join(' ')}
+    >
+      {label}
+    </button>
+  )
+
+  // Secondary header actions, in the `⋯` menu in BOTH layouts (spec 0003).
+  // `Sign out` only appears when there is a session to end; the signed-out
+  // state keeps its inline `Sign in` button (via <AuthBar/>).
+  const headerMenuItems: OverflowMenuItem[] = [
+    ...(authed
+      ? [{ label: 'Sign out', onSelect: () => auth.signOut() }]
+      : []),
+    { label: 'Keyboard shortcuts', onSelect: () => setShowShortcuts(true) },
+    { label: 'View logs', onSelect: () => setShowLogs(true) },
+  ]
+
+  // A small logo mark left of the tabs in both layouts. The asset does not ship
+  // yet (ticket note): the <img> simply hides itself on error until it lands.
+  const logoSlot = (
+    <img
+      src="brand/logo.svg"
+      alt=""
+      aria-hidden
+      className="h-5 w-auto shrink-0"
+      onError={(e) => {
+        e.currentTarget.style.visibility = 'hidden'
+      }}
+    />
+  )
+
+  const headerMenu = (
+    <OverflowMenu
+      items={headerMenuItems}
+      label="More"
+      title="More"
+      className="inline-flex shrink-0 items-center justify-center rounded border border-line px-1.5 py-0.5 text-[13px] leading-none text-ink-muted hover:border-line-strong hover:text-ink"
+    />
+  )
+
+  // The live result count for the current view — shown in the header in the
+  // wide layout, and moved to the top of the list body in rail.
+  const resultCountText =
+    view === 'search' && showResults
+      ? formatResultCount(totalCount)
+      : view === 'library' && library.status === 'ok'
+        ? `${library.sounds.length} ${library.sounds.length === 1 ? 'sound' : 'sounds'}`
+        : view === 'collections' &&
+            openCollection &&
+            collection.status === 'ok'
+          ? `${collection.sounds.length} ${collection.sounds.length === 1 ? 'sound' : 'sounds'}`
+          : null
+
+  // The context bar (row 3 in rail, second row in wide) — unchanged content,
+  // extracted so both header branches render the same thing.
+  const contextBar =
+    view === 'search' ? (
+      authed ? (
+        <>
+          <input
+            ref={inputRef}
+            type="search"
+            className="w-full rounded border border-line bg-surface px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-focus focus:outline-none"
+            placeholder="Search sounds…  (press s to download the selected sound · ? for shortcuts)"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onInputKeyDown}
+            autoFocus
+          />
+          <FilterBar />
+        </>
+      ) : null
+    ) : view === 'library' ? (
+      <>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+          <span>Sorted by date saved</span>
+          <button
+            type="button"
+            onClick={() =>
+              library.setDir(library.dir === 'desc' ? 'asc' : 'desc')
+            }
+            className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
+          >
+            {library.dir === 'desc' ? 'Newest first' : 'Oldest first'}
+          </button>
+          <span className="text-ink-faint">
+            · select a row and press Delete to remove it · tick rows to add them
+            to a collection
+          </span>
+        </div>
+        <LibraryFilterBar />
+      </>
+    ) : (
+      <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+        {openCollection ? (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                setOpenCollection(null)
+                setShowManifest(false)
+                useResultSelection.getState().clear()
+                useMultiSelect.getState().clear()
+              }}
+              className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
+            >
+              ‹ All collections
+            </button>
+            <span className="font-medium text-ink">{openCollection.name}</span>
+            <button
+              type="button"
+              onClick={() =>
+                collection.setDir(collection.dir === 'desc' ? 'asc' : 'desc')
+              }
+              className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
+            >
+              {collection.dir === 'desc'
+                ? 'Newest added first'
+                : 'Oldest added first'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowManifest(true)}
+              className="rounded border border-accent-2 px-1.5 py-0.5 text-accent-2-text hover:bg-surface-raised"
+              title="Generate the attribution credits this collection owes"
+            >
+              Generate manifest
+            </button>
+            <span className="text-ink-faint">
+              · removing a sound here keeps it in your Library
+            </span>
+          </>
+        ) : (
+          <span>
+            A collection is a named set of Library sounds. Collections do not
+            nest.
+          </span>
+        )}
+      </div>
+    )
+
   return (
     <main className="flex h-screen flex-col bg-bg text-ink">
       <header className="shrink-0 border-b border-line p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <h1 className="text-lg font-semibold">Super Duper Samples</h1>
-            <div className="flex items-center gap-1">
-              {tab('search', 'Search')}
-              {tab('library', 'Library')}
-              {tab('collections', 'Collections')}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            {showResults && (
-              <span className="text-xs text-ink-muted" aria-live="polite">
-                {formatResultCount(totalCount)}
-              </span>
-            )}
-            {view === 'library' && library.status === 'ok' && (
-              <span className="text-xs text-ink-muted" aria-live="polite">
-                {library.sounds.length}{' '}
-                {library.sounds.length === 1 ? 'sound' : 'sounds'}
-              </span>
-            )}
-            {view === 'collections' &&
-              openCollection &&
-              collection.status === 'ok' && (
-                <span className="text-xs text-ink-muted" aria-live="polite">
-                  {collection.sounds.length}{' '}
-                  {collection.sounds.length === 1 ? 'sound' : 'sounds'}
-                </span>
-              )}
-            <DownloadQuota />
-            <AuthBar />
-            <button
-              type="button"
-              onClick={() => setShowShortcuts(true)}
-              title="Keyboard shortcuts (?)"
-              aria-label="Keyboard shortcuts"
-              className="rounded border border-line px-1.5 py-0.5 text-xs text-ink-muted hover:border-line-strong hover:text-ink"
-            >
-              ?
-            </button>
-          </div>
-        </div>
-
-        {view === 'search' ? (
-          authed ? (
-            <>
-              <input
-                ref={inputRef}
-                type="search"
-                className="w-full rounded border border-line bg-surface px-2 py-1.5 text-sm text-ink placeholder:text-ink-faint focus:border-focus focus:outline-none"
-                placeholder="Search sounds…  (press s to download the selected sound · ? for shortcuts)"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={onInputKeyDown}
-                autoFocus
-              />
-              <FilterBar />
-            </>
-          ) : null
-        ) : view === 'library' ? (
+        {isRail ? (
           <>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
-              <span>Sorted by date saved</span>
-              <button
-                type="button"
-                onClick={() =>
-                  library.setDir(library.dir === 'desc' ? 'asc' : 'desc')
-                }
-                className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
-              >
-                {library.dir === 'desc' ? 'Newest first' : 'Oldest first'}
-              </button>
-              <span className="text-ink-faint">
-                · select a row and press Delete to remove it · tick rows to add
-                them to a collection
-              </span>
+            {/* Row 1 — logo · abbreviated download quota · header ⋯ */}
+            <div className="mb-3 flex items-center gap-x-3">
+              {logoSlot}
+              <div className="flex min-w-0 flex-1 items-center justify-end gap-x-2">
+                {!authed && <AuthBar />}
+                <DownloadQuota />
+                {headerMenu}
+              </div>
             </div>
-            <LibraryFilterBar />
+            {/* Row 2 — full-width segmented tab control, equal thirds */}
+            <div className="mb-3 grid grid-cols-3 gap-1 rounded border border-line p-0.5">
+              {segTab('search', 'Search')}
+              {segTab('library', 'Library')}
+              {segTab('collections', 'Collections')}
+            </div>
+            {/* Row 3 — the context bar, allowed to wrap */}
+            {contextBar}
           </>
         ) : (
-          <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
-            {openCollection ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpenCollection(null)
-                    setShowManifest(false)
-                    useResultSelection.getState().clear()
-                    useMultiSelect.getState().clear()
-                  }}
-                  className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
-                >
-                  ‹ All collections
-                </button>
-                <span className="font-medium text-ink">
-                  {openCollection.name}
-                </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    collection.setDir(
-                      collection.dir === 'desc' ? 'asc' : 'desc',
-                    )
-                  }
-                  className="rounded border border-line px-1.5 py-0.5 text-ink-muted hover:border-line-strong hover:text-ink"
-                >
-                  {collection.dir === 'desc'
-                    ? 'Newest added first'
-                    : 'Oldest added first'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowManifest(true)}
-                  className="rounded border border-accent-2 px-1.5 py-0.5 text-accent-2-text hover:bg-surface-raised"
-                  title="Generate the attribution credits this collection owes"
-                >
-                  Generate manifest
-                </button>
-                <span className="text-ink-faint">
-                  · removing a sound here keeps it in your Library
-                </span>
-              </>
-            ) : (
-              <span>
-                A collection is a named set of Library sounds. Collections do
-                not nest.
-              </span>
-            )}
-          </div>
+          <>
+            {/* Wide header — one row, never wraps down to the breakpoint */}
+            <div className="mb-3 flex items-center gap-x-4">
+              <div className="flex shrink-0 items-center gap-x-3">
+                {logoSlot}
+                <div className="flex items-center gap-1">
+                  {tab('search', 'Search')}
+                  {tab('library', 'Library')}
+                  {tab('collections', 'Collections')}
+                </div>
+              </div>
+              <div className="flex min-w-0 flex-1 items-center justify-end gap-x-3">
+                {resultCountText && (
+                  <span
+                    className="shrink-0 whitespace-nowrap text-xs text-ink-muted"
+                    aria-live="polite"
+                  >
+                    {resultCountText}
+                  </span>
+                )}
+                <DownloadQuota />
+                <AuthBar />
+                {headerMenu}
+              </div>
+            </div>
+            {contextBar}
+          </>
         )}
       </header>
 
@@ -527,6 +604,7 @@ export default function App() {
                 loadingMore={loadingMore}
                 loadMore={loadMore}
                 onFocusSearch={focusSearch}
+                topSlot={isRail ? resultCountText : undefined}
                 resetKey={`${query.trim()} ${sort} ${JSON.stringify(filter)}`}
               />
             )}
@@ -582,6 +660,7 @@ export default function App() {
                   variant="library"
                   onRemove={confirmRemove}
                   onEdit={openEdit}
+                  topSlot={isRail ? resultCountText : undefined}
                 />
               </div>
             )}
@@ -626,6 +705,7 @@ export default function App() {
                   removeLabel="Remove from collection"
                   removeTitle="Remove from this collection — the sound stays in your Library"
                   onEdit={openEdit}
+                  topSlot={isRail ? resultCountText : undefined}
                 />
               </div>
             )}

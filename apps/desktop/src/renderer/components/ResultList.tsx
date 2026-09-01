@@ -17,7 +17,7 @@
 // Plain ArrowUp/ArrowDown still only move the selection.
 
 import { useCallback, useEffect, useRef } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Sound } from '../../core/types'
 import { useResultSelection } from '../store/useResultSelection'
@@ -52,6 +52,11 @@ export interface ResultListProps {
   /** Library / collection variants: open the Edit view (ticket 07) on a row. */
   onEdit?: (sound: Sound) => void
   /**
+   * Rendered as a non-scrolling strip above the list body. Spec 0003 puts the
+   * live result count here in the rail layout (it stays in the header in wide).
+   */
+  topSlot?: ReactNode
+  /**
    * Changing this scrolls the list back to the top and drops the selection —
    * e.g. a new query / sort / filter. Leave unset for lists that should keep
    * their scroll position across updates (Library / Collection).
@@ -70,6 +75,7 @@ export function ResultList({
   removeLabel,
   removeTitle,
   onEdit,
+  topSlot,
   resetKey,
 }: ResultListProps) {
   const parentRef = useRef<HTMLDivElement>(null)
@@ -274,45 +280,55 @@ export function ResultList({
   }
 
   return (
-    <div
-      ref={parentRef}
-      onKeyDown={onKeyDown}
-      tabIndex={0}
-      role="listbox"
-      aria-label="Search results"
-      className="h-full overflow-auto outline-none"
-    >
-      <div
-        className="relative w-full"
-        style={{ height: virtualizer.getTotalSize() }}
-      >
-        {virtualItems.map((vi) => {
-          const sound = sounds[vi.index]
-          if (!sound) return null
-          return (
-            <ResultRow
-              key={sound.id}
-              sound={sound}
-              index={vi.index}
-              selected={vi.index === selectedIndex}
-              start={vi.start}
-              size={vi.size}
-              onSelect={onSelect}
-              variant={variant}
-              onRemove={onRemove}
-              removeLabel={removeLabel}
-              removeTitle={removeTitle}
-              onEdit={onEdit}
-            />
-          )
-        })}
-      </div>
-
-      {loadingMore && (
-        <div className="py-2 text-center text-xs text-ink-faint">
-          Loading more…
+    <div className="flex h-full flex-col">
+      {topSlot != null && (
+        <div
+          className="shrink-0 px-4 py-2 text-xs text-ink-muted"
+          aria-live="polite"
+        >
+          {topSlot}
         </div>
       )}
+      <div
+        ref={parentRef}
+        onKeyDown={onKeyDown}
+        tabIndex={0}
+        role="listbox"
+        aria-label="Search results"
+        className="min-h-0 flex-1 overflow-auto outline-none"
+      >
+        <div
+          className="relative w-full"
+          style={{ height: virtualizer.getTotalSize() }}
+        >
+          {virtualItems.map((vi) => {
+            const sound = sounds[vi.index]
+            if (!sound) return null
+            return (
+              <ResultRow
+                key={sound.id}
+                sound={sound}
+                index={vi.index}
+                selected={vi.index === selectedIndex}
+                start={vi.start}
+                size={vi.size}
+                onSelect={onSelect}
+                variant={variant}
+                onRemove={onRemove}
+                removeLabel={removeLabel}
+                removeTitle={removeTitle}
+                onEdit={onEdit}
+              />
+            )
+          })}
+        </div>
+
+        {loadingMore && (
+          <div className="py-2 text-center text-xs text-ink-faint">
+            Loading more…
+          </div>
+        )}
+      </div>
     </div>
   )
 }

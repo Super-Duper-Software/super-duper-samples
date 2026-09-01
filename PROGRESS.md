@@ -110,6 +110,59 @@ is the first with a visible effect and needs a manual pass.
 - Keyboard list nav (↑/↓, J/K, Space, S, Delete) and whole-row drag-out into a
   DAW still behave exactly as before.
 
+## Responsive rail — Ticket 05 (header) — what landed
+
+- **Header branches on `useViewport().isRail`** in `src/renderer/App.tsx`. Both
+  layouts share one extracted `contextBar` (search input / Library controls /
+  Collections breadcrumb — content unchanged, still allowed to wrap).
+- **Logo slot** replaces the `<h1>` "Super Duper Samples" wordmark entirely (both
+  layouts): `<img src="brand/logo.svg">` left of the tabs, `onError` hides itself
+  so the slot renders empty until the asset ships (not part of this ticket).
+- **Header `⋯`** (`OverflowMenu`) in both layouts holding **Sign out** (only when
+  signed in), **Keyboard shortcuts**, **View logs**. The standalone `Sign out`
+  button (was in `AuthBar`) and the standalone `?` button are gone. The `?`
+  **key** handler is untouched and still toggles the shortcuts dialog.
+- **Signed-out** keeps the inline `Sign in` button (`<AuthBar/>`) in both layouts.
+- **Wide hardening:** the wide header is a single non-wrapping row
+  (`flex`, no `flex-wrap`); `AuthBar` username is `min-w-0` + `truncate` and drops
+  the "Signed in as " prefix below 820px (`max-[820px]:hidden`); `DownloadQuota`
+  collapses to "N ↓" below 900px (`max-[900px]:` utilities) with the full
+  sentence kept in `title` and `aria-label`; low/exhausted colours unchanged.
+- **Rail structure:** row 1 = logo · `DownloadQuota` (already abbreviated at this
+  width) · header `⋯` (plus inline `Sign in` when signed out); row 2 = Search /
+  Library / Collections as a `grid-cols-3` segmented control; row 3 = the context
+  bar.
+- **Result count** moved to the top of the list body in rail via a new
+  `topSlot` prop on `ResultList` (`src/renderer/components/ResultList.tsx`) —
+  passed `resultCountText` only when `isRail`. In wide it stays in the header
+  right cluster. `ResultList`'s root is now a `flex h-full flex-col` wrapper with
+  the scroll area as `min-h-0 flex-1`; behaviour is identical when `topSlot` is
+  unset.
+
+### Needs manual verification (Ticket 05 — header)
+
+Run the Electron app (`pnpm --filter @superduper/desktop dev`) and resize the
+window across these widths:
+
+- **~700px (rail):** header is exactly three rows — logo/quota/`⋯`, the
+  full-width segmented tabs (equal thirds), then the context bar. The live result
+  count (search results / Library count / open-Collection count) shows at the top
+  of the list, not in the header.
+- **~820px (wide):** header is a single row; "Signed in as" prefix disappears at
+  and below 820px, leaving just the username, which truncates with `…` rather
+  than wrapping when it is long.
+- **~900px (wide):** `DownloadQuota` switches to "N ↓"; hovering shows the full
+  "You have downloaded N of 2,000…" sentence; the low (≤100, amber) and
+  exhausted (0, red) colours still apply.
+- **Full width down to 761px:** the wide header never wraps to a second row.
+- **Cross 760px both directions:** the header reflows live between the two
+  layouts (no reload).
+- **Signed out:** the `Sign in` button is visible inline in both layouts; the
+  header `⋯` then contains only Keyboard shortcuts and View logs.
+- **Header `⋯`:** Sign out ends the session; Keyboard shortcuts opens the dialog
+  (as does the `?` key); View logs opens the log viewer.
+- **360px floor:** all three rail rows stay intact and usable.
+
 ## Ticket 18 — what landed
 
 - **Persisted shell state — no migration.** `src/core/uiState.ts` is a pure

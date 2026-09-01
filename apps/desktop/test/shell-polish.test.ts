@@ -54,10 +54,17 @@ describe('normaliseUiState — a stored blob is advisory, never load-bearing', (
     })
   })
 
-  it('rejects a bad view, a non-string query and a tiny / offscreen window', () => {
+  it('rejects a bad view, a non-string query and a sub-floor window', () => {
     expect(normaliseUiState({ view: 'nope' })).toEqual({})
     expect(normaliseUiState({ query: 123 })).toEqual({})
+    // Below the 360×480 floor the window is dropped whole.
     expect(normaliseUiState({ window: { width: 100, height: 100 } })).toEqual({})
+    expect(normaliseUiState({ window: { width: 359, height: 480 } })).toEqual({})
+    expect(normaliseUiState({ window: { width: 360, height: 479 } })).toEqual({})
+    // A window right at the new 360 floor is now accepted (was rejected at 640).
+    expect(normaliseUiState({ window: { width: 360, height: 480 } })).toEqual({
+      window: { width: 360, height: 480 },
+    })
     expect(
       normaliseUiState({ window: { width: 1024, height: 768, x: 20, y: 40 } }),
     ).toEqual({ window: { width: 1024, height: 768, x: 20, y: 40 } })

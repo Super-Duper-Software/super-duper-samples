@@ -8,12 +8,9 @@ import type { EditSpec, Sound } from '../types'
 export const CONTENT_DIRNAME = 'content'
 
 /**
- * Bump when the sidecar shape changes so a rebuild can migrate old files.
- * v2 (ADR-0005) adds the optional `derivedFrom` / `editSpec` fields
- * for an Edit's sidecar; every existing field is unchanged.
- * v3 adds the optional `customName` field so an Edit's user-chosen name — its
- * only real name, ADR-0005 — survives a Library rebuild. It is kept in sync by
- * `writeEditSidecarCustomName` on every rename; every existing field is unchanged.
+ * Bump when the sidecar shape changes so a rebuild can migrate old files. Each
+ * version so far only ADDED optional fields: v2 `derivedFrom` / `editSpec` for
+ * an Edit, v3 `customName` so an Edit's user-chosen name survives a rebuild.
  */
 export const SIDECAR_SCHEMA_VERSION = 3
 

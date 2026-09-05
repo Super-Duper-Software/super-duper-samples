@@ -1,8 +1,3 @@
-import { randomBytes } from 'node:crypto'
-import { rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { Worker } from 'node:worker_threads'
 import type { DB } from '../db/index'
 import { getSoundsByIds } from '../db/sounds'
 import { getEditFieldsByIds } from '../db/edits'
@@ -14,18 +9,22 @@ import {
 } from '../db/peaks'
 import { contentPaths, isOriginalOnDisk } from '../staging/contentStore'
 import { BASE_BUCKET_COUNT } from './computePeaks'
-import type { PeakResult, TrimWindow } from './computeFromFile'
-import type { PeakWorkerResponse } from './peakWorker'
+import { computeViaScratchPcm, type ScratchPcmMetadata } from './scratchPcm'
+import { workerRunner } from './workerRunner'
+import type { PeakResult, PeakRunner } from './computeFromFile'
+import type { Sound } from '../types'
 import type { AudioRenderRunner } from '../edits/editService'
 
 /** Containers `decodeAudioBuffer` reads directly — anything else needs a scratch PCM rendition. */
 const LOCALLY_DECODABLE_TYPES = new Set(['wav', 'aiff'])
 
+const INT16_MAX = 32767
+
 /** Peaks as the renderer consumes them: min/max floats in [-1, 1], interleaved. */
 export interface PeaksPayload {
   sampleRate: number
   bucketCount: number
-  /** `[min0, max0, min1, max1, ...]`, length `bucketCount * 2`, each in [-1, 1]. */
+  /** `[min0, max0, min1, max1, ...]`, length `bucketCount * 2`. */
   peaks: number[]
 }
 
@@ -33,104 +32,34 @@ export type PeaksStatus = 'ready' | 'unavailable'
 
 export interface PeaksStatusChange {
   soundId: number
-  /** `ready` — cached peaks now exist; `unavailable` — no peaks (undecodable, or Original not on disk). */
   status: PeaksStatus
 }
-
-/**
- * Runs one computation for a file. Resolves with the envelope or a typed failure;
- * it never throws for an undecodable Original (that is `{ ok: false, undecodable
- * }`). Production uses `workerRunner`; tests inject their own.
- */
-export type PeakRunner = (
-  filePath: string,
-  targetBuckets: number,
-  /** Slice the decode to this window (seconds) first — an Edit computed from its parent's decode. */
-  trim?: TrimWindow | null,
-) => Promise<PeakResult>
 
 export interface PeakServiceDeps {
   db: DB
   dataDir: string
-  /** Absolute path to the built `peakWorker.js`. When set, computation runs on a real Worker thread. */
+  /** Absolute path to the built `peakWorker.js`; when set, computation runs on a Worker thread. */
   peakWorkerPath?: string
-  /** Test seam: replace the whole runner (in-process, or a controllable promise). Wins over `peakWorkerPath`. */
+  /** Test seam: replace the whole runner. Wins over `peakWorkerPath`. */
   runner?: PeakRunner
-  /**
-   * Ticket 03: when an Edit's parent is not a locally-decodable container, this
-   * renders a scratch PCM rendition of the Edit's own file for the peak runner
-   * to consume. The same seam `createEditService` uses for the export itself.
-   */
+  /** Renders a scratch PCM rendition when the source container is not locally decodable. */
   audioRenderRunner?: AudioRenderRunner
-  /** Announce every transition (main forwards it to the renderer). */
   onStatusChange?: (change: PeaksStatusChange) => void
 }
 
 export interface PeakService {
-  /** Cached peaks for a Sound, or `null` when there are none (never computes). */
+  /** Cached peaks for a Sound, or `null` when there are none. Never computes. */
   getPeaks(soundId: number): PeaksPayload | null
   /**
-   * Ensure peaks exist for a Sound. Returns immediately. If they are cached, the
-   * status is announced synchronously; otherwise a background computation is
-   * kicked off (deduped per Sound) and its outcome announced when it finishes.
+   * Ensure peaks exist. Returns immediately; a cached result is announced
+   * synchronously, otherwise a background computation is kicked off (deduped
+   * per Sound) and its outcome announced when it finishes.
    */
   requestPeaks(soundId: number): void
-  /** Subscribe to status transitions. Returns an unsubscribe function. */
   subscribe(listener: (change: PeaksStatusChange) => void): () => void
   /** Await the outcome for a Sound (used by tests). */
   whenSettled(soundId: number): Promise<void>
   close(): void
-}
-
-const INT16_MAX = 32767
-
-/** The real runner: spawn a one-shot Worker thread and await its single message. */
-export function workerRunner(workerPath: string): PeakRunner {
-  return (filePath, targetBuckets, trim) =>
-    new Promise<PeakResult>((resolve) => {
-      let settled = false
-      const done = (r: PeakResult): void => {
-        if (settled) return
-        settled = true
-        resolve(r)
-      }
-      let worker: Worker
-      try {
-        worker = new Worker(workerPath, {
-          workerData: { filePath, targetBuckets, trim },
-        })
-      } catch (err) {
-        done({ ok: false, undecodable: false, error: msg(err) })
-        return
-      }
-      worker.once('message', (m: PeakWorkerResponse) => {
-        if (m.ok) {
-          const int16 = new Int16Array(m.data)
-          done({
-            ok: true,
-            value: {
-              sampleRate: m.sampleRate,
-              bucketCount: m.bucketCount,
-              data: int16,
-            },
-          })
-        } else {
-          done({ ok: false, undecodable: m.undecodable, error: m.error })
-        }
-        void worker.terminate()
-      })
-      worker.once('error', (err) => {
-        done({ ok: false, undecodable: false, error: msg(err) })
-        void worker.terminate()
-      })
-      worker.once('exit', () =>
-        done({
-          ok: false,
-          undecodable: false,
-          error: 'worker exited without a result',
-        }),
-      )
-    })
 }
 
 export function createPeakService(deps: PeakServiceDeps): PeakService {
@@ -179,106 +108,67 @@ export function createPeakService(deps: PeakServiceDeps): PeakService {
         ),
       })
       emit({ soundId, status: 'ready' })
-    } else if (result.undecodable) {
+      return
+    }
+    if (result.undecodable) {
       putPeaksRecord(db, {
         soundId,
         sampleRate: 0,
         bucketCount: 0,
         data: Buffer.alloc(0),
       })
-      emit({ soundId, status: 'unavailable' })
-    } else {
-      emit({ soundId, status: 'unavailable' })
+    }
+    emit({ soundId, status: 'unavailable' })
+  }
+
+  function metadataOf(sound: Sound): ScratchPcmMetadata {
+    return {
+      title: sound.name,
+      author: sound.username,
+      licenseUrl: sound.license.url,
     }
   }
 
   /**
-   * A regular Sound: peaks come off its own Original. WAV and AIFF decode
-   * directly; any other container (FLAC, MP3, OGG…) is first rendered to a
-   * throwaway PCM copy via `audioRenderRunner` — the same "decode anything"
-   * detour `editTask` uses for a compressed-source Edit. Without a render
-   * runner (tests, a stripped build) a non-decodable Original yields no peaks.
+   * Peaks for `sound` from `filePath`. WAV and AIFF decode directly; anything
+   * else detours through a throwaway PCM copy, and yields no peaks at all
+   * without a render runner.
    */
-  function soundTask(soundId: number): (() => Promise<PeakResult>) | null {
-    const sound = getSoundsByIds(db, [soundId])[0]
-    if (!sound || !isOriginalOnDisk(dataDir, sound)) {
-      return null
-    }
-    const filePath = contentPaths(dataDir, sound).original
+  function taskFor(
+    sound: Sound,
+    filePath: string,
+  ): (() => Promise<PeakResult>) | null {
     if (LOCALLY_DECODABLE_TYPES.has(sound.type.toLowerCase())) {
       return () => runner!(filePath, BASE_BUCKET_COUNT)
     }
-    if (!deps.audioRenderRunner) return null
+    const render = deps.audioRenderRunner
+    if (!render) return null
     return () =>
-      computeViaScratchPcm(filePath, {
-        title: sound.name,
-        author: sound.username,
-        licenseUrl: sound.license.url,
+      computeViaScratchPcm({
+        sourcePath: filePath,
+        metadata: metadataOf(sound),
+        render,
+        runner: runner!,
       })
   }
 
+  function soundTask(soundId: number): (() => Promise<PeakResult>) | null {
+    const sound = getSoundsByIds(db, [soundId])[0]
+    if (!sound || !isOriginalOnDisk(dataDir, sound)) return null
+    return taskFor(sound, contentPaths(dataDir, sound).original)
+  }
+
   /**
-   * An Edit: peaks ALWAYS come from the Edit's OWN rendered file, never a
-   * slice of the parent's decode. A slice-from-parent shortcut looks
-   * plausible but is wrong the moment the export actually changes the audio
-   * — loudness-normalise, a format conversion, a resample/downmix — since the
-   * parent's raw samples reflect none of that: the drawn waveform would
-   * silently lie about what actually plays. Correctness over compute cost
-   * (a sound-effect-length clip is cheap to decode either way).
+   * An Edit's peaks always come from the Edit's OWN rendered file, never a slice
+   * of the parent's decode: normalise, format conversion and resample/downmix
+   * all change the samples, so a slice-from-parent waveform would lie about what
+   * actually plays.
    */
   function editTask(soundId: number): (() => Promise<PeakResult>) | null {
-    const editSound = getSoundsByIds(db, [soundId])[0]
-    const editFields = getEditFieldsByIds(db, [soundId]).get(soundId)
-    if (!editSound || !editFields || !editFields.localPath) return null
-    const { localPath } = editFields
-
-    if (LOCALLY_DECODABLE_TYPES.has(editSound.type.toLowerCase())) {
-      return () => runner!(localPath, BASE_BUCKET_COUNT)
-    }
-
-    if (!deps.audioRenderRunner) return null
-    return () =>
-      computeViaScratchPcm(localPath, {
-        title: editSound.name,
-        author: editSound.username,
-        licenseUrl: editSound.license.url,
-      })
-  }
-
-  /**
-   * Render `sourcePath` (a content-store Original or an Edit's own file) to a
-   * throwaway PCM `.wav`, compute peaks from that, then delete it. The scratch
-   * file goes under the OS temp dir — never beside the source, so a stray copy
-   * can never confuse the content store's LRU sweep or sidecar scan — and is
-   * removed in a `finally` on every path.
-   *
-   * A render failure that ffmpeg reports as "this is not audio" comes back as
-   * `undecodable: true` (a real dead end → the caller writes the sentinel). Any
-   * other failure (ffmpeg missing, crash, disk full) stays `undecodable: false`
-   * so a later `requestPeaks` retries instead of poisoning the cache.
-   */
-  async function computeViaScratchPcm(
-    sourcePath: string,
-    metadata: { title: string; author: string; licenseUrl: string },
-  ): Promise<PeakResult> {
-    const scratchPath = join(
-      tmpdir(),
-      `peaks-scratch-${randomBytes(8).toString('hex')}.wav`,
-    )
-    try {
-      await deps.audioRenderRunner!({
-        sourcePath,
-        spec: { trim: null, format: 'wav' },
-        outPath: scratchPath,
-        signal: new AbortController().signal,
-        metadata,
-      })
-      return await runner!(scratchPath, BASE_BUCKET_COUNT, null)
-    } catch (err) {
-      return { ok: false, undecodable: isNotAudioError(err), error: msg(err) }
-    } finally {
-      await rm(scratchPath, { force: true }).catch(() => {})
-    }
+    const sound = getSoundsByIds(db, [soundId])[0]
+    const localPath = getEditFieldsByIds(db, [soundId]).get(soundId)?.localPath
+    if (!sound || !localPath) return null
+    return taskFor(sound, localPath)
   }
 
   function requestPeaks(soundId: number): void {
@@ -288,12 +178,11 @@ export function createPeakService(deps: PeakServiceDeps): PeakService {
     }
     if (inFlight.has(soundId)) return
 
-    if (!runner) {
-      emit({ soundId, status: 'unavailable' })
-      return
-    }
-
-    const compute = soundId < 0 ? editTask(soundId) : soundTask(soundId)
+    const compute = runner
+      ? soundId < 0
+        ? editTask(soundId)
+        : soundTask(soundId)
+      : null
     if (!compute) {
       emit({ soundId, status: 'unavailable' })
       return
@@ -301,9 +190,7 @@ export function createPeakService(deps: PeakServiceDeps): PeakService {
 
     const task = compute()
       .then((result) => applyResult(soundId, result))
-      .catch(() => {
-        emit({ soundId, status: 'unavailable' })
-      })
+      .catch(() => emit({ soundId, status: 'unavailable' }))
       .finally(() => {
         inFlight.delete(soundId)
       })
@@ -326,23 +213,6 @@ export function createPeakService(deps: PeakServiceDeps): PeakService {
   }
 }
 
-/** Test/maintenance helper mirroring the other db modules' re-exports. */
+export { workerRunner } from './workerRunner'
+export type { PeakRunner } from './computeFromFile'
 export { deletePeaksRecord }
-
-function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
-}
-
-/**
- * Does this render failure mean the source genuinely is not decodable audio (a
- * dead end worth a sentinel), as opposed to a transient/environmental failure?
- * Keyed off the ffmpeg stderr tail the production runner attaches to its error.
- */
-function isNotAudioError(err: unknown): boolean {
-  const m = msg(err).toLowerCase()
-  return (
-    m.includes('invalid data found when processing input') ||
-    m.includes('does not contain any stream') ||
-    m.includes('could not find codec parameters')
-  )
-}

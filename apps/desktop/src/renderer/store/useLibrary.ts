@@ -12,9 +12,9 @@ export interface LibraryState {
   note: (soundId: number, inLibrary: boolean) => void
   noteMany: (membership: Record<number, boolean>) => void
   /**
-   * Ticket 08: a new Edit landed in the Library via `createEdit` (outside this
-   * store's own `save`). Marks it a member and bumps `revision` so the
-   * Library view picks it up without a manual refresh.
+   * A new Edit landed in the Library via `createEdit`, outside this store's own
+   * `save`. Marks it a member and bumps `revision` so the Library view picks it
+   * up without a manual refresh.
    */
   noteCreated: (soundId: number) => void
   /** Ask the core for membership of ids we have no answer for yet. */
@@ -30,12 +30,9 @@ export interface LibraryState {
   save: (sound: Sound) => Promise<void>
   /** Remove a Sound from the Library (its Original + sidecar are deleted too). */
   remove: (soundId: number) => Promise<void>
-  /**
-   * Ticket 13: give a Library Sound the user's own name (or clear it with
-   * `null`). Bumps `revision` so the Library view re-fetches.
-   */
+  /** Give a Library Sound the user's own name (`null` clears it). Bumps `revision`. */
   rename: (soundId: number, customName: string | null) => Promise<void>
-  /** Ticket 13: replace a Library Sound's own tag list. Bumps `revision`. */
+  /** Replace a Library Sound's own tag list. Bumps `revision`. */
   setTags: (soundId: number, tags: string[]) => Promise<void>
 }
 

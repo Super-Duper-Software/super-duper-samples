@@ -99,10 +99,10 @@
  * at 60fps by audioController's requestAnimationFrame loop — never through React
  * state, so the row it lives in does not re-render as playback advances.
  *
- * Ticket 12: `--pz0` / `--pspan` describe the visible zoom window over the file
- * (start, and span; default 0 / 1). The on-screen position maps the whole-file
- * fraction into that window and is clamped to the box edges so a zoomed-out-of-
- * view playhead parks at the edge rather than overflowing.
+ * `--pz0` / `--pspan` describe the visible zoom window over the file (start and
+ * span; default 0 / 1). The on-screen position maps the whole-file fraction into
+ * that window, clamped to the box edges so a playhead zoomed out of view parks
+ * at the edge rather than overflowing.
  */
 .waveform-playhead {
   position: absolute;

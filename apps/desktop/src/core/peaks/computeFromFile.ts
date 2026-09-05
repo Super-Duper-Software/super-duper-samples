@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { errorMessage } from '../errorMessage'
 import {
   decodeAudioBuffer,
   UndecodableAudioError,
@@ -22,10 +23,18 @@ export interface TrimWindow {
 }
 
 /**
- * Restrict decoded audio to a frame window (an Edit's peaks are
- * sliced from its parent's decode rather than decoding the Edit's own exported
- * file). Bounds are clamped to the decoded length; always at least one frame.
+ * Runs one computation for a file. Resolves with the envelope or a typed
+ * failure; an undecodable Original is `{ ok: false, undecodable: true }`, never
+ * a throw.
  */
+export type PeakRunner = (
+  filePath: string,
+  targetBuckets: number,
+  /** Slice the decode to this window (seconds) first. */
+  trim?: TrimWindow | null,
+) => Promise<PeakResult>
+
+/** Bounds are clamped to the decoded length; the window is always at least one frame. */
 function sliceDecodedAudio(audio: DecodedAudio, trim: TrimWindow): DecodedAudio {
   const { sampleRate, length, channelData } = audio
   const start = Math.min(Math.max(Math.round(trim.startSec * sampleRate), 0), length)
@@ -39,8 +48,7 @@ function sliceDecodedAudio(audio: DecodedAudio, trim: TrimWindow): DecodedAudio 
 
 /**
  * Decode `filePath` and reduce it to a peak envelope. `trim`, when given,
- * slices the decoded audio to that window (in seconds) before the min/max
- * sweep — used to compute an Edit's peaks straight from its parent's decode.
+ * slices the decoded audio to that window before the min/max sweep.
  */
 export async function computePeaksFromFile(
   filePath: string,
@@ -51,7 +59,7 @@ export async function computePeaksFromFile(
   try {
     bytes = await readFile(filePath)
   } catch (err) {
-    return { ok: false, undecodable: false, error: errMsg(err) }
+    return { ok: false, undecodable: false, error: errorMessage(err) }
   }
   try {
     let decoded = decodeAudioBuffer(bytes)
@@ -65,11 +73,7 @@ export async function computePeaksFromFile(
     return {
       ok: false,
       undecodable: err instanceof UndecodableAudioError,
-      error: errMsg(err),
+      error: errorMessage(err),
     }
   }
-}
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
 }

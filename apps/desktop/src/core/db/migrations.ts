@@ -5,20 +5,15 @@ export interface Migration {
 }
 
 /**
- * Migration 001 — the schema everything after this ticket builds on.
- *
- * `sounds` and `search_cache` are used now (search cache + persisted metadata).
- * The remaining tables are created empty so that tickets 08/10/11/12/16 and the
- * auth tickets only ever ADD columns or indexes — never introduce a table into a
- * database that already has rows in it.
+ * The base schema. Every table is created here, even those populated later, so
+ * subsequent migrations only ever ADD columns or indexes.
  */
 const m001: Migration = {
   id: 1,
   name: 'initial-schema',
   up: /* sql */ `
-    -- Freesound metadata mirrored locally. Columns mirror the core \`Sound\` type
-    -- 1:1. Present for every Sound the app has seen — search result, Staged, or
-    -- Library. Later tickets reuse the same upsert.
+    -- Freesound metadata mirrored locally, one row per Sound the app has seen.
+    -- Columns mirror the core \`Sound\` type 1:1.
     CREATE TABLE sounds (
       id             INTEGER PRIMARY KEY,
       name           TEXT    NOT NULL,
@@ -48,15 +43,10 @@ const m001: Migration = {
       updated_at     INTEGER NOT NULL           -- epoch ms, bumped on every upsert
     );
 
-    -- One row per fully-normalized search request. Kept INDEFINITELY (spec:
-    -- "cached indefinitely") — there is no TTL and no eviction here.
-    --
-    -- \`key\` is a hash of \`params_json\`. \`params_json\` is the canonical JSON of
-    -- EVERY parameter that affects results (query text, page, pageSize, sort and
-    -- filters). Because the key is derived from an open-ended
-    -- JSON object, new sort/filter fields can join the key WITHOUT a
-    -- migration: a request that carries new params simply hashes to a new key and
-    -- old rows keep serving the unfiltered query.
+    -- One row per fully-normalized search request. Kept indefinitely: no TTL,
+    -- no eviction. \`key\` hashes \`params_json\`, the canonical JSON of every
+    -- parameter that affects results, so new sort/filter fields can join the key
+    -- without a migration.
     CREATE TABLE search_cache (
       key         TEXT    PRIMARY KEY,          -- sha256(params_json), hex
       params_json TEXT    NOT NULL,             -- canonical JSON, keys sorted
@@ -66,7 +56,7 @@ const m001: Migration = {
       fetched_at  INTEGER NOT NULL              -- epoch ms
     );
 
-    -- ---- created empty now; populated by later tickets ---------------------
+    -- ---- created empty; populated once the features that own them land ----
 
     -- the user's intent to KEEP a Sound, plus their overlay.
     CREATE TABLE library_entries (
@@ -118,20 +108,16 @@ const m001: Migration = {
 /**
  * Migration 002 — staging.
  *
- * `staged_entries` was created empty by 001 with just `sound_id`, `byte_size`
- * and `last_access_at`. Ticket 08 needs to know WHERE each staged Original sits
- * and WHEN it was first staged, so eviction can act on it without
- * re-deriving paths. Two nullable columns are added (the table is empty, so no
- * backfill is required); every row this ticket writes fills both.
+ * Two nullable columns on `staged_entries`, so eviction can act without
+ * re-deriving paths:
  *
  *   - `path`       — absolute path to the staged Original in the content store.
- *   - `created_at` — epoch ms the Original first landed. `last_access_at`
- *                    (from 001) is bumped on every re-audition; `created_at` is not.
+ *   - `created_at` — epoch ms the Original first landed. `last_access_at` is
+ *                    bumped on every re-audition; `created_at` is not.
  *
- * `app_meta` is a tiny key/value table for one-off app flags. Ticket 08 stores
- * `staging_consent_at` here — the epoch ms at which the user acknowledged that
- * "auditioning downloads sounds against your Freesound account's record". Until
- * that key is set, auditioning does NOT stage.
+ * `app_meta` is a key/value table for one-off app flags. `staging_consent_at`
+ * holds when the user acknowledged that auditioning downloads sounds against
+ * their Freesound record; until it is set, auditioning does NOT stage.
  */
 const m002: Migration = {
   id: 2,
@@ -174,22 +160,16 @@ const m003: Migration = {
 /**
  * Migration 004 — Edits (ADR-0005).
  *
- * An Edit is represented as an ordinary `sounds` row with a negative `id`
- * (Freesound ids are always positive, so the two id spaces never collide),
- * carrying three added nullable columns:
+ * An Edit is an ordinary `sounds` row with a negative `id` (Freesound ids are
+ * always positive, so the id spaces never collide), plus three nullable columns:
  *
- *   - `derived_from` — the parent Sound's id. NULL for every real (mirrored)
- *     Sound; set for an Edit.
+ *   - `derived_from` — the parent Sound's id; NULL for every mirrored Sound.
  *   - `edit_spec`    — the trim + encode spec (JSON), as passed to `createEdit`.
- *   - `local_path`   — absolute path to the Edit's file in the content store.
- *     Unlike a real Sound's Original, which is always derivable as
- *     `<id>.<ext>`, an Edit's file is named from its PARENT id plus a human
- *     suffix (`<parentId>-edited.<ext>`, …), so the path is stored rather
- *     than derived.
+ *   - `local_path`   — the Edit's file. A real Sound's Original is derivable as
+ *     `<id>.<ext>`, but an Edit's file is named from its PARENT id plus a human
+ *     suffix, so the path is stored rather than derived.
  *
- * The table is not empty at this point (real Sounds exist), but all three
- * columns are nullable with no default — every existing row reads back NULL
- * in all three, which is exactly "not an Edit". No backfill needed.
+ * Existing rows read back NULL in all three, which is exactly "not an Edit".
  */
 const m004: Migration = {
   id: 4,
@@ -204,13 +184,11 @@ const m004: Migration = {
 /**
  * Migration 005 — retire stale "undecodable" peak sentinels.
  *
- * Previously, a plain Sound whose Original was a compressed container
- * (FLAC, MP3, OGG) failed the local WAV/AIFF-only decoder and wrote an
- * undecodable sentinel row (`bucket_count = 0`) so it was never retried. Ticket
- * 20 gives those Originals an ffmpeg scratch-PCM render path — but the sentinel
- * short-circuits `requestPeaks` before it can run. Drop every sentinel so each
- * is recomputed once through the new path; a genuinely undecodable file simply
- * writes the sentinel again. Real peak rows (`bucket_count > 0`) are untouched.
+ * A compressed Original (FLAC, MP3, OGG) used to fail the WAV/AIFF-only decoder
+ * and write a sentinel row (`bucket_count = 0`) that short-circuits
+ * `requestPeaks` forever. Those files now have a scratch-PCM render path, so
+ * drop every sentinel to let each recompute once; a genuinely undecodable file
+ * simply writes the sentinel again. Real peak rows are untouched.
  */
 const m005: Migration = {
   id: 5,

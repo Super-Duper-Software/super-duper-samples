@@ -33,10 +33,9 @@ function parseRetryAfter(header: string | null): number | undefined {
 
 export interface HttpFreesoundGatewayConfig {
   /**
-   * Deployed ticket-06 token Worker base URL (`FREESOUND_TOKEN_WORKER_URL`). The
-   * Worker holds `client_secret`; this app never does. Required — without it
-   * there is no way to obtain the bearer token that search and download both
-   * need (ADR-0004: the app bundles no API key).
+   * Token Worker base URL (`FREESOUND_TOKEN_WORKER_URL`). The Worker holds
+   * `client_secret`; this app never does. Required — without it there is no way
+   * to get the bearer token search and download both need (ADR-0004).
    */
   tokenWorkerUrl?: string
   /** Override the API base. Must end with a slash. Defaults to the real API. */

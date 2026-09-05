@@ -51,57 +51,40 @@ export interface StagingStatusChange {
 
 export interface StagingController {
   /**
-   * Called by the renderer's audition flow. Fire-and-forget. Streams nothing
-   * itself — it enqueues the Original for background download, having first
-   * cancelled the previous audition's unfinished, unsaved download.
+   * Enqueue the Original for background download, having first cancelled the
+   * previous audition's unfinished, unsaved download. Fire-and-forget.
    *
-   * Silent no-op when: signed out, consent not yet granted, the Sound is unknown
-   * to the DB, or the Original is already on disk (in which case it just bumps
-   * `last_access_at`).
+   * Silent no-op when signed out, before consent, for an unknown Sound, or when
+   * the Original is already on disk (which just bumps `last_access_at`).
    */
   stageOnAudition(soundId: number): void
   /**
-   * Explicit, user-initiated download of a Sound's Original that ALSO saves the
-   * Sound to the Library on completion (CONTEXT.md § Library — "Sounds enter the
-   * Library only by an explicit user act"). Fire-and-forget: it enqueues the
-   * authenticated download and, when the bytes land, writes the `library_entries`
-   * row and records the download against the rolling quota. Unlike
-   * `stageOnAudition` it does NOT require the first-run staging consent — the
-   * click IS the consent — and it never cancel-on-skips.
+   * Explicit download that also saves the Sound to the Library once the bytes
+   * land, and records it against the rolling quota. Needs no staging consent —
+   * the click IS the consent — and never cancel-on-skips.
    *
-   * Silent no-op when signed out or when the Sound is unknown to the DB. If the
-   * Original is already on disk it just promotes it to the Library.
+   * Silent no-op when signed out or the Sound is unknown. An Original already on
+   * disk is just promoted to the Library.
    */
   downloadToLibrary(soundId: number, sound?: Sound): void
-  /** Explicitly cancel a sound's in-flight/queued staging (renderer calls this on Stop). */
   cancelStaging(soundId: number): void
-  /**
-   * Originals downloaded from Freesound within the last rolling 24 h. Backs the
-   * app's "N downloads left" quota indicator (Freesound caps this at 2,000).
-   */
+  /** Originals downloaded in the last rolling 24 h (Freesound caps this at 2,000). */
   getDownloadsInLast24h(): number
-  /** Per-sound staging status for the row indicators. */
   getStagingStatus(ids: number[]): Record<number, StagingStatus>
   /** Whether the first-run notice has been acknowledged. */
   getStagingConsent(): StagingConsent
   /** Record that the user acknowledged the first-run notice. Idempotent. */
   grantStagingConsent(): StagingConsent
-  /** Subscribe to status transitions. Returns an unsubscribe fn. */
   subscribe(listener: (change: StagingStatusChange) => void): () => void
-  /**
-   * Current on-disk footprint, split between Staged and Library bytes. Backs
-   * `core.getDiskUsage()`.
-   */
+  /** On-disk footprint, split between Staged and Library bytes. */
   getDiskUsage(): Promise<DiskUsage>
   /**
-   * Remove every Staged Original + sidecar + row to reclaim space, leaving the
-   * Library untouched and skipping any Sound with a live Drag-Out. Backs
-   * `core.clearStaged()`.
+   * Remove every Staged Original + sidecar + row, leaving the Library untouched
+   * and skipping any Sound with a live Drag-Out.
    */
   clearStaged(): Promise<EvictionOutcome>
   /** Test/introspection: the underlying queue. */
   readonly queue: DownloadQueue
-  /** Cancel everything. Called from `core.close()`. */
   close(): void
 }
 
@@ -111,23 +94,12 @@ export interface StagingControllerDeps {
   gateway: Pick<FreesoundGateway, 'downloadOriginal'>
   auth: Pick<AuthController, 'getState' | 'authorized'>
   scheduler: Scheduler
-  /** Broadcast every status change (main forwards it to the renderer). */
   onStatusChange?: (change: StagingStatusChange) => void
-  /**
-   * Called once a Sound's Original has just landed on disk. The core
-   * wires this to the peak service so waveform peaks are computed off-thread the
-   * moment the audio is available, not only when the user first looks at it.
-   */
+  /** A Sound's Original has just landed on disk; the core wires this to peak computation. */
   onOriginalReady?: (soundId: number) => void
-  /**
-   * Total-bytes budget for Staged Originals. Exceeding it after a stage triggers
-   * an LRU eviction. See `DEFAULT_STAGING_BYTE_BUDGET`.
-   */
+  /** Exceeding it after a stage triggers an LRU eviction. See `DEFAULT_STAGING_BYTE_BUDGET`. */
   byteBudget: number
-  /**
-   * Membership test for "a live Drag-Out still needs this Sound's Original".
-   * Eviction and `clearStaged` skip any Sound it reports.
-   */
+  /** Eviction and `clearStaged` skip any Sound this reports as having a live Drag-Out. */
   inFlightDrags: InFlightDrags
   /** Test seams. */
   concurrency?: number
@@ -144,11 +116,7 @@ export function createStagingController(
   /** The sound whose download is currently the "live" audition (cancel-on-skip). */
   let activeAuditionId: number | null = null
 
-  /**
-   * Sound ids whose in-flight download was started by `downloadToLibrary` — on
-   * completion these are promoted straight into the Library instead of being
-   * left Staged.
-   */
+  /** Downloads that go straight into the Library on completion, not into Staged. */
   const libraryBound = new Set<number>()
 
   function emit(change: StagingStatusChange): void {

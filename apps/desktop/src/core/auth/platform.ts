@@ -1,26 +1,18 @@
 /** What the loopback listener saw on the single request to `/callback`. */
 export interface LoopbackResult {
-  /** The `?code=` value, when the callback carried one. */
   code?: string
-  /** The `?state=` value, passed straight through for the core to verify. */
+  /** Passed straight through for the core to verify. */
   state?: string
-  /**
-   * Set when no code will arrive: `"timeout"` (the wait was aborted), an OAuth
-   * `error=` parameter value, or any other listener-side reason. The core turns
-   * this into a `SignInCancelledError`.
-   */
+  /** Set when no code will arrive: `"timeout"`, an OAuth `error=` value, or any other reason. */
   error?: string
 }
 
 export interface AwaitLoopbackCodeOptions {
-  /** Fixed redirect port. Always 8910 in production (ADR-0004). */
+  /** Always 8910 in production (ADR-0004). */
   port: number
   /** Redirect path, `"/callback"`. */
   path: string
-  /**
-   * Aborted by the core when the sign-in wait budget elapses. The listener must
-   * then stop, free the port, and resolve with `{ error: "timeout" }`.
-   */
+  /** On abort the listener must stop, free the port, and resolve `{ error: "timeout" }`. */
   signal: AbortSignal
 }
 
@@ -29,12 +21,9 @@ export interface AuthPlatform {
   openExternal(url: string): Promise<void> | void
 
   /**
-   * Bind `port`, accept exactly one request to `path`, reply with a tiny
-   * "you can close this tab" page, then shut the server down. Resolves with the
-   * captured `code`/`state`. On `signal` abort, stop and resolve
-   * `{ error: "timeout" }`. If the port cannot be bound because it is already in
-   * use, reject with an error whose `code` is `"EADDRINUSE"` — the core maps that
-   * to `LoopbackPortInUseError`.
+   * Bind `port`, accept exactly one request to `path`, reply with a "you can
+   * close this tab" page, then shut down. Rejects with `code: "EADDRINUSE"` when
+   * the port is taken — the core maps that to `LoopbackPortInUseError`.
    */
   awaitLoopbackCode(opts: AwaitLoopbackCodeOptions): Promise<LoopbackResult>
 

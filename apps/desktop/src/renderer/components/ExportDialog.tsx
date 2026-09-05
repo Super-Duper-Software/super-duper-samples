@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Sound } from '../../core/types'
+import { errorMessage } from '../../core/errorMessage'
 import type { EditEvent, EditSpec } from '../../preload'
 import { buildEditSpec, suggestedExportName } from '../lib/editSpecBuilder'
 import type { ExportDialogState } from '../lib/editSpecBuilder'
 import type { Region } from '../lib/regionGeometry'
-import { formatPreciseDuration } from '../lib/format'
 import { useLibrary } from '../store/useLibrary'
-
-const FORMATS: EditSpec['format'][] = ['wav', 'mp3', 'flac', 'ogg']
-const SAMPLE_RATES = [44100, 48000, 96000]
+import { ExportForm, FORMATS } from './export/ExportForm'
 
 type Status =
   | { kind: 'form' }
@@ -18,11 +16,9 @@ type Status =
 export interface ExportDialogProps {
   sound: Sound
   /**
-   * The name to base the `"<name> Edited"` default on and to show in the
-   * dialog — the Sound's EFFECTIVE name (`customName ?? name`), not
-   * `sound.name` alone: for an Edit being re-exported, `sound.name` is only
-   * ever the core's bare `edited` / `edited (N)` fallback (ADR-0005), never
-   * what the user actually named it.
+   * The Sound's EFFECTIVE name (`customName ?? name`): for an Edit being
+   * re-exported, `sound.name` is only ever the core's bare `edited` / `edited (N)`
+   * fallback (ADR-0005), never what the user named it.
    */
   sourceName: string
   region: Region | null
@@ -72,17 +68,18 @@ export function ExportDialog({
   }, [sound.id, sourceName])
 
   useEffect(() => {
-    const unsubscribe = window.core.onEditProgress((event: EditEvent) => {
+    return window.core.onEditProgress((event: EditEvent) => {
       if (event.parentSoundId !== sound.id) return
       if (event.status === 'progress') {
         setStatus((s) =>
-          s.kind === 'rendering' ? { kind: 'rendering', progress: event.progress } : s,
+          s.kind === 'rendering'
+            ? { kind: 'rendering', progress: event.progress }
+            : s,
         )
       } else if (event.status === 'failed' && !cancelRequested.current) {
         setStatus({ kind: 'error', message: event.error })
       }
     })
-    return unsubscribe
   }, [sound.id])
 
   const handleCancel = useCallback(() => {
@@ -124,15 +121,11 @@ export function ExportDialog({
       onClose()
     } catch (err) {
       if (cancelRequested.current) return
-      setStatus({
-        kind: 'error',
-        message: err instanceof Error ? err.message : String(err),
-      })
+      setStatus({ kind: 'error', message: errorMessage(err) })
     }
-  }, [form, region, sound.id, sound.duration, name, defaultName, onExported, onClose])
+  }, [form, region, sound.id, sound.duration, name, onExported, onClose])
 
-  const rendering = status.kind === 'rendering'
-  const durationPreview =
+  const outputDuration =
     form.trimToRegion && region
       ? Math.max(0, (region.end - region.start) * sound.duration)
       : sound.duration
@@ -166,157 +159,58 @@ export function ExportDialog({
           </div>
         )}
 
-        {rendering ? (
-          <div className="flex flex-col gap-3 p-4">
-            <p className="text-sm text-ink-muted" aria-live="polite">
-              Rendering… {Math.round(status.progress * 100)}%
-            </p>
-            <div className="h-2 overflow-hidden rounded-full bg-bg-inset">
-              <div
-                className="h-full rounded-full bg-accent transition-[width]"
-                style={{ width: `${Math.round(status.progress * 100)}%` }}
-              />
-            </div>
-            <button
-              type="button"
-              onClick={handleCancel}
-              className="self-start rounded border border-line px-2 py-1 text-xs text-ink-muted hover:border-line-strong hover:text-ink"
-            >
-              Cancel
-            </button>
-          </div>
+        {status.kind === 'rendering' ? (
+          <RenderingProgress
+            progress={status.progress}
+            onCancel={handleCancel}
+          />
         ) : (
-          <div className="flex flex-col gap-3 p-4 text-sm">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={form.trimToRegion}
-                disabled={!region}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, trimToRegion: e.target.checked }))
-                }
-              />
-              Trim to the marked region
-              {!region && (
-                <span className="text-xs text-ink-faint">(no region marked)</span>
-              )}
-            </label>
-
-            <p className="text-xs tabular-nums text-ink-faint">
-              Output duration: {formatPreciseDuration(durationPreview)}
-            </p>
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-ink-muted">Format</span>
-                <select
-                  value={form.format}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      format: e.target.value as EditSpec['format'],
-                    }))
-                  }
-                  className="rounded border border-line bg-bg px-2 py-1 text-ink"
-                >
-                  {FORMATS.map((f) => (
-                    <option key={f} value={f}>
-                      {f.toUpperCase()}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-ink-muted">Sample rate</span>
-                <select
-                  value={form.sampleRate ?? 'source'}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      sampleRate:
-                        e.target.value === 'source'
-                          ? undefined
-                          : Number(e.target.value),
-                    }))
-                  }
-                  className="rounded border border-line bg-bg px-2 py-1 text-ink"
-                >
-                  <option value="source">Same as source</option>
-                  {SAMPLE_RATES.map((r) => (
-                    <option key={r} value={r}>
-                      {r.toLocaleString()} Hz
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-ink-muted">Channels</span>
-                <select
-                  value={form.channels ?? 'source'}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      channels:
-                        e.target.value === 'source'
-                          ? undefined
-                          : (Number(e.target.value) as 1 | 2),
-                    }))
-                  }
-                  className="rounded border border-line bg-bg px-2 py-1 text-ink"
-                >
-                  <option value="source">Same as source</option>
-                  <option value={1}>Mono</option>
-                  <option value={2}>Stereo</option>
-                </select>
-              </label>
-
-              <label className="flex items-end gap-2 pb-1.5">
-                <input
-                  type="checkbox"
-                  checked={form.normalize}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, normalize: e.target.checked }))
-                  }
-                />
-                <span className="text-xs text-ink-muted">Loudness-normalise</span>
-              </label>
-            </div>
-
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-ink-muted">Name</span>
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => {
-                  nameTouched.current = true
-                  setName(e.target.value)
-                }}
-                placeholder={defaultName}
-                className="rounded border border-line bg-bg px-2 py-1 text-ink"
-              />
-            </label>
-
-            <div className="mt-1 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleClose}
-                className="rounded border border-line px-3 py-1.5 text-ink-muted hover:border-line-strong hover:text-ink"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleConfirm()}
-                className="rounded border border-accent bg-accent px-3 py-1.5 text-accent-on hover:bg-accent-hover"
-              >
-                Export
-              </button>
-            </div>
-          </div>
+          <ExportForm
+            form={form}
+            setForm={setForm}
+            hasRegion={!!region}
+            outputDuration={outputDuration}
+            name={name}
+            defaultName={defaultName}
+            onNameChange={(next) => {
+              nameTouched.current = true
+              setName(next)
+            }}
+            onCancel={handleClose}
+            onConfirm={() => void handleConfirm()}
+          />
         )}
       </div>
+    </div>
+  )
+}
+
+function RenderingProgress({
+  progress,
+  onCancel,
+}: {
+  progress: number
+  onCancel: () => void
+}) {
+  const percent = Math.round(progress * 100)
+  return (
+    <div className="flex flex-col gap-3 p-4">
+      <p className="text-sm text-ink-muted" aria-live="polite">
+        Rendering… {percent}%
+      </p>
+      <div className="h-2 overflow-hidden rounded-full bg-bg-inset">
+        <div
+          className="h-full rounded-full bg-accent transition-[width]"
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="self-start rounded border border-line px-2 py-1 text-xs text-ink-muted hover:border-line-strong hover:text-ink"
+      >
+        Cancel
+      </button>
     </div>
   )
 }

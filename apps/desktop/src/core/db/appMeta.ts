@@ -19,5 +19,5 @@ export function setMeta(db: DB, key: string, value: string): void {
 /** Epoch ms at which the user acknowledged the staging notice. */
 export const STAGING_CONSENT_KEY = 'staging_consent_at'
 
-/** Ticket 18 — the persisted shell state blob (window bounds, last view/search/selection). */
+/** The persisted shell state blob (window bounds, last view/search/selection). */
 export const UI_STATE_KEY = 'ui_state'

@@ -53,8 +53,8 @@ export interface TransportState {
   currentSoundId: number | null
   /**
    * The full Sound now loaded into the transport, for views that need more than
-   * its id — the ticket-12 zoomable waveform in the transport bar. Coarse state,
-   * flips only on a track change; never on a playhead frame.
+   * its id (the zoomable waveform in the transport bar). Coarse state: flips only
+   * on a track change, never on a playhead frame.
    */
   currentSound: Sound | null
   loop: boolean

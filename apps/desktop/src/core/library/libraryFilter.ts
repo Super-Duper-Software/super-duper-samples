@@ -3,7 +3,7 @@ import type { LibraryFilter, LibrarySound, LicenseFilter } from '../types'
 /**
  * The `sounds.license_name` values (as derived by `gateway/mapRawSound`) each
  * `LicenseFilter` admits. `'commercial'` admits ONLY CC0 + CC-BY — the same
- * "usable in commercial work" semantics as the ticket-15 search filter.
+ * "usable in commercial work" semantics as the search filter.
  */
 export const LICENSE_FILTER_NAMES: Record<LicenseFilter, readonly string[]> = {
   commercial: ['CC0', 'CC-BY'],
@@ -96,9 +96,8 @@ export function hasLibraryFilter(filter: LibraryFilter | undefined): boolean {
 }
 
 /**
- * Drop empty entries so an all-empty filter round-trips as `{}` (mirrors the
- * ticket-15 `normalizeFilter`). Used before persisting and before the cache-free
- * `filterLibrary` read.
+ * Drop empty entries so an all-empty filter round-trips as `{}`, mirroring the
+ * search side's `normalizeFilter`.
  */
 export function normaliseLibraryFilter(
   filter: LibraryFilter | undefined,

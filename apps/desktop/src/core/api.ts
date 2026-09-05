@@ -41,13 +41,10 @@ export interface CoreDeps {
   dbPath: string
   /** Debounce window for `searchDebounced`, ms. */
   debounceMs?: number
-  /** Where the app's own log is written. Omitted → `NULL_LOG_SINK`, nothing is written. */
+  /** Omitted → `NULL_LOG_SINK`, nothing is written. */
   logSink?: LogSink
 
-  /**
-   * System browser, loopback listener and `safeStorage`. Omitted → the auth
-   * commands throw and `getAuthState()` reports `signedOut`.
-   */
+  /** Omitted → the auth commands throw and `getAuthState()` reports `signedOut`. */
   authPlatform?: AuthPlatform
   /** Timer seam for proactive refresh + sign-in timeout. Defaults to real timers. */
   scheduler?: Scheduler
@@ -58,20 +55,13 @@ export interface CoreDeps {
   onStagingStatusChange?: (change: StagingStatusChange) => void
   /** Cap on concurrent Original downloads. Defaults to `DOWNLOAD_CONCURRENCY`. */
   stagingConcurrency?: number
-  /** Retry attempts after a transient download failure. */
   stagingMaxRetries?: number
   /** Backoff before each retry, ms. */
   stagingBackoffMs?: readonly number[]
-  /**
-   * Cap on total bytes of Staged Originals on disk. Exceeding it evicts
-   * least-recently-accessed Staged Sounds; Library Sounds are never evicted.
-   */
+  /** Cap on total Staged bytes; exceeding it evicts LRU. Library Sounds are never evicted. */
   stagingByteBudget?: number
 
-  /**
-   * The OS drag-and-drop boundary. Omitted → `startDrag` throws and
-   * `getDragCapabilities()` reports no drag support.
-   */
+  /** Omitted → `startDrag` throws and `getDragCapabilities()` reports no drag support. */
   dragHost?: DragHost
   /** Bundled fallback drag icon, used when the renderer supplies no waveform image. */
   dragIconFallbackPath?: string
@@ -96,9 +86,9 @@ export interface CoreDeps {
 /** The command API. This interface *is* the IPC contract; the bridge forwards it verbatim. */
 export interface Core {
   /**
-   * Full-text search through the SQLite cache. A hit costs zero gateway calls; a
-   * miss costs one, persists every Sound, and prefetches the next page. Failure
-   * throws `ThrottledError` / `GatewayError` / `NetworkError` — never an empty list.
+   * Full-text search through the SQLite cache. A miss costs one gateway call,
+   * persists every Sound and prefetches the next page. Failure throws
+   * `ThrottledError` / `GatewayError` / `NetworkError` — never an empty list.
    */
   search(query: string, opts?: SearchOptions): Promise<SearchResult>
 
@@ -111,10 +101,7 @@ export interface Core {
   /** Persist the sort + filter. Runs no search — the renderer re-queries itself. */
   setSearchPrefs(prefs: SearchPrefs): SearchPrefs
 
-  /**
-   * The persisted shell state — window bounds plus the last view, search text,
-   * open Collection and selected Sound. `EMPTY_UI_STATE` when nothing is saved.
-   */
+  /** Window bounds, last view, search text, open Collection and selected Sound. */
   getUiState(): UiState
 
   /** Persist a patch of shell state. `undefined` keys keep their stored value. */
@@ -126,7 +113,6 @@ export interface Core {
   /** The most recent `maxLines` (default 500) lines of the log, oldest first. */
   readLog(opts?: { maxLines?: number }): string[]
 
-  /** Append one line to the app log. */
   log(level: LogLevel, message: string, meta?: Record<string, unknown>): void
 
   /**
@@ -135,12 +121,11 @@ export interface Core {
    */
   signIn(): Promise<AuthState>
 
-  /** Sign out: clear the stored tokens only. The Library is left untouched. */
+  /** Clear the stored tokens only. The Library is left untouched. */
   signOut(): Promise<void>
 
   getAuthState(): AuthState
 
-  /** Subscribe to auth-state transitions. Returns an unsubscribe function. */
   subscribeAuthState(listener: (state: AuthState) => void): () => void
 
   /**
@@ -152,7 +137,7 @@ export interface Core {
 
   /**
    * User-initiated download that also saves the Sound to the Library once the
-   * bytes land. Needs no consent and never cancels on skip; counts against the
+   * bytes land. Needs no consent, never cancels on skip, and counts against the
    * rolling 24 h quota.
    */
   downloadToLibrary(soundId: number, sound?: Sound): void
@@ -160,10 +145,9 @@ export interface Core {
   /** Originals downloaded from Freesound in the last rolling 24 h (their cap is 2,000). */
   getDownloadsInLast24h(): number
 
-  /** Cancel a sound's queued/in-flight staged download. */
   cancelStaging(soundId: number): void
 
-  /** Per-sound staging status: `not-started | queued | downloading | ready | failed`. */
+  /** Per-sound `not-started | queued | downloading | ready | failed`. */
   getStagingStatus(ids: number[]): Record<number, StagingStatus>
 
   /** Whether the first-run "auditioning downloads sounds" notice was acknowledged. */
@@ -172,10 +156,7 @@ export interface Core {
   /** Record that the user acknowledged the first-run notice. Idempotent. */
   grantStagingConsent(): StagingConsent
 
-  /** Subscribe to per-sound staging status transitions. Returns an unsubscribe function. */
-  subscribeStagingStatus(
-    listener: (change: StagingStatusChange) => void,
-  ): () => void
+  subscribeStagingStatus(listener: (change: StagingStatusChange) => void): () => void
 
   /**
    * Begin an OS drag-out. Hardlinks each Original under a human-readable name;
@@ -190,26 +171,23 @@ export interface Core {
   /** `multiSound` is true only where multi-file drag is verified to deliver every file. */
   getDragCapabilities(): { multiSound: boolean }
 
-  /**
-   * Signal that an OS drag-out has finished (from `dragend`, whatever the
-   * outcome). Releases the eviction hold. Safe to call with unknown ids.
-   */
+  /** Signal that a drag-out has finished (from `dragend`, whatever the outcome). */
   endDrag(soundIds: number | readonly number[]): void
 
   /** On-disk footprint in bytes, split by intent: `staged`, `library`, `total`. */
   getDiskUsage(): Promise<DiskUsage>
 
   /**
-   * Delete every Staged Original, sidecar and row to reclaim space now. The
-   * Library is untouched; a Sound with a live Drag-Out is skipped.
+   * Delete every Staged Original, sidecar and row. The Library is untouched; a
+   * Sound with a live Drag-Out is skipped.
    */
   clearStaged(): Promise<EvictionOutcome>
 
   /**
-   * Save a Sound to the Library. A pure DB write — the Original is never moved
-   * or copied. Idempotent (keeps the original `saved_at`). A `sounds` row must
-   * exist: pass the `Sound` or this throws. `collectionIds` files it into those
-   * Collections in the same transaction; each must exist or this throws first.
+   * A pure DB write — the Original is never moved or copied. Idempotent (keeps
+   * the original `saved_at`). A `sounds` row must exist: pass the `Sound` or this
+   * throws. `collectionIds` files it into those Collections in the same
+   * transaction; each must exist or this throws first.
    */
   saveToLibrary(
     soundId: number,
@@ -220,16 +198,10 @@ export interface Core {
   /** Batch "is this in the Library?" for search-result badging. */
   getLibraryMembership(ids: number[]): Record<number, boolean>
 
-  /**
-   * The Library as `LibrarySound[]`, ordered by date saved (`desc` by default).
-   * Makes no gateway call — works offline and while signed out.
-   */
+  /** Ordered by date saved (`desc` by default). Works offline and while signed out. */
   listLibrary(opts?: { sort?: 'savedAt'; dir?: SortDir }): LibrarySound[]
 
-  /**
-   * The Library narrowed by a structured filter, composing with AND. Served
-   * entirely from the database. An empty filter is identical to `listLibrary`.
-   */
+  /** `listLibrary` narrowed by a structured filter, composing with AND, served from the DB. */
   filterLibrary(
     filter: LibraryFilter,
     opts?: { sort?: 'savedAt'; dir?: SortDir },
@@ -237,9 +209,8 @@ export interface Core {
 
   /**
    * Give a Library Sound the user's own name (`null` / `''` clears it). Writes
-   * only the overlay — author, License and Freesound linkage stay intact. For an
-   * Edit the name is also mirrored into its sidecar (best-effort). Throws if the
-   * Sound is not in the Library.
+   * only the overlay; for an Edit the name is also mirrored into its sidecar
+   * (best-effort). Throws if the Sound is not in the Library.
    */
   setCustomName(soundId: number, customName: string | null): void
 
@@ -253,12 +224,11 @@ export interface Core {
   /** The persisted Library filter; `{}` when nothing is saved or the blob is bad. */
   getLibraryFilter(): LibraryFilter
 
-  /** Persist the Library filter. Runs no query. */
   setLibraryFilter(filter: LibraryFilter): LibraryFilter
 
   /**
    * Remove a Sound from the Library and unlink its Original + sidecar. The
-   * `sounds` metadata row is kept. Makes no gateway call.
+   * `sounds` metadata row is kept.
    */
   deleteFromLibrary(soundId: number): Promise<void>
 
@@ -268,34 +238,28 @@ export interface Core {
   /** A Sound's page on freesound.org, or `null` if the core has no metadata for it. */
   getFreesoundUrl(soundId: number): string | null
 
-  /** Create a named Collection. The name is trimmed; empty throws. Names need not be unique. */
+  /** The name is trimmed; empty throws. Names need not be unique. */
   createCollection(name: string): CollectionSummary
 
-  /** Rename a Collection. The name is trimmed; empty throws. No-op if the id is unknown. */
+  /** The name is trimmed; empty throws. No-op if the id is unknown. */
   renameCollection(collectionId: number, name: string): void
 
-  /**
-   * Delete a Collection. Members stay in the Library and in any other
-   * Collection. No-op if the id is unknown.
-   */
+  /** Members stay in the Library and in any other Collection. No-op if the id is unknown. */
   deleteCollection(collectionId: number): void
 
   /**
-   * Add Sounds to a Collection in one transaction. Idempotent. Throws if the
-   * Collection does not exist or any Sound is not in the Library.
+   * One transaction, idempotent. Throws if the Collection does not exist or any
+   * Sound is not in the Library.
    */
   addToCollection(collectionId: number, soundIds: readonly number[]): void
 
-  /** Remove a Sound from a Collection. It stays in the Library and other Collections. */
+  /** The Sound stays in the Library and in other Collections. */
   removeFromCollection(collectionId: number, soundId: number): void
 
   /** Every Collection with its member count, ordered by name. */
   listCollections(): CollectionSummary[]
 
-  /**
-   * A Collection's Sounds as `LibrarySound[]`, most-recently-added first.
-   * Makes no gateway call.
-   */
+  /** A Collection's Sounds, most-recently-added first. */
   listCollectionSounds(
     collectionId: number,
     opts?: { dir?: SortDir },
@@ -305,10 +269,10 @@ export interface Core {
   getCollectionsForSounds(soundIds: number[]): Record<number, CollectionRef[]>
 
   /**
-   * Generate an Attribution Manifest for a Collection — a snapshot rendered from
-   * the membership at the moment of the call. `manifest.text` is the document to
-   * copy verbatim. An empty Collection yields a clear message, not a blank
-   * document. Throws if the Collection does not exist.
+   * An Attribution Manifest for a Collection, rendered from the membership at
+   * the moment of the call. `manifest.text` is the document to copy verbatim; an
+   * empty Collection yields a clear message, not a blank document. Throws if the
+   * Collection does not exist.
    */
   generateManifest(collectionId: number): Manifest
 
@@ -324,27 +288,18 @@ export interface Core {
    */
   requestPeaks(soundId: number): void
 
-  /** Subscribe to peaks status transitions (`ready` / `unavailable`). */
-  subscribePeaksStatus(
-    listener: (change: PeaksStatusChange) => void,
-  ): () => void
+  subscribePeaksStatus(listener: (change: PeaksStatusChange) => void): () => void
 
-  /**
-   * The startup health verdict captured before the database was opened: whether
-   * the DB file was usable, how many sidecars exist, and whether to offer a rebuild.
-   */
+  /** The startup health verdict captured before the database was opened. */
   getStartupAssessment(): StartupAssessment
 
   /**
    * Reconstruct `sounds` rows and Library membership from `<id>.json` sidecars
-   * alone. The scan runs off-thread and reports progress via
-   * `subscribeRebuildProgress`. Returns what was `recovered`, `orphanAudio`
-   * (reported, never deleted), `orphanSidecars` (removed), `malformed`, and
-   * `notRecoverable`. Safe to re-run.
+   * alone. Runs off-thread, reporting via `subscribeRebuildProgress`. Safe to
+   * re-run. `orphanAudio` is reported but never deleted; `orphanSidecars` are removed.
    */
   rebuildFromSidecars(): Promise<RebuildReport>
 
-  /** Subscribe to sidecar-scan progress during a `rebuildFromSidecars` run. */
   subscribeRebuildProgress(listener: (p: RebuildProgress) => void): () => void
 
   /**
@@ -361,7 +316,6 @@ export interface Core {
   /** Abort an in-flight `createEdit` for this parent. No-op if none is running. */
   cancelEdit(parentSoundId: number): void
 
-  /** Subscribe to Edit render progress and terminal failure. */
   subscribeEditProgress(listener: (event: EditEvent) => void): () => void
 
   /** Release the database handle and cancel any pending timers. */

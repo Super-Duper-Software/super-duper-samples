@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
 import { useViewport } from '../lib/viewport'
 import { useTransport } from '../store/useTransport'
+import { RailTransportMenu } from './RailTransportMenu'
 import { Waveform } from './Waveform'
 
 function statusLabel(status: string, hasSound: boolean): string {
@@ -15,6 +15,26 @@ function statusLabel(status: string, hasSound: boolean): string {
     default:
       return 'Nothing playing'
   }
+}
+
+/** Opens ko-fi.com/sparlos in the user's browser; no Ko-fi code runs in the renderer. */
+function SupportButton({ compact }: { compact: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={() => void window.core.openSupportPage()}
+      title="Support this app on Ko-fi"
+      aria-label="Support this app on Ko-fi"
+      className={
+        compact
+          ? 'shrink-0 rounded border border-accent-2 px-2 py-1 text-accent-2-text hover:bg-surface-raised'
+          : 'ml-auto rounded border border-accent-2 px-2 py-1 text-accent-2-text hover:bg-surface-raised'
+      }
+    >
+      <span aria-hidden>♥</span>
+      {!compact && ' Support'}
+    </button>
+  )
 }
 
 export function TransportBar() {
@@ -37,13 +57,6 @@ export function TransportBar() {
     <div className="shrink-0 border-t border-line bg-bg">
       {currentSound && (
         <div className="border-b border-line px-4 pt-2">
-          {/*
-            Ticket 12: the full, zoomable, scrubbable waveform for the sound being
-            auditioned. Draws from computed peaks once the Original is on disk and
-            decoded; until then it shows the Freesound waveform image, upgrading
-            in place with no layout shift. Wheel to zoom, double-click to reset,
-            click / drag to seek (accurate while zoomed).
-          */}
           <Waveform
             key={currentSound.id}
             soundId={currentSound.id}
@@ -81,19 +94,7 @@ export function TransportBar() {
             {currentSound?.name ?? statusLabel(status, hasSound)}
           </span>
 
-          {/*
-            Always-present way to support the app — glyph only in rail; the
-            tooltip is kept. Opens ko-fi.com/sparlos in the user's browser.
-          */}
-          <button
-            type="button"
-            onClick={() => void window.core.openSupportPage()}
-            title="Support this app on Ko-fi"
-            aria-label="Support this app on Ko-fi"
-            className="shrink-0 rounded border border-accent-2 px-2 py-1 text-accent-2-text hover:bg-surface-raised"
-          >
-            <span aria-hidden>♥</span>
-          </button>
+          <SupportButton compact />
 
           <RailTransportMenu
             hasSound={hasSound}
@@ -167,137 +168,7 @@ export function TransportBar() {
             Auto-advance
           </label>
 
-          {/*
-            Always-present way to support the app — the startup splash can be
-            dismissed for good, this cannot. Opens ko-fi.com/sparlos in the
-            user's browser (no Ko-fi code in the renderer; CSP untouched).
-          */}
-          <button
-            type="button"
-            onClick={() => void window.core.openSupportPage()}
-            title="Support this app on Ko-fi"
-            className="ml-auto rounded border border-accent-2 px-2 py-1 text-accent-2-text hover:bg-surface-raised"
-          >
-            <span aria-hidden>♥</span> Support
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/**
- * The rail transport `⋯` — a small upward-opening sub-panel (spec 0003 allows
- * "a small always-open sub-panel" for the volume slider, which `OverflowMenu`
- * cannot host). Closes on Escape / outside click; every control inside is a
- * native element so Tab / arrows / Space reach all of it.
- */
-function RailTransportMenu({
-  hasSound,
-  stop,
-  loop,
-  setLoop,
-  autoAdvance,
-  setAutoAdvance,
-  volume,
-  setVolume,
-}: {
-  hasSound: boolean
-  stop: () => void
-  loop: boolean
-  setLoop: (v: boolean) => void
-  autoAdvance: boolean
-  setAutoAdvance: (v: boolean) => void
-  volume: number
-  setVolume: (v: number) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const rootRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  return (
-    <div ref={rootRef} className="relative shrink-0">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-label="More playback controls"
-        title="More playback controls"
-        className="inline-flex items-center justify-center rounded border border-line px-1.5 py-0.5 text-[13px] leading-none text-ink-muted hover:border-line-strong hover:text-ink"
-      >
-        <span aria-hidden>⋯</span>
-      </button>
-
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Playback controls"
-          className="absolute bottom-full right-0 z-30 mb-1 w-52 rounded border border-line bg-surface p-2 text-xs text-ink shadow-xl"
-        >
-          <button
-            type="button"
-            onClick={() => {
-              stop()
-              setOpen(false)
-            }}
-            disabled={!hasSound}
-            className="mb-2 w-full rounded border border-line px-2 py-1 text-left enabled:hover:border-line-strong disabled:opacity-40"
-          >
-            Stop
-          </button>
-
-          <label className="mb-2 flex items-center gap-1.5">
-            <input
-              type="checkbox"
-              checked={loop}
-              onChange={(e) => setLoop(e.target.checked)}
-              className="accent-[var(--sd-accent-2)]"
-            />
-            Loop
-          </label>
-
-          <label className="mb-2 flex items-center gap-1.5">
-            <input
-              type="checkbox"
-              checked={autoAdvance}
-              onChange={(e) => setAutoAdvance(e.target.checked)}
-              className="accent-[var(--sd-accent-2)]"
-            />
-            Auto-advance
-          </label>
-
-          <label className="flex items-center gap-2">
-            <span className="text-ink-faint">Vol</span>
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={volume}
-              onChange={(e) => setVolume(Number(e.target.value))}
-              className="h-1 flex-1 accent-[var(--sd-accent-2)]"
-              aria-label="Audition volume"
-            />
-            <span className="w-8 tabular-nums text-ink-faint">
-              {Math.round(volume * 100)}
-            </span>
-          </label>
+          <SupportButton compact={false} />
         </div>
       )}
     </div>

@@ -1,9 +1,7 @@
 /**
- * The OAuth grant is dead and cannot be recovered by refreshing: the Worker
- * answered `{ error: "reauthorize" }` (Freesound said `invalid_grant`, the code
- * or refresh token expired, was revoked, or the client is wrong). The only cure
- * is a fresh interactive sign-in. The core clears the stored refresh token and
- * transitions to `signedOut` with `reauthRequired: true`.
+ * The grant is dead and refreshing cannot recover it (the Worker answered
+ * `{ error: "reauthorize" }`). The only cure is a fresh interactive sign-in; the
+ * core clears the stored refresh token and sets `reauthRequired`.
  */
 export class ReauthRequiredError extends Error {
   /** Upstream Freesound HTTP status, as reported by the Worker (if any). */
@@ -19,11 +17,9 @@ export class ReauthRequiredError extends Error {
 }
 
 /**
- * A transient failure exchanging or refreshing a token: the Worker answered
- * `{ error: "retry" }` (Freesound 5xx / 429, or a network error reaching it).
- * The grant is still good; the caller may try again later with backoff. The core
- * never loops on this — a proactive refresh reschedules once, a 401-interceptor
- * refresh simply propagates it and stays signed in.
+ * A transient token exchange/refresh failure (the Worker answered
+ * `{ error: "retry" }`). The grant is still good. The core never loops on this:
+ * a proactive refresh reschedules once, a 401-interceptor refresh propagates it.
  */
 export class RetryableTokenError extends Error {
   readonly upstreamStatus?: number
@@ -38,10 +34,9 @@ export class RetryableTokenError extends Error {
 }
 
 /**
- * The loopback listener could not bind the fixed OAuth redirect port, because
- * another process already holds it. Freesound registers exactly one redirect URI
- * (`http://localhost:8910/callback`, ADR-0004) so the port cannot be varied —
- * the user has to free it. The message names the port and the fix.
+ * Another process holds the fixed OAuth redirect port. Exactly one redirect URI
+ * is registered with Freesound (ADR-0004), so the port cannot be varied — the
+ * user has to free it.
  */
 export class LoopbackPortInUseError extends Error {
   readonly port: number
@@ -56,9 +51,8 @@ export class LoopbackPortInUseError extends Error {
 }
 
 /**
- * The `state` value on the OAuth callback did not match the one this app
- * generated for the sign-in it started. The response is discarded — it may be a
- * stale redirect or a forgery — and sign-in fails without exchanging anything.
+ * The callback's `state` did not match the one generated for this sign-in — a
+ * stale redirect or a forgery. Nothing is exchanged.
  */
 export class OAuthStateMismatchError extends Error {
   constructor() {
@@ -69,13 +63,9 @@ export class OAuthStateMismatchError extends Error {
   }
 }
 
-/**
- * Sign-in ended without an authorization code: the user closed the tab, denied
- * access, or the wait timed out. Not an error condition the user needs to act on
- * beyond trying again.
- */
+/** Sign-in ended without a code: the tab was closed, access denied, or it timed out. */
 export class SignInCancelledError extends Error {
-  /** Raw reason from the loopback listener, when it supplied one (`timeout`, an OAuth `error=` param, …). */
+  /** Raw reason from the listener (`timeout`, an OAuth `error=` param, …). */
   readonly reason?: string
 
   constructor(reason?: string) {

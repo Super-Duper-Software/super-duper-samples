@@ -1,48 +1,33 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { useMenuPlacement } from './useMenuPlacement'
 
 export interface OverflowMenuItem {
-  /** Visible row label. */
   label: string
   /** Run when the item is activated (click, Enter or Space). */
   onSelect: () => void
-  /** Optional leading glyph / icon node, rendered before the label. */
   icon?: ReactNode
   /** Render with the destructive style (e.g. "Remove"). */
   destructive?: boolean
   /** Greyed out and non-interactive; skipped by keyboard navigation. */
   disabled?: boolean
   /**
-   * This item opens a nested picker of its own (e.g. `CollectionMenu`). The
-   * menu is left open after `onSelect` runs so that step can take over; the
-   * caller is responsible for closing the flow.
+   * This item opens a nested picker of its own. The menu stays open after
+   * `onSelect` so that step can take over; the caller closes the flow.
    */
   opensNestedPicker?: boolean
-  /**
-   * Explicit "keep the menu open after this item runs". Same effect as
-   * `opensNestedPicker`; use whichever reads better at the call site.
-   */
+  /** Same effect as `opensNestedPicker`; use whichever reads better at the call site. */
   keepOpen?: boolean
 }
 
 export interface OverflowMenuProps {
-  /** The menu items, top to bottom. */
   items: OverflowMenuItem[]
-  /** Accessible name for the trigger and the menu. Defaults to "More actions". */
+  /** Accessible name for the trigger and the menu. */
   label?: string
   /** Extra classes for the trigger button (replaces the default styling). */
   className?: string
-  /** Tooltip for the trigger. Defaults to `label`. */
   title?: string
-  /** Notified when the menu opens (true) or closes (false). */
   onOpenChange?: (open: boolean) => void
 }
 
@@ -60,10 +45,17 @@ export function OverflowMenu({
 }: OverflowMenuProps) {
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
+
+  const pos = useMenuPlacement({
+    open,
+    width: PANEL_WIDTH,
+    triggerRef,
+    panelRef,
+    remeasureKey: items.length,
+  })
 
   const firstEnabled = useMemo(
     () => items.findIndex((i) => !i.disabled),
@@ -85,37 +77,7 @@ export function OverflowMenu({
     [onOpenChange],
   )
 
-  const close = useCallback(() => {
-    setOpenState(false)
-  }, [setOpenState])
-
-  useLayoutEffect(() => {
-    if (!open) {
-      setPos(null)
-      return
-    }
-    const place = () => {
-      const t = triggerRef.current?.getBoundingClientRect()
-      if (!t) return
-      const panelH = panelRef.current?.offsetHeight ?? 0
-      const below = t.bottom + 4
-      const flip = panelH > 0 && below + panelH > window.innerHeight
-      setPos({
-        top: flip ? Math.max(4, t.top - 4 - panelH) : below,
-        left: Math.max(
-          4,
-          Math.min(t.right - PANEL_WIDTH, window.innerWidth - PANEL_WIDTH - 4),
-        ),
-      })
-    }
-    place()
-    window.addEventListener('scroll', place, true)
-    window.addEventListener('resize', place)
-    return () => {
-      window.removeEventListener('scroll', place, true)
-      window.removeEventListener('resize', place)
-    }
-  }, [open, items.length])
+  const close = useCallback(() => setOpenState(false), [setOpenState])
 
   useEffect(() => {
     if (!open) return
@@ -180,12 +142,8 @@ export function OverflowMenu({
     (index: number) => {
       const item = items[index]
       if (!item || item.disabled) return
-      if (keepsMenuOpen(item)) {
-        item.onSelect()
-        return
-      }
       item.onSelect()
-      close()
+      if (!keepsMenuOpen(item)) close()
     },
     [items, close],
   )
@@ -261,9 +219,7 @@ export function OverflowMenu({
             className="z-50 rounded border border-line bg-surface p-1 text-ink shadow-xl"
           >
             {items.length === 0 && (
-              <p className="px-2 py-1.5 text-[11px] text-ink-faint">
-                No actions.
-              </p>
+              <p className="px-2 py-1.5 text-[11px] text-ink-faint">No actions.</p>
             )}
             {items.map((item, i) => (
               <button

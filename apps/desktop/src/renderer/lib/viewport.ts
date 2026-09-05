@@ -2,18 +2,14 @@ import { useSyncExternalStore } from 'react'
 
 /**
  * The one flip point. A viewport at or below this CSS width is "rail"; strictly
- * above it is "wide". Later tickets import this to keep any incidental Tailwind
- * `max-[...]` tweak in step with the JS branch.
+ * above it is "wide". Import it rather than repeating the number, so any Tailwind
+ * `max-[...]` tweak stays in step with the JS branch.
  */
 export const RAIL_MAX_WIDTH = 760
 
 export type Layout = 'wide' | 'rail'
 
-/**
- * Which layout a given viewport width resolves to. Pure — the single seam every
- * later ticket branches on. `width <= RAIL_MAX_WIDTH` is `'rail'`,
- * `width >= RAIL_MAX_WIDTH + 1` is `'wide'`.
- */
+/** Pure — the single seam layout branches on. */
 export function layoutForWidth(width: number): Layout {
   return width <= RAIL_MAX_WIDTH ? 'rail' : 'wide'
 }

@@ -211,8 +211,7 @@ export function ResultRowWide({ row }: { row: RowModel }) {
 
       <RowMenu row={row} />
 
-      {/* Fixed-width licence slot, always rendered so the controls to its left
-          line up from row to row. */}
+      {/* Fixed-width licence slot: always rendered, so rows stay aligned. */}
       <div className="flex w-32 shrink-0 items-center">
         {sound.license.name.includes('NC') ? (
           <span

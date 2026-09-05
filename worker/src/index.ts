@@ -128,7 +128,7 @@ function rateLimit(request: Request, env: Env): Response | null {
 
 /**
  * POST the form to Freesound and translate the outcome into a response the
- * ticket-07 client can branch on:
+ * client can branch on:
  *
  *   { error: "retry",       upstream_status, detail }  -> transient; try again
  *   { error: "reauthorize", upstream_status, detail }  -> code/token dead; sign in again

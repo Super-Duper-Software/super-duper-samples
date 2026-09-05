@@ -140,10 +140,9 @@ export function insertEditSoundRow(db: DB, p: InsertEditSoundParams): void {
 }
 
 /**
- * The id of an already-recovered Edit at this exact file path, if any (ticket
- * 06). Ids are re-minted on every rebuild, so a sidecar's OLD id cannot be used
- * to detect "already recovered" — the file path is the only thing stable
- * across runs.
+ * The id of an already-recovered Edit at this exact file path, if any. Ids are
+ * re-minted on every rebuild, so a sidecar's old id cannot detect "already
+ * recovered" — the file path is the only thing stable across runs.
  */
 export function findEditIdByLocalPath(db: DB, localPath: string): number | null {
   const row = db

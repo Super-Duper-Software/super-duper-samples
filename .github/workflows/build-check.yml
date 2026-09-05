@@ -7,10 +7,11 @@
 
 name: build-check
 
-on:
-  pull_request:
-  push:
-    branches: [main]
+# disable for now before public to save on private build minutes
+# on:
+#   pull_request:
+#   push:
+#     branches: [main]
 
 jobs:
   pack-dir:

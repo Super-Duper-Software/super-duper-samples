@@ -12,7 +12,7 @@
 // sidecar exists too" — a half-finished download is never seen as complete.
 
 import { randomBytes } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { EditSpec, Sound } from '../types'
@@ -24,8 +24,11 @@ export const CONTENT_DIRNAME = 'content'
  * Bump when the sidecar shape changes so ticket 14 can migrate old files.
  * v2 (ticket 01, ADR-0005) adds the optional `derivedFrom` / `editSpec` fields
  * for an Edit's sidecar; every existing field is unchanged.
+ * v3 adds the optional `customName` field so an Edit's user-chosen name — its
+ * only real name, ADR-0005 — survives a Library rebuild. It is kept in sync by
+ * `writeEditSidecarCustomName` on every rename; every existing field is unchanged.
  */
-export const SIDECAR_SCHEMA_VERSION = 2
+export const SIDECAR_SCHEMA_VERSION = 3
 
 /**
  * The sidecar document. Everything ticket 14 needs to reconstruct a `sounds` row
@@ -50,6 +53,14 @@ export interface Sidecar {
   derivedFrom?: number
   /** The spec this Edit was rendered from — set only for an Edit's sidecar. */
   editSpec?: EditSpec
+  /**
+   * The user's own name for this item (`library_entries.custom_name`), mirrored
+   * here so a rebuild can restore it. For an Edit this IS its name (ADR-0005):
+   * `sound.name` is only the bare `edited` / `edited (N)` placeholder the core
+   * mints, so without this a rebuilt Edit comes back called "edited". Absent /
+   * `null` means the user has not named it.
+   */
+  customName?: string | null
 }
 
 /** Lower-cased, dot-free extension for a Sound, from its Freesound `type`. */
@@ -186,6 +197,7 @@ export async function finalizeEditFiles(
   tmpOriginalPath: string,
   byteSize: number,
   now: number,
+  customName: string | null = null,
 ): Promise<WriteEditResult> {
   await mkdir(paths.dir, { recursive: true })
 
@@ -204,6 +216,7 @@ export async function finalizeEditFiles(
     sound: editSound,
     derivedFrom: parentSoundId,
     editSpec,
+    customName,
   }
 
   const tag = randomBytes(6).toString('hex')
@@ -222,9 +235,41 @@ export async function finalizeEditFiles(
   return { byteSize, sidecar }
 }
 
+/** The sidecar path beside an Edit's Original (`…/foo.wav` -> `…/foo.json`). */
+function editSidecarPath(localPath: string): string {
+  return localPath.replace(/\.[^./\\]+$/, '.json')
+}
+
+/**
+ * Rewrite the `customName` field of an Edit's sidecar so its user-chosen name
+ * survives a Library rebuild (ADR-0005). Called synchronously from
+ * `Core.setCustomName` for a negative id, right after the DB write. Atomic
+ * (temp file + rename). A missing sidecar is a silent no-op — the Edit's files
+ * may have been removed out from under us; an unreadable/unparseable one throws,
+ * since that is real corruption the caller should log.
+ */
+export function writeEditSidecarCustomName(
+  localPath: string,
+  customName: string | null,
+): void {
+  const sidecarPath = editSidecarPath(localPath)
+  if (!existsSync(sidecarPath)) return
+  const parsed = JSON.parse(readFileSync(sidecarPath, 'utf8')) as Sidecar
+  parsed.customName = customName
+  parsed.schemaVersion = SIDECAR_SCHEMA_VERSION
+  const tmp = `${sidecarPath}.${randomBytes(6).toString('hex')}.part`
+  try {
+    writeFileSync(tmp, JSON.stringify(parsed, null, 2), 'utf8')
+    renameSync(tmp, sidecarPath)
+  } catch (err) {
+    rmSync(tmp, { force: true })
+    throw err
+  }
+}
+
 /** Remove an Edit's file + sidecar (derived from `local_path`). Missing files are not an error. */
 export async function removeEditFiles(localPath: string): Promise<void> {
-  const sidecar = localPath.replace(/\.[^./\\]+$/, '.json')
+  const sidecar = editSidecarPath(localPath)
   await rm(localPath, { force: true })
   await rm(sidecar, { force: true })
 }

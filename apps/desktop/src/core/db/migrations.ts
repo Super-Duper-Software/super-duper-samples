@@ -210,5 +210,24 @@ const m004: Migration = {
   `,
 }
 
+/**
+ * Migration 005 — retire stale "undecodable" peak sentinels (ticket 20).
+ *
+ * Before ticket 20, a plain Sound whose Original was a compressed container
+ * (FLAC, MP3, OGG) failed the local WAV/AIFF-only decoder and wrote an
+ * undecodable sentinel row (`bucket_count = 0`) so it was never retried. Ticket
+ * 20 gives those Originals an ffmpeg scratch-PCM render path — but the sentinel
+ * short-circuits `requestPeaks` before it can run. Drop every sentinel so each
+ * is recomputed once through the new path; a genuinely undecodable file simply
+ * writes the sentinel again. Real peak rows (`bucket_count > 0`) are untouched.
+ */
+const m005: Migration = {
+  id: 5,
+  name: 'clear-undecodable-peak-sentinels',
+  up: /* sql */ `
+    DELETE FROM peaks WHERE bucket_count = 0;
+  `,
+}
+
 /** The migration list, in application order. Append only. */
-export const MIGRATIONS: readonly Migration[] = [m001, m002, m003, m004]
+export const MIGRATIONS: readonly Migration[] = [m001, m002, m003, m004, m005]

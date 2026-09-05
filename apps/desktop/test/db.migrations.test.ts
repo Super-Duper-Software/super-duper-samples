@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { openDb, runMigrations } from '../src/core/db/index'
+import { MIGRATIONS } from '../src/core/db/migrations'
 import { createCore } from '../src/core'
 import { makeFakeGateway } from './helpers/makeTestCore'
 import { FakeAuthPlatform } from './helpers/fakeAuthPlatform'
@@ -49,7 +50,7 @@ describe('database migrations', () => {
     }
 
     // user_version tracks the highest applied migration id.
-    expect(db.pragma('user_version', { simple: true })).toBe(4)
+    expect(db.pragma('user_version', { simple: true })).toBe(5)
     db.close()
   })
 
@@ -112,6 +113,28 @@ describe('database migrations', () => {
     db.close()
   })
 
+  it('migration 005 deletes undecodable peak sentinels and leaves real peak rows', async () => {
+    const db = openDb(await tempDbPath())
+    db.pragma('foreign_keys = OFF') // insert peak rows without matching sounds
+
+    const insert = db.prepare(
+      'INSERT INTO peaks (sound_id, sample_rate, bucket_count, data, computed_at) VALUES (?, ?, ?, ?, ?)',
+    )
+    insert.run(1, 44100, 2000, Buffer.alloc(8000), 0) // a real computed envelope
+    insert.run(2, 0, 0, Buffer.alloc(0), 0) // the undecodable sentinel
+
+    db.exec(MIGRATIONS.find((m) => m.id === 5)!.up)
+
+    const ids = (
+      db.prepare('SELECT sound_id FROM peaks ORDER BY sound_id').all() as {
+        sound_id: number
+      }[]
+    ).map((r) => r.sound_id)
+    expect(ids).toEqual([1])
+
+    db.close()
+  })
+
   it('opening an already-current database applies nothing', async () => {
     const dbPath = await tempDbPath()
 
@@ -121,7 +144,7 @@ describe('database migrations', () => {
     const second = openDb(dbPath)
     const result = runMigrations(second)
     expect(result.applied).toEqual([])
-    expect(second.pragma('user_version', { simple: true })).toBe(4)
+    expect(second.pragma('user_version', { simple: true })).toBe(5)
     second.close()
   })
 

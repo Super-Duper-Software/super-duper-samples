@@ -4,7 +4,10 @@
 // `<id>.json` sidecars alone.
 //
 // What it does NOT recover, and says so plainly (`NOT_RECOVERABLE_MESSAGE`):
-// custom names, custom tags and Collections live only in the database.
+// custom names and tags on Sounds, and Collections, live only in the database.
+// An Edit is the exception — its name is user-chosen and has no Freesound
+// fallback (ADR-0005), so the sidecar mirrors it (`customName`) and a rebuild
+// restores it into `library_entries.custom_name`.
 //
 // Shape:
 //   - the read-only scan (`scanSidecars`) runs OFF this thread in production (a
@@ -20,7 +23,11 @@ import { join } from 'node:path'
 import { rm } from 'node:fs/promises'
 import type { DB } from '../db/index'
 import { upsertSound } from '../db/sounds'
-import { saveLibraryEntry, hasLibraryEntry } from '../db/library'
+import {
+  saveLibraryEntry,
+  hasLibraryEntry,
+  setCustomName as dbSetCustomName,
+} from '../db/library'
 import { findEditIdByLocalPath, insertEditSoundRow, nextEditId } from '../db/edits'
 import { CONTENT_DIRNAME } from '../staging/contentStore'
 import {
@@ -53,7 +60,10 @@ export type RebuildRunner = (
 /** One Library Sound brought back by a rebuild. */
 export interface RebuildRecovered {
   soundId: number
-  /** The Freesound name (custom names are NOT recoverable). */
+  /**
+   * The name to show for this recovered item: the Freesound name for a Sound
+   * (a Sound's custom name is NOT recoverable), or the Edit's own restored name.
+   */
   name: string
   /** Uploading author's Freesound username. */
   author: string
@@ -92,7 +102,7 @@ export interface RebuildReport {
  * the result. Rebuild cannot see the database, and these three live only there.
  */
 export const NOT_RECOVERABLE_MESSAGE =
-  'Custom names, custom tags and Collections are stored only in the database and cannot be recovered by a rebuild.'
+  'Custom names and tags on Sounds, and Collections, are stored only in the database and cannot be recovered by a rebuild. An Edit keeps its own name.'
 
 export interface RebuildServiceDeps {
   db: DB
@@ -193,12 +203,18 @@ export function createRebuildService(deps: RebuildServiceDeps): RebuildService {
           // Edit's own file path is what makes a re-run idempotent — see
           // `findEditIdByLocalPath`. The parent Sound need not exist: every
           // field required to attribute the Edit lives in its own sidecar.
+          // An Edit's user-chosen name is its only real name (ADR-0005); the
+          // sidecar mirrors it (`customName`) so it survives a rebuild — without
+          // it the Edit comes back as the bare `edited` placeholder in
+          // `sound.name`.
+          const editName = item.sidecar.customName ?? null
           const existingId = findEditIdByLocalPath(db, item.audioPath)
           if (existingId != null) {
             alreadyPresent += 1
+            if (editName != null) dbSetCustomName(db, existingId, editName)
             recovered.push({
               soundId: existingId,
-              name: item.sidecar.sound.name,
+              name: editName ?? item.sidecar.sound.name,
               author: item.sidecar.sound.username,
               license: item.sidecar.sound.license.name,
               audioFile: item.audioName,
@@ -216,9 +232,10 @@ export function createRebuildService(deps: RebuildServiceDeps): RebuildService {
             sound: item.sidecar.sound,
           })
           saveLibraryEntry(db, editId, item.sidecar.downloadedAt || Date.now())
+          if (editName != null) dbSetCustomName(db, editId, editName)
           recovered.push({
             soundId: editId,
-            name: item.sidecar.sound.name,
+            name: editName ?? item.sidecar.sound.name,
             author: item.sidecar.sound.username,
             license: item.sidecar.sound.license.name,
             audioFile: item.audioName,

@@ -91,3 +91,24 @@ pnpm --filter @superduper/desktop dev
 Search and Preview audition work with just `FREESOUND_API_KEY`. Sign-in, staged
 downloads, and (once ticket 09 lands) drag-out need steps 1, 3, 4 done and the Worker
 deployed.
+
+## 8. Building a release (ticket 19 — unsigned)
+
+Full detail is in `apps/desktop/README.md` § "Building a release" and `docs/adr/0007`.
+The essentials a human must do:
+
+- **Deploy the Worker** (step 3). A released build has no API key; sign-in — and
+  therefore Search — is dead without the Worker.
+- **Bake the client config into the build.** `pnpm --filter @superduper/desktop pack:mac`
+  / `pack:win` read `apps/desktop/.env` at build time, so `FREESOUND_CLIENT_ID` and
+  `FREESOUND_TOKEN_WORKER_URL` must be set (the client id is safe to ship — ADR-0004).
+  In CI these come from GitHub Actions repository **variables** of the same names
+  (Settings → Secrets and variables → Actions → Variables), not secrets.
+- **Cut a release** by pushing a `v*` tag; `.github/workflows/release.yml` builds the
+  two DMGs + the NSIS installer on GitHub runners and opens a **draft** GitHub Release
+  with `SHA256SUMS.txt`. Review, then publish.
+- **Before announcing**, install each artifact on a clean machine, walk
+  `marketing/first-run.md`, and re-run the drag-out matrix (step 5) against the
+  installed app.
+- The builds are **unsigned** (macOS ad-hoc only, Windows not at all) and there is **no
+  auto-update**. Rolling back a bad release = delete the release and its tag.

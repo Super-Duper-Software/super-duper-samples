@@ -26,6 +26,59 @@ Search and Preview playback use **token auth only** — no OAuth, no sign-in. Th
 key is read from `.env` (git-ignored) via electron-vite's env handling; without it
 search returns HTTP 401.
 
+## Building a release (ticket 19)
+
+Packaging is **`electron-builder`** driven by `electron-builder.yml`. The release
+is **unsigned for distribution** and has **no auto-update** — the decision and its
+consequences are in [`docs/adr/0007`](../../docs/adr/0007-ship-unsigned-no-auto-update.md).
+The end-user side of the same story is [`marketing/first-run.md`](../../marketing/first-run.md).
+
+```sh
+pnpm --filter @superduper/desktop pack:dir   # unpacked .app/.exe, no installer — fast smoke test
+pnpm --filter @superduper/desktop pack:mac   # SDS-<v>-arm64.dmg + SDS-<v>-x64.dmg  → apps/desktop/dist/
+pnpm --filter @superduper/desktop pack:win   # SDS-Setup-<v>.exe (per-user NSIS)     → apps/desktop/dist/
+pnpm --filter @superduper/desktop icon       # regenerate resources/icon.icns + .ico from icon.svg (macOS)
+```
+
+- **Native + binary payloads.** `electron-builder.yml` rebuilds `better-sqlite3`
+  for the target Electron ABI (`npmRebuild: true`) and `asarUnpack`s it and
+  `ffmpeg-static` so they load at runtime. `resources/drag-icon.png` (ticket 09
+  fallback) ships as an `extraResource` at `process.resourcesPath`.
+
+  > **After a local `pack:*` / `pack:dir`,** `better-sqlite3` in the pnpm store is
+  > left compiled against Electron's ABI, so `pnpm test` and `pnpm dev` fail with
+  > `NODE_MODULE_VERSION` mismatch. Restore the Node build with
+  > `pnpm rebuild -r better-sqlite3` from the repo root. CI is unaffected — each
+  > workflow job starts from a clean install.
+- **macOS signing.** `scripts/electron-builder-after-pack.mjs` applies an **ad-hoc**
+  signature (`codesign --sign -`). This is required — Apple Silicon refuses a
+  bundle with no signature. It is *not* Developer ID and *not* notarized, so first
+  launch shows the Gatekeeper prompt (`marketing/first-run.md` covers the user side).
+- **The icon.** `resources/icon.svg` is the master; `icon.icns` / `icon.ico` are
+  generated from `resources/icon-1024.png` (itself rendered from the SVG) and
+  committed, so a build never depends on the `icon` script running.
+- **Config baked in at build time.** `electron-vite build` inlines
+  `FREESOUND_CLIENT_ID` and `FREESOUND_TOKEN_WORKER_URL` from `.env`. A released
+  build with those blank cannot sign in, so Search is dead. The ticket-06 Worker
+  must also be deployed (`SETUP.md` §3).
+
+### CI
+
+- **`.github/workflows/release.yml`** — push a `v*` tag (or run it manually).
+  Builds the three installers on `macos-latest` / `windows-latest`, generates
+  `SHA256SUMS.txt`, and opens a **draft** GitHub Release. The two Freesound values
+  come from repo **variables** (`Settings → Secrets and variables → Actions →
+  Variables`), not secrets — there are no signing secrets.
+- **`.github/workflows/build-check.yml`** — every PR and push to main runs tests,
+  typecheck and `electron-builder --dir` on both OSes. No upload.
+
+### Rolling back a bad release
+
+There is no update channel. Delete the GitHub Release and its tag, fix, and cut a
+new tag. Users on the bad build re-download from the releases page; their Library,
+downloaded files and sign-in (all under Electron `userData`) are untouched by
+reinstalling.
+
 ## Authentication (ticket 07)
 
 Sign-in is an **OAuth2 authorization-code grant** against Freesound, with **no
@@ -98,9 +151,9 @@ Persistence is **SQLite** via [`better-sqlite3`](https://github.com/WiseLibrarie
   prebuilt binary. It is listed under `onlyBuiltDependencies` in the root
   `pnpm-workspace.yaml`; if a fresh `pnpm install` still skips it, run
   `pnpm approve-builds` (choose `better-sqlite3`) and reinstall. For a *packaged*
-  Electron build (ticket 19) the binary must additionally be rebuilt against
-  Electron's ABI (`electron-rebuild` / `@electron/rebuild`); that is out of scope
-  here and the packaged app is not built in this environment.
+  Electron build the binary is rebuilt against Electron's ABI by
+  `@electron/rebuild`, which electron-builder runs automatically (`npmRebuild: true`
+  in `electron-builder.yml`) — see "Building a release" below.
 - electron-vite marks it **external** for the main/preload bundles via
   `externalizeDepsPlugin()`, so the native `.node` file is never bundled — the
   main bundle just carries `require("better-sqlite3")`.

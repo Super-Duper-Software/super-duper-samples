@@ -123,6 +123,12 @@ export interface CoreApi {
   showLogs(): Promise<void>
   /** Open the Ko-fi support page in the user's default browser. */
   openSupportPage(): Promise<void>
+  /**
+   * Open the user's mail client with a new message to the support address.
+   * `subject` / `body` prefill the draft (the address is fixed in the main
+   * process).
+   */
+  openSupportEmail(opts?: { subject?: string; body?: string }): Promise<void>
 
   // ---- auth (ticket 07) --------------------------------------------------
   /** Start interactive sign-in via the system browser. Resolves to the new state. */
@@ -387,6 +393,8 @@ const api: CoreApi = {
   // Named channel: needs Electron `shell`, which cannot live in core.
   showLogs: () => ipcRenderer.invoke('core:showLogs'),
   openSupportPage: () => ipcRenderer.invoke('core:openSupportPage'),
+  openSupportEmail: (opts) =>
+    ipcRenderer.invoke('core:openSupportEmail', opts),
 
   signIn: () => ipcRenderer.invoke('core:invoke', 'signIn', []),
   signOut: () => ipcRenderer.invoke('core:invoke', 'signOut', []),

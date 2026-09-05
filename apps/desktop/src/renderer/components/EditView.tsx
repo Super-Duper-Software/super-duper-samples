@@ -30,10 +30,28 @@ import {
   type Region,
 } from '../lib/regionGeometry'
 import { formatPreciseDuration } from '../lib/format'
+import { waveformDisplayState } from '../lib/editViewState'
 
 const FULL_WINDOW = { start: 0, end: 1 } as const
 /** Pointer proximity to an edge that grabs it instead of starting a new region, in fraction-of-box units. */
 const EDGE_HIT_FRACTION = 0.012
+
+// ---- wheel-gesture tuning (Mac trackpad friendly) ---------------------------
+// A trackpad fires a burst of many small wheel events per gesture, so anything
+// that reacts a fixed amount per event (the old `0.85` zoom step) feels wildly
+// over-sensitive. Instead every response is proportional to the delta the event
+// actually carried, with a small coefficient and a per-event clamp so one hard
+// flick can't jump the whole view.
+/** Per-event delta is clamped to ±this (px) before it drives zoom or pan. */
+const MAX_WHEEL_STEP = 50
+/** Zoom factor per clamped delta unit: e^(step * this). ~0.006 → a full flick ≈ 1.35×. */
+const ZOOM_SENSITIVITY = 0.006
+/** Fraction of the raw horizontal delta that becomes pan distance. */
+const PAN_SENSITIVITY = 0.5
+// Once a gesture commits to an axis, keep it there until the wheel goes quiet
+// for this long. This is the "lock": a mostly-horizontal pan can't flip to
+// zoom mid-gesture just because a few events carried stray vertical delta.
+const GESTURE_LOCK_MS = 140
 
 export interface EditViewProps {
   sound: Sound
@@ -59,13 +77,21 @@ export function EditView({ sound, onClose }: EditViewProps) {
   useEffect(() => {
     ensurePeaks(sound.id)
   }, [sound.id, ensurePeaks])
-  const hasPeaks = !!peaks && peaks.bucketCount > 0
 
   const [zoom, setZoom] = useState<{ start: number; end: number }>(FULL_WINDOW)
   const [region, setRegionState] = useState<Region | null>(null)
   const [contentPath, setContentPath] = useState<string | null | undefined>(
     undefined,
   )
+
+  // Four mutually-exclusive states (see `editViewState.ts`): `undefined` peaks
+  // means "still computing"; `null` peaks means "resolved, and no waveform is
+  // coming" — a real error state, never a perpetual "Computing…".
+  const wfState = waveformDisplayState(peaks, contentPath)
+  const hasPeaks = wfState === 'ready'
+  // The region surface stays interactive without a waveform: the time readout
+  // and loop-audition still work, and Export is the escape hatch.
+  const canSelectRegion = wfState === 'ready' || wfState === 'unavailable'
   const [playing, setPlaying] = useState(false)
   const [showExport, setShowExport] = useState(false)
 
@@ -200,15 +226,18 @@ export function EditView({ sound, onClose }: EditViewProps) {
     return () => ro.disconnect()
   }, [hasPeaks, redraw])
 
-  // ---- zoom (wheel; double-click resets) --------------------------
-  // Vertical scroll zooms (centred on the pointer); horizontal scroll pans the
-  // zoom window at its current span — without this, zooming in has no way to
-  // reach the rest of the file. Trackpad diagonals are noisy, so whichever
-  // axis dominates a given wheel event wins that event; a straight vertical
-  // or horizontal gesture never fights itself. A plain scroll-wheel mouse has
-  // no horizontal axis at all, so Shift+scroll forces pan mode explicitly —
-  // most browsers already remap it to `deltaX` themselves, but this does not
-  // depend on that: it reads whichever delta the event actually carries.
+  // ---- zoom / pan (wheel; double-click resets) --------------------------
+  // Vertical scroll zooms (centred on the pointer); horizontal scroll (or a
+  // pinch, or Shift+scroll) pans the zoom window at its current span — without
+  // panning, zooming in has no way to reach the rest of the file.
+  //
+  // Both responses are proportional to the delta the event carried (clamped),
+  // not a fixed step, so a Mac trackpad's burst of tiny events adds up to a
+  // gentle move instead of a lurch. And the chosen axis is *locked* for the
+  // rest of the gesture (`GESTURE_LOCK_MS` of quiet ends it): a horizontal pan
+  // can't flip to zoom just because a few of its events carried stray vertical
+  // delta. A pinch (`ctrlKey`) always pans.
+  const gestureRef = useRef<{ axis: 'zoom' | 'pan'; until: number } | null>(null)
   const onWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
       if (!hasPeaks) return
@@ -216,17 +245,31 @@ export function EditView({ sound, onClose }: EditViewProps) {
       if (!el) return
       const rect = el.getBoundingClientRect()
       if (rect.width <= 0) return
-      const panning = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)
-      if (panning) {
-        const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY
+
+      const now = e.timeStamp || performance.now()
+      const held = gestureRef.current
+      let axis: 'zoom' | 'pan'
+      if (e.ctrlKey) axis = 'pan'
+      else if (held && now < held.until) axis = held.axis
+      else
+        axis =
+          e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY) ? 'pan' : 'zoom'
+      gestureRef.current = { axis, until: now + GESTURE_LOCK_MS }
+
+      const clamp = (n: number) =>
+        Math.max(-MAX_WHEEL_STEP, Math.min(MAX_WHEEL_STEP, n))
+
+      if (axis === 'pan') {
+        const raw = e.deltaX !== 0 ? e.deltaX : e.deltaY
+        const step = clamp(raw) * PAN_SENSITIVITY
         setZoom((z) => {
           const span = z.end - z.start
-          const deltaFraction = (delta / rect.width) * span
+          const deltaFraction = (step / rect.width) * span
           return panWindow(z.start, z.end, deltaFraction)
         })
       } else {
         const focus = (e.clientX - rect.left) / rect.width
-        const factor = e.deltaY < 0 ? 0.85 : 1 / 0.85
+        const factor = Math.exp(clamp(e.deltaY) * ZOOM_SENSITIVITY)
         setZoom((z) => zoomWindow(z.start, z.end, factor, focus))
       }
     },
@@ -252,7 +295,7 @@ export function EditView({ sound, onClose }: EditViewProps) {
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (!hasPeaks) return
+      if (!canSelectRegion) return
       const frac = fractionAt(e.clientX)
       if (frac == null) return
       e.currentTarget.setPointerCapture?.(e.pointerId)
@@ -267,7 +310,7 @@ export function EditView({ sound, onClose }: EditViewProps) {
         setRegionState(regionFromDrag(frac, frac))
       }
     },
-    [hasPeaks, fractionAt, zoom, region],
+    [canSelectRegion, fractionAt, zoom, region],
   )
 
   const onPointerMove = useCallback(
@@ -324,16 +367,25 @@ export function EditView({ sound, onClose }: EditViewProps) {
       </header>
 
       <section className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-        {contentPath === null && (
+        {wfState === 'no-original' && (
           <p className="rounded border border-warn p-3 text-sm text-warn">
             This Sound's Original is not on disk. Download it to your Library
             first, then reopen the Edit view.
           </p>
         )}
 
-        {!hasPeaks && contentPath !== null && (
-          <p className="text-sm text-ink-muted" aria-live="polite">
-            Computing the waveform…
+        {(wfState === 'computing' || wfState === 'unavailable') && (
+          <p
+            className={
+              wfState === 'unavailable'
+                ? 'rounded border border-warn p-3 text-sm text-warn'
+                : 'text-sm text-ink-muted'
+            }
+            aria-live="polite"
+          >
+            {wfState === 'unavailable'
+              ? "A waveform isn't available for this file. You can still select a region against the time readout and export it — if the export fails, pick a different format in the export dialog."
+              : 'Computing the waveform…'}
           </p>
         )}
 

@@ -80,3 +80,4 @@ administrators before starting ticket 07.
 | 17 | Attribution Manifest | 16 |
 | 18 | Shell polish | 11 |
 | 19 | Package, sign, notarize, update | all |
+| 20 | Decode any Original for the Edit waveform + no-waveform error state | 12 |

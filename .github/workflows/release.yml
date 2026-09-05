@@ -1,0 +1,94 @@
+# Ticket 19 — build the unsigned installers and draft a GitHub Release.
+#
+# Trigger: push a tag like `v0.1.0`, or run manually from the Actions tab.
+# This does NOT run on every push to main (see build-check.yml for that).
+#
+# There are no signing secrets. The two Freesound values baked into the client
+# are non-secret (FREESOUND_CLIENT_ID is "safe to ship in the client" per
+# apps/desktop/.env.example; the Worker URL is public) and come from repository
+# *variables*, not secrets:
+#   Settings → Secrets and variables → Actions → Variables
+#     FREESOUND_CLIENT_ID
+#     FREESOUND_TOKEN_WORKER_URL
+#
+# The Release is created as a DRAFT — review the artifacts, then publish it by
+# hand. Rolling back a bad release = delete the release + its tag (docs/adr/0007).
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest # builds both the arm64 and x64 DMGs (electron-builder.yml)
+            script: pack:mac
+          - os: windows-latest # x64 NSIS installer
+            script: pack:win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4 # version comes from the root package.json "packageManager"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Write apps/desktop/.env
+        shell: bash
+        run: |
+          {
+            echo "FREESOUND_CLIENT_ID=${{ vars.FREESOUND_CLIENT_ID }}"
+            echo "FREESOUND_TOKEN_WORKER_URL=${{ vars.FREESOUND_TOKEN_WORKER_URL }}"
+          } > apps/desktop/.env
+
+      - name: Package
+        run: pnpm --filter @superduper/desktop ${{ matrix.script }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.exe
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: artifacts
+        run: sha256sum * | tee SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          fail_on_unmatched_files: true
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', github.run_number) }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || 'manual build' }}
+          body: |
+            Unsigned builds — macOS and Windows will both warn on first launch.
+            See [marketing/first-run.md](https://github.com/${{ github.repository }}/blob/main/marketing/first-run.md)
+            for how to get past the Gatekeeper / SmartScreen prompt.
+
+            Verify your download against `SHA256SUMS.txt`.
+          files: artifacts/*

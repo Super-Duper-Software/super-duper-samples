@@ -26,7 +26,8 @@ Root `pnpm-workspace.yaml` lists `apps/*`, `worker`, `spike/*`.
 - **pnpm** (installed: 10.x). Node 24.
 - **TypeScript** everywhere. `strict: true`.
 - **Vitest** for all tests (app and worker).
-- **electron-vite** for the desktop build; **electron-builder** for packaging (ticket 19, not now).
+- **electron-vite** for the desktop build; **electron-builder** for packaging
+  (`apps/desktop/electron-builder.yml`, ticket 19 — unsigned, ADR-0007).
 - **Prettier** defaults, no bikeshedding. ESLint optional and minimal.
 
 ## Config & secrets — never commit real values

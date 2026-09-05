@@ -5,7 +5,11 @@ built and its macOS drag-out was manually verified by the user on 2026-08-30. Ti
 (sidecars + LRU eviction), 11 (Library save / view / delete), 15 (search filters +
 sort), 12 (computed peaks + canvas waveform), 13 (library organisation), 14
 (rebuild from sidecars), 16 (Collections), 17 (Attribution Manifest) and 18 (shell
-polish) are done. Next: 19 (package / sign / notarize / update) — the last ticket.
+polish) are done. Ticket 19 (package for macOS + Windows) is built at a **reduced
+scope** — unsigned installers, custom icon, first-run guide, no notarization, no
+auto-update (`docs/adr/0007`). It is the last ticket; what remains is human-only
+verification (build on each OS, install on a clean machine, re-run the drag-out
+matrix, capture screenshots).
 
 | # | Ticket | State | Commit |
 |---|---|---|---|
@@ -27,13 +31,17 @@ polish) are done. Next: 19 (package / sign / notarize / update) — the last tic
 | 16 | Collections | **done** — code + tests (`test/collections.test.ts`) | `6dfad08` |
 | 17 | Attribution Manifest | **done** — code + tests (`test/manifest.test.ts`) | `ac2f80f` |
 | 18 | Shell polish | **done** — code + tests (`test/shell-polish.test.ts`); renderer pieces need the GUI (see below) | `6ab94f2` |
-| 19 | Package, sign, notarize, update | not started | — |
+| 19 | Package for macOS + Windows (unsigned — scope cut, ADR-0007) | **built** — electron-builder config, custom icon, CI workflows, `marketing/first-run.md`; `pack:dir` verified locally on macOS arm64. Human verification outstanding (rewritten ticket) | — |
+| 20 | Waveform for every Original + a real "no waveform" state | **done** — code + tests (`test/peaks.test.ts`, `test/edit-view-state.test.ts`) | — |
 
 ## Test counts
 
-- `apps/desktop`: 227 vitest tests (+14 for ticket 18), `tsc --noEmit` clean, `electron-vite build` clean.
+- `apps/desktop`: 334 vitest tests, `tsc --noEmit` clean, `electron-vite build` clean.
 - `worker`: 30 vitest tests, `tsc --noEmit` clean.
 - `spike/drag-out`: syntax-checked only (throwaway).
+- Ticket 19 packaging: `electron-builder --dir` (electron-vite build → @electron/rebuild
+  of `better-sqlite3` → ad-hoc `afterPack` sign) verified locally on macOS arm64; DMG /
+  NSIS artifact builds and the CI workflows are not exercisable in this environment.
 
 ## Spec 0003 — responsive rail layout
 
@@ -287,6 +295,52 @@ window across these widths:
 - **Header `⋯`:** Sign out ends the session; Keyboard shortcuts opens the dialog
   (as does the `?` key); View logs opens the log viewer.
 - **360px floor:** all three rail rows stay intact and usable.
+
+## Ticket 20 — what landed
+
+- **"Decode anything" for a plain Sound.** `peakService.ts` — `soundTask` now
+  mirrors `editTask`: a WAV/AIFF Original still decodes directly, but any other
+  container (FLAC, MP3, OGG) is rendered to a throwaway PCM `.wav` via the
+  injected `audioRenderRunner` (ffmpeg in production) and peaks are computed from
+  that. Without a render runner (tests, a stripped build) a non-decodable
+  Original yields no peaks, as before.
+- **One shared scratch-PCM helper.** `computeViaScratchPcm(sourcePath, metadata)`
+  serves both `soundTask` and `editTask`. Scratch files now go under
+  `os.tmpdir()` — never beside the source, so a stray copy can't confuse the
+  content store's LRU sweep / sidecar scan — and are `rm`'d in a `finally` on
+  every path (success, render failure, decode failure).
+- **Sentinel vs. transient.** A render failure whose ffmpeg stderr says the input
+  is not audio (`Invalid data found when processing input`, `does not contain any
+  stream`, `could not find codec parameters`) → `undecodable: true` → the
+  undecodable sentinel row, never re-attempted. Any other failure (ffmpeg
+  missing, crash, disk full) stays `undecodable: false` → no cache row, retried
+  on the next `requestPeaks`.
+- **A real "no waveform" state in the Edit view.** `renderer/lib/editViewState.ts`
+  — `waveformDisplayState(peaks, contentPath)` collapses the four cases to
+  `no-original | computing | unavailable | ready`. `EditView` uses it: `peaks`
+  `undefined` → "Computing the waveform…" (as before); `peaks` `null` → an inline
+  `border-warn` message ("A waveform isn't available for this file. You can still
+  select a region against the time readout and export it — …"), in the same
+  `aria-live="polite"` element so the computing→error transition is announced.
+  The region surface stays interactive without a waveform (`canSelectRegion`);
+  Export stays enabled — it is the escape hatch, and the derived Edit gets its
+  own computed waveform via `editTask`.
+- **Migration 005 — retire stale sentinels.** A FLAC/MP3/OGG Original decoded
+  under the old code left an undecodable sentinel row (`bucket_count = 0`) that
+  `requestPeaks` short-circuits on — so the new render path would never run for a
+  library that predates this ticket. `m005` (`DELETE FROM peaks WHERE
+  bucket_count = 0`) drops every sentinel so each is recomputed once through the
+  new path; a genuinely undecodable file just writes it again. `user_version`
+  4 → 5.
+- **Tests.** `test/peaks.test.ts` — a FLAC Original routes through the render
+  runner and gets peaks; the runner is untouched for a WAV; "not audio" failure →
+  sentinel, not retried; transient failure → no row, retried; scratch file gone
+  on both paths. `test/edit-view-state.test.ts` — the four-state decision,
+  including `undefined` vs `null` and the `contentPath === null` precedence.
+  `test/db.migrations.test.ts` — `m005` clears sentinels, keeps real peak rows.
+- **Env note.** `better-sqlite3` in `node_modules` was an x86_64 prebuild; rebuilt
+  for arm64 with `npm_config_python=python3.10` (system `python3.12` lacks
+  `distutils` for node-gyp 9). Unrelated to this ticket's code.
 
 ## Ticket 18 — what landed
 

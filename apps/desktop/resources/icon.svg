@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Super Duper Samples application icon (ticket 19). Master artwork.
+
+  Full-bleed 1024x1024, zero corner radius, no macOS squircle mask: a flat hard
+  square in a dock full of rounded tiles IS the 1993 statement (brand/BRAND.md:
+  "early-1990s graphic design, hard geometry").
+
+  Palette (brand/brand.css role tokens):
+    ground   #ff5a1f  sd-orange-500  "THE brand colour"
+    letters  #ffffff  sd-gray-0
+    shadow   #0a0a0a  sd-gray-950    solid offset, no blur (mirrors sd-shadow-hard)
+    strip    #00a5ad  sd-teal-500    rationed orange/teal era pairing; one flat
+                                     bottom bar, a wink at the Win95 taskbar, no bevel
+
+  "SDS" is axis-aligned rectangles: no font dependency, resolution independent,
+  genuinely boxy. Regenerate the raster deliverables with the package "icon"
+  script after editing this file.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- ground -->
+  <rect width="1024" height="1024" fill="#ff5a1f"/>
+
+  <!-- taskbar strip (the single teal accent) -->
+  <rect x="0" y="936" width="1024" height="88" fill="#00a5ad"/>
+
+  <!--
+    Hard offset shadow for the whole monogram: solid, no blur, +20/+20.
+    S and outer-S are five bars each; D is a filled bowl (evenodd) with a small
+    counter pushed up-left so the right wall reads heavy: unmistakably D, not O.
+  -->
+  <g fill="#0a0a0a" transform="translate(20,20)">
+    <rect x="110" y="280" width="232" height="84"/>
+    <rect x="110" y="280" width="84"  height="257"/>
+    <rect x="110" y="453" width="232" height="84"/>
+    <rect x="258" y="453" width="84"  height="257"/>
+    <rect x="110" y="626" width="232" height="84"/>
+    <path fill-rule="evenodd" d="M396 280 H532 L628 376 V614 L532 710 H396 Z M448 348 H500 V610 H448 Z"/>
+    <rect x="682" y="280" width="232" height="84"/>
+    <rect x="682" y="280" width="84"  height="257"/>
+    <rect x="682" y="453" width="232" height="84"/>
+    <rect x="830" y="453" width="84"  height="257"/>
+    <rect x="682" y="626" width="232" height="84"/>
+  </g>
+
+  <!-- monogram -->
+  <g fill="#ffffff">
+    <rect x="110" y="280" width="232" height="84"/>
+    <rect x="110" y="280" width="84"  height="257"/>
+    <rect x="110" y="453" width="232" height="84"/>
+    <rect x="258" y="453" width="84"  height="257"/>
+    <rect x="110" y="626" width="232" height="84"/>
+    <path fill-rule="evenodd" d="M396 280 H532 L628 376 V614 L532 710 H396 Z M448 348 H500 V610 H448 Z"/>
+    <rect x="682" y="280" width="232" height="84"/>
+    <rect x="682" y="280" width="84"  height="257"/>
+    <rect x="682" y="453" width="232" height="84"/>
+    <rect x="830" y="453" width="84"  height="257"/>
+    <rect x="682" y="626" width="232" height="84"/>
+  </g>
+</svg>

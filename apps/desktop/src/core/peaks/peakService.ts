@@ -17,6 +17,8 @@
 
 import { randomBytes } from 'node:crypto'
 import { rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import type { DB } from '../db/index'
 import { getSoundsByIds } from '../db/sounds'
@@ -32,7 +34,6 @@ import { BASE_BUCKET_COUNT } from './computePeaks'
 import type { PeakResult, TrimWindow } from './computeFromFile'
 import type { PeakWorkerResponse } from './peakWorker'
 import type { AudioRenderRunner } from '../edits/editService'
-import type { Sound } from '../types'
 
 /** Containers `decodeAudioBuffer` reads directly — anything else needs a scratch PCM rendition. */
 const LOCALLY_DECODABLE_TYPES = new Set(['wav', 'aiff'])
@@ -217,7 +218,13 @@ export function createPeakService(deps: PeakServiceDeps): PeakService {
     }
   }
 
-  /** A regular Sound: peaks come straight off its own Original. */
+  /**
+   * A regular Sound: peaks come off its own Original. WAV and AIFF decode
+   * directly; any other container (FLAC, MP3, OGG…) is first rendered to a
+   * throwaway PCM copy via `audioRenderRunner` — the same "decode anything"
+   * detour `editTask` uses for a compressed-source Edit. Without a render
+   * runner (tests, a stripped build) a non-decodable Original yields no peaks.
+   */
   function soundTask(soundId: number): (() => Promise<PeakResult>) | null {
     const sound = getSoundsByIds(db, [soundId])[0]
     if (!sound || !isOriginalOnDisk(dataDir, sound)) {
@@ -226,7 +233,16 @@ export function createPeakService(deps: PeakServiceDeps): PeakService {
       return null
     }
     const filePath = contentPaths(dataDir, sound).original
-    return () => runner!(filePath, BASE_BUCKET_COUNT)
+    if (LOCALLY_DECODABLE_TYPES.has(sound.type.toLowerCase())) {
+      return () => runner!(filePath, BASE_BUCKET_COUNT)
+    }
+    if (!deps.audioRenderRunner) return null // no render seam — never block
+    return () =>
+      computeViaScratchPcm(filePath, {
+        title: sound.name,
+        author: sound.username,
+        licenseUrl: sound.license.url,
+      })
   }
 
   /**
@@ -249,30 +265,45 @@ export function createPeakService(deps: PeakServiceDeps): PeakService {
     }
 
     if (!deps.audioRenderRunner) return null // no render seam — never block
-    return () => computeViaScratchPcm(editSound, localPath)
+    return () =>
+      computeViaScratchPcm(localPath, {
+        title: editSound.name,
+        author: editSound.username,
+        licenseUrl: editSound.license.url,
+      })
   }
 
-  /** Render the Edit's own file to a throwaway PCM copy, compute peaks from it, then delete it. */
+  /**
+   * Render `sourcePath` (a content-store Original or an Edit's own file) to a
+   * throwaway PCM `.wav`, compute peaks from that, then delete it. The scratch
+   * file goes under the OS temp dir — never beside the source, so a stray copy
+   * can never confuse the content store's LRU sweep or sidecar scan — and is
+   * removed in a `finally` on every path.
+   *
+   * A render failure that ffmpeg reports as "this is not audio" comes back as
+   * `undecodable: true` (a real dead end → the caller writes the sentinel). Any
+   * other failure (ffmpeg missing, crash, disk full) stays `undecodable: false`
+   * so a later `requestPeaks` retries instead of poisoning the cache.
+   */
   async function computeViaScratchPcm(
-    editSound: Sound,
-    localPath: string,
+    sourcePath: string,
+    metadata: { title: string; author: string; licenseUrl: string },
   ): Promise<PeakResult> {
-    const scratchPath = `${localPath}.peaks-scratch-${randomBytes(6).toString('hex')}.wav`
+    const scratchPath = join(
+      tmpdir(),
+      `peaks-scratch-${randomBytes(8).toString('hex')}.wav`,
+    )
     try {
       await deps.audioRenderRunner!({
-        sourcePath: localPath,
+        sourcePath,
         spec: { trim: null, format: 'wav' },
         outPath: scratchPath,
         signal: new AbortController().signal,
-        metadata: {
-          title: editSound.name,
-          author: editSound.username,
-          licenseUrl: editSound.license.url,
-        },
+        metadata,
       })
       return await runner!(scratchPath, BASE_BUCKET_COUNT, null)
     } catch (err) {
-      return { ok: false, undecodable: false, error: msg(err) }
+      return { ok: false, undecodable: isNotAudioError(err), error: msg(err) }
     } finally {
       await rm(scratchPath, { force: true }).catch(() => {})
     }
@@ -329,4 +360,18 @@ export { deletePeaksRecord }
 
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+/**
+ * Does this render failure mean the source genuinely is not decodable audio (a
+ * dead end worth a sentinel), as opposed to a transient/environmental failure?
+ * Keyed off the ffmpeg stderr tail the production runner attaches to its error.
+ */
+function isNotAudioError(err: unknown): boolean {
+  const m = msg(err).toLowerCase()
+  return (
+    m.includes('invalid data found when processing input') ||
+    m.includes('does not contain any stream') ||
+    m.includes('could not find codec parameters')
+  )
 }

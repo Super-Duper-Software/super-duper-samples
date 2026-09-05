@@ -345,6 +345,10 @@ export default function App() {
       : []),
     { label: 'Keyboard shortcuts', onSelect: () => setShowShortcuts(true) },
     { label: 'View logs', onSelect: () => setShowLogs(true) },
+    {
+      label: 'Contact support',
+      onSelect: () => void window.core.openSupportEmail(),
+    },
   ]
 
   // A small logo mark left of the tabs in both layouts. The asset does not ship

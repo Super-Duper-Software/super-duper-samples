@@ -11,8 +11,8 @@
 //   - one malformed sidecar does not abort the whole rebuild
 //   - rebuilt entries carry the correct author and License
 // plus: a missing / unreadable / half-migrated database is detected on startup;
-// the "custom names, custom tags and Collections are not recoverable" line is
-// present before and after; the rebuild scan runs off the calling thread and
+// the "custom names and tags on Sounds, and Collections, are not recoverable"
+// line is present before and after; the rebuild scan runs off the calling thread and
 // reports progress.
 
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -346,7 +346,7 @@ describe('startup detection of a missing / unreadable / half-migrated database',
 
     // Before: carried on the startup assessment the renderer shows in the offer.
     expect(tc.core.getStartupAssessment().notRecoverable).toMatch(
-      /custom names.*custom tags.*Collections/i,
+      /custom names.*tags.*Collections/i,
     )
     // After: carried on the result.
     const report = await tc.core.rebuildFromSidecars()

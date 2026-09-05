@@ -22,7 +22,10 @@ An Edit's file lives in the same flat content store as Originals (ADR-0002) but 
 name derived from its parent plus a human suffix — `<parentId>-edited.<ext>`,
 `<parentId>-edited-2.<ext>`, … — never the `<id>.<ext>` scheme, because a negative id is
 not a basename we want on disk. It gets the mandatory sidecar every store file has,
-extended with the parent id and the edit spec, so the Library rebuild can reconstruct it.
+extended with the parent id, the edit spec, and — because an Edit's name is user-chosen and
+has no Freesound name to fall back on — the user's chosen name (`customName`), kept in sync
+on every rename, so the Library rebuild can reconstruct it under its real name rather than
+the bare `edited` placeholder.
 
 The trim + encode itself runs in a bundled `ffmpeg-static` binary invoked from the main
 process, behind an injected `audioRenderRunner` seam on `createCore` — the same shape as

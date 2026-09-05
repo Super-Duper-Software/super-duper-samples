@@ -94,6 +94,7 @@ import {
   contentPaths,
   isOriginalOnDisk,
   removeEditFiles,
+  writeEditSidecarCustomName,
 } from './staging/contentStore'
 import { deletePeaksRecord } from './db/peaks'
 import {
@@ -843,6 +844,11 @@ export interface Core {
    * severed. The custom name is what a Drag-Out delivers on the file (sanitised
    * for the filesystem at drag time); the Freesound name is used when it is
    * unset. Throws if the Sound is not in the Library.
+   *
+   * For an Edit (negative id) the name is also mirrored into its content-store
+   * sidecar (`customName`), because an Edit has no Freesound name to fall back
+   * on and a Library rebuild would otherwise resurrect it as bare `edited`
+   * (ADR-0005). That mirror is best-effort and never fails the rename.
    */
   setCustomName(soundId: number, customName: string | null): void
 
@@ -1448,7 +1454,25 @@ export function createCore(deps: CoreDeps): Core {
         )
       }
       const trimmed = (customName ?? '').trim()
-      dbSetCustomName(db, soundId, trimmed === '' ? null : trimmed)
+      const next = trimmed === '' ? null : trimmed
+      dbSetCustomName(db, soundId, next)
+      // An Edit's name is its only real name (ADR-0005) and lives only in the
+      // DB — mirror it into the sidecar so a Library rebuild brings it back
+      // instead of the bare `edited` placeholder. Best-effort: a rebuild is a
+      // recovery path, not a reason to fail a rename.
+      if (soundId < 0) {
+        const localPath = getEditFieldsByIds(db, [soundId]).get(soundId)?.localPath
+        if (localPath) {
+          try {
+            writeEditSidecarCustomName(localPath, next)
+          } catch (err) {
+            logger.warn('failed to mirror Edit name into its sidecar', {
+              soundId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
+      }
     },
     setLibraryTags: (soundId, tags) => {
       if (!hasLibraryEntry(db, soundId)) {

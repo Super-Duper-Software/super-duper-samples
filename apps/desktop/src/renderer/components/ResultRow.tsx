@@ -928,20 +928,22 @@ function ResultRowImpl({
         </span>
       </div>
 
-      {/* Fixed-width trailing licence slot: always rendered, right-aligned,
-          holding EITHER the non-commercial pill OR the licence chip so the
-          action buttons to its left line up from row to row. */}
-      <div className="flex w-24 shrink-0 items-center justify-end">
+      {/* Fixed-width trailing licence slot: always rendered so the action
+          buttons to its left line up from row to row. The badge inside fills
+          the whole slot (`w-full`) with centred text, and the slot is wide
+          enough for the longest label ("⚠ Non-commercial") so nothing spills
+          left over the `⋯`. */}
+      <div className="flex w-32 shrink-0 items-center">
         {sound.license.name.includes('NC') ? (
           <span
             role="alert"
-            className="shrink-0 whitespace-nowrap rounded border-2 border-license-caution bg-surface-raised px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-license-caution"
+            className="block w-full whitespace-nowrap rounded border-2 border-license-caution bg-surface-raised px-1.5 py-0.5 text-center text-[10px] font-bold uppercase tracking-wide text-license-caution"
             title="Non-commercial license — this Sound may not be used in paid work"
           >
             ⚠ Non-commercial
           </span>
         ) : (
-          <LicenseChip name={sound.license.name} />
+          <LicenseChip name={sound.license.name} className="w-full" />
         )}
       </div>
       </>

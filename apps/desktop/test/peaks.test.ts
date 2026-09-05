@@ -15,7 +15,7 @@
 // plus: the real Worker runs off-thread; the decoder handles WAV + AIFF; the
 // min/max envelope is correct.
 
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -34,7 +34,7 @@ import {
 import { computePeaks } from '../src/core/peaks/computePeaks'
 import { computePeaksFromFile } from '../src/core/peaks/computeFromFile'
 import { workerRunner } from '../src/core/peaks/peakService'
-import type { PeakRunner } from '../src/core'
+import type { AudioRenderRunner, PeakRunner } from '../src/core'
 import type { Sound } from '../src/core/types'
 import { makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
 
@@ -416,6 +416,150 @@ describe('an Original that cannot be decoded falls back gracefully', () => {
     tc.core.requestPeaks(id)
     await sleep(20)
     expect(runner.calls).toBe(callsAfterFirst) // sentinel short-circuits the retry
+  })
+})
+
+// ───────── ticket 20: "decode anything" for a plain Sound's Original ─────────
+
+/** A render runner that writes real WAV bytes to `outPath` and counts its calls. */
+function spyWavRenderRunner(
+  bytes: () => Buffer,
+): AudioRenderRunner & { calls: number } {
+  const r = (async ({ outPath }: { outPath: string }) => {
+    r.calls += 1
+    const b = bytes()
+    writeFileSync(outPath, b)
+    return { byteSize: b.byteLength, durationSec: 1 }
+  }) as unknown as AudioRenderRunner & { calls: number }
+  r.calls = 0
+  return r
+}
+
+/** A render runner that always rejects with `message`, counting its calls. */
+function failingRenderRunner(
+  message: string,
+): AudioRenderRunner & { calls: number } {
+  const r = (async () => {
+    r.calls += 1
+    throw new Error(message)
+  }) as unknown as AudioRenderRunner & { calls: number }
+  r.calls = 0
+  return r
+}
+
+/** Scratch PCM copies live in the OS temp dir, named `peaks-scratch-<hex>.wav`. */
+function scratchLeftoverCount(): number {
+  return readdirSync(tmpdir()).filter((f) => f.startsWith('peaks-scratch-'))
+    .length
+}
+
+describe('a plain Sound whose Original is not WAV/AIFF still gets a computed waveform', () => {
+  it('renders a scratch PCM copy for a FLAC Original, decodes peaks from it, and never renders a WAV', async () => {
+    const before = scratchLeftoverCount()
+    const render = spyWavRenderRunner(() => makeWav(20000))
+    const tc = await makeTestCore({
+      gateway: makeFakeGateway({ downloadBytes: () => makeWav(20000) }),
+      computePeaksRunner: countingRunner(),
+      audioRenderRunner: render,
+    })
+    cleanups.push(() => tc.core.close())
+    await tc.core.signIn()
+    tc.core.grantStagingConsent()
+
+    // The `rain` fixture carries a WAV, a FLAC and an AIFF Original.
+    const page = await tc.core.search('rain')
+    const flac = page.sounds.find((s) => s.type === 'flac')!
+    const wav = page.sounds.find((s) => s.type === 'wav')!
+
+    tc.core.downloadToLibrary(flac.id)
+    await waitUntil(
+      () => tc.core.getStagingStatus([flac.id])[flac.id] === 'ready',
+    )
+    await waitUntil(() => tc.core.getPeaks(flac.id) != null)
+
+    expect(tc.core.getPeaks(flac.id)!.bucketCount).toBeGreaterThan(0)
+    expect(render.calls).toBe(1)
+    expect(scratchLeftoverCount()).toBe(before) // scratch file cleaned up
+
+    // A WAV Original in the same core decodes directly — the runner is untouched.
+    tc.core.downloadToLibrary(wav.id)
+    await waitUntil(() => tc.core.getStagingStatus([wav.id])[wav.id] === 'ready')
+    await waitUntil(() => tc.core.getPeaks(wav.id) != null)
+    expect(render.calls).toBe(1)
+  })
+
+  it('a render failure that reports "not audio" writes the undecodable sentinel and is not retried', async () => {
+    const before = scratchLeftoverCount()
+    const render = failingRenderRunner(
+      'ffmpeg exited with code 1: in.flac: Invalid data found when processing input',
+    )
+    const events: Array<{ soundId: number; status: string }> = []
+    const tc = await makeTestCore({
+      gateway: makeFakeGateway({ downloadBytes: () => makeWav(4000) }),
+      computePeaksRunner: countingRunner(),
+      audioRenderRunner: render,
+      onPeaksStatusChange: (c) => events.push(c),
+    })
+    cleanups.push(() => tc.core.close())
+    await tc.core.signIn()
+    tc.core.grantStagingConsent()
+    const page = await tc.core.search('rain')
+    const flac = page.sounds.find((s) => s.type === 'flac')!
+
+    tc.core.downloadToLibrary(flac.id)
+    await waitUntil(
+      () => tc.core.getStagingStatus([flac.id])[flac.id] === 'ready',
+    )
+    await waitUntil(() =>
+      events.some((e) => e.soundId === flac.id && e.status === 'unavailable'),
+    )
+
+    const db = openTemp(tc.dbPath)
+    const row = db
+      .prepare('SELECT bucket_count FROM peaks WHERE sound_id = ?')
+      .get(flac.id) as { bucket_count: number } | undefined
+    expect(row?.bucket_count).toBe(0) // sentinel
+
+    const callsAfter = render.calls
+    tc.core.requestPeaks(flac.id)
+    await sleep(20)
+    expect(render.calls).toBe(callsAfter) // sentinel short-circuits the retry
+    expect(scratchLeftoverCount()).toBe(before) // cleaned up on the failure path too
+  })
+
+  it('a transient render failure leaves the cache empty so a later visit retries', async () => {
+    const render = failingRenderRunner(
+      'ffmpeg exited with code 1: could not write to disk',
+    )
+    const events: Array<{ soundId: number; status: string }> = []
+    const tc = await makeTestCore({
+      gateway: makeFakeGateway({ downloadBytes: () => makeWav(4000) }),
+      computePeaksRunner: countingRunner(),
+      audioRenderRunner: render,
+      onPeaksStatusChange: (c) => events.push(c),
+    })
+    cleanups.push(() => tc.core.close())
+    await tc.core.signIn()
+    tc.core.grantStagingConsent()
+    const page = await tc.core.search('rain')
+    const flac = page.sounds.find((s) => s.type === 'flac')!
+
+    tc.core.downloadToLibrary(flac.id)
+    await waitUntil(
+      () => tc.core.getStagingStatus([flac.id])[flac.id] === 'ready',
+    )
+    await waitUntil(() =>
+      events.some((e) => e.soundId === flac.id && e.status === 'unavailable'),
+    )
+
+    const db = openTemp(tc.dbPath)
+    expect(
+      db.prepare('SELECT COUNT(*) AS n FROM peaks WHERE sound_id = ?').get(flac.id),
+    ).toEqual({ n: 0 }) // no row — not poisoned
+
+    const callsAfter = render.calls
+    tc.core.requestPeaks(flac.id)
+    await waitUntil(() => render.calls > callsAfter) // retried
   })
 })
 

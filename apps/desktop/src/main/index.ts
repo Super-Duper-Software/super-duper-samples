@@ -5,7 +5,7 @@
 
 import { existsSync, renameSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
 import ffmpegStaticPath from 'ffmpeg-static'
 import {
@@ -40,6 +40,22 @@ function resolveDragIconPath(): string {
     process.resourcesPath ? join(process.resourcesPath, 'drag-icon.png') : '',
   ].filter(Boolean)
   return candidates.find((p) => existsSync(p)) ?? candidates[0]!
+}
+
+/**
+ * `ffmpeg-static` exports a path computed from its own `__dirname`, which in a
+ * packaged build sits *inside* `app.asar` — a file, not a directory, so
+ * `spawn()` fails with `ENOTDIR`. electron-builder unpacks the binary to
+ * `app.asar.unpacked` (see `asarUnpack` in electron-builder.yml); rewrite the
+ * path to match. Harmless in dev, where the path contains no `app.asar` segment.
+ */
+function resolveFfmpegPath(): string | null {
+  if (!ffmpegStaticPath) return null
+  const unpacked = ffmpegStaticPath.replace(
+    `app.asar${sep}`,
+    `app.asar.unpacked${sep}`,
+  )
+  return existsSync(unpacked) ? unpacked : ffmpegStaticPath
 }
 
 /** Channel the renderer listens on for auth-state pushes (ticket 07). */
@@ -186,6 +202,26 @@ function registerIpc(core: Core): void {
     shell.openExternal('https://ko-fi.com/sparlos'),
   )
 
+  // Open the user's mail client with a message to the support address. The
+  // renderer may pass a subject / body (e.g. the "Send recent logs" button in
+  // the log viewer) but never the address — that is fixed here, so this cannot
+  // become a general "open any URL" hole.
+  ipcMain.handle(
+    'core:openSupportEmail',
+    (_event, opts?: { subject?: string; body?: string }) => {
+      // Encode with %20 for spaces (not `+`) — mail clients do not decode `+`
+      // in a mailto body back to a space.
+      const parts: string[] = []
+      if (opts?.subject)
+        parts.push(`subject=${encodeURIComponent(opts.subject)}`)
+      if (opts?.body) parts.push(`body=${encodeURIComponent(opts.body)}`)
+      const query = parts.join('&')
+      return shell.openExternal(
+        `mailto:info@superdupersoftware.net${query ? `?${query}` : ''}`,
+      )
+    },
+  )
+
   // Ticket 18 — reveal the app's own log file so a user filing a bug can attach
   // it. `shell` cannot live in core; the core supplies only the path.
   ipcMain.handle('core:showLogs', () => {
@@ -312,9 +348,10 @@ void app.whenReady().then(() => {
     // Ticket 02 — the real Edit renderer: one `ffmpeg-static` invocation per
     // export. `ffmpeg-static` resolves to `null` on an unsupported platform;
     // `createEdit` degrades to its documented silent no-op when omitted.
-    audioRenderRunner: ffmpegStaticPath
-      ? createFfmpegAudioRenderRunner(ffmpegStaticPath)
-      : undefined,
+    audioRenderRunner: (() => {
+      const ffmpegPath = resolveFfmpegPath()
+      return ffmpegPath ? createFfmpegAudioRenderRunner(ffmpegPath) : undefined
+    })(),
     // Ticket 08 — the Edit view's export dialog progress bar / cancel control.
     onEditProgress: broadcastEditProgress,
   })

@@ -168,7 +168,7 @@ describe('core.rebuildFromSidecars — Edits (ticket 06)', () => {
     expect(tc2.core.listLibrary().find((s) => s.derivedFrom === RAIN.id)).toBeUndefined()
   })
 
-  it('custom name, custom tags and Collection membership for an Edit are gone after a rebuild', async () => {
+  it("an Edit's own name survives a rebuild, but its custom tags and Collection membership do not", async () => {
     const tc1 = await makeTestCore({
       gateway: makeFakeGateway(),
       audioRenderRunner: fakeRunner(),
@@ -176,8 +176,41 @@ describe('core.rebuildFromSidecars — Edits (ticket 06)', () => {
     await stageParent(tc1.core)
     const { editId } = (await tc1.core.createEdit(RAIN.id, WHOLE_FILE_SPEC))!
     tc1.core.setCustomName(editId, 'My best take')
+    tc1.core.setLibraryTags(editId, ['favourite'])
     const collection = tc1.core.createCollection('Favorites')
     tc1.core.addToCollection(collection.id, [editId])
+    tc1.core.close()
+
+    for (const suffix of ['', '-wal', '-shm']) {
+      rmSync(tc1.dbPath + suffix, { force: true })
+    }
+
+    const tc2 = await makeTestCore({ dbPath: tc1.dbPath, dataDir: tc1.dataDir })
+    cleanups.push(() => tc2.core.close())
+    const report = await tc2.core.rebuildFromSidecars()
+
+    const recoveredEdit = tc2.core.listLibrary().find((s) => s.derivedFrom === RAIN.id)!
+    // An Edit's name is user-chosen and has no Freesound fallback (ADR-0005):
+    // the sidecar mirrors it, so a rebuild brings it back — not bare `edited`.
+    expect(recoveredEdit.effectiveName).toBe('My best take')
+    expect(recoveredEdit.customName).toBe('My best take')
+    expect(report.recovered.find((r) => r.soundId === recoveredEdit.id)?.name).toBe(
+      'My best take',
+    )
+    // Custom tags and Collections still live only in the database.
+    expect(recoveredEdit.customTags).toEqual([])
+    expect(tc2.core.listCollections()).toEqual([])
+  })
+
+  it("a later rename to an Edit is mirrored into its sidecar and survives a rebuild", async () => {
+    const tc1 = await makeTestCore({
+      gateway: makeFakeGateway(),
+      audioRenderRunner: fakeRunner(),
+    })
+    await stageParent(tc1.core)
+    const { editId } = (await tc1.core.createEdit(RAIN.id, WHOLE_FILE_SPEC))!
+    tc1.core.setCustomName(editId, 'first name')
+    tc1.core.setCustomName(editId, 'renamed later')
     tc1.core.close()
 
     for (const suffix of ['', '-wal', '-shm']) {
@@ -189,7 +222,6 @@ describe('core.rebuildFromSidecars — Edits (ticket 06)', () => {
     await tc2.core.rebuildFromSidecars()
 
     const recoveredEdit = tc2.core.listLibrary().find((s) => s.derivedFrom === RAIN.id)!
-    expect(recoveredEdit.effectiveName).toBe(recoveredEdit.name) // custom name not recovered
-    expect(recoveredEdit.customTags).toEqual([])
+    expect(recoveredEdit.effectiveName).toBe('renamed later')
   })
 })

@@ -10,6 +10,28 @@ interface LogViewerDialogProps {
 
 const TAIL_LINES = 400
 
+// A mailto: body has to survive the OS URL-length limit (Windows caps around
+// 2 KB) and stay readable in a draft, so the report carries only the tail —
+// last ~80 lines, hard-capped at 1800 chars from the end. Never the file path:
+// that would leak the user's home directory / username into an outbound email.
+const REPORT_LINES = 80
+const REPORT_CHAR_CAP = 1800
+
+function buildLogReport(lines: string[]): { subject: string; body: string } {
+  let excerpt = lines.slice(-REPORT_LINES).join('\n')
+  if (excerpt.length > REPORT_CHAR_CAP) {
+    excerpt = `…${excerpt.slice(-REPORT_CHAR_CAP)}`
+  }
+  const body = [
+    'Describe the problem here:',
+    '',
+    '',
+    '--- recent app log ---',
+    excerpt || '(nothing logged)',
+  ].join('\n')
+  return { subject: 'Super Duper Samples — log report', body }
+}
+
 export function LogViewerDialog({ onClose }: LogViewerDialogProps) {
   const [lines, setLines] = useState<string[] | null>(null)
   const [path, setPath] = useState<string | null>(null)
@@ -63,6 +85,17 @@ export function LogViewerDialog({ onClose }: LogViewerDialogProps) {
               className="rounded border border-line px-2 py-1 text-xs text-ink-muted hover:border-line-strong hover:text-ink"
             >
               Reveal file
+            </button>
+            <button
+              type="button"
+              disabled={lines === null}
+              onClick={() =>
+                void window.core.openSupportEmail(buildLogReport(lines ?? []))
+              }
+              title="Open a support email with the most recent log lines attached to the message body"
+              className="rounded border border-line px-2 py-1 text-xs text-ink-muted hover:border-line-strong hover:text-ink disabled:opacity-40"
+            >
+              Send to support
             </button>
             <button
               type="button"

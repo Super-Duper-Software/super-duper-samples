@@ -20,12 +20,19 @@ function chipClasses(name: string): string {
   return 'border-line bg-surface-raised text-ink-muted'
 }
 
-export const LicenseChip = memo(function LicenseChip({ name }: { name: string }) {
+export const LicenseChip = memo(function LicenseChip({
+  name,
+  className = '',
+}: {
+  name: string
+  /** Extra classes from the caller (e.g. `w-full` to fill an alignment slot). */
+  className?: string
+}) {
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide ${chipClasses(
+      className={`inline-flex shrink-0 items-center justify-center rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide ${chipClasses(
         name,
-      )}`}
+      )} ${className}`}
       title={`License: ${name}`}
     >
       {name}

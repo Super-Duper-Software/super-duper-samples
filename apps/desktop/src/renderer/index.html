@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- The app is always dark: it lives next to a DAW, and every DAW is dark.
+     `data-sd-theme` pins the brand's dark role tokens regardless of the OS
+     setting (see brand/BRAND.md §Light and dark). -->
+<html lang="en" data-sd-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- `media-src ... file:` (ticket 07): the Edit view's loop-audition plays a
+         Library Sound's local Original directly via a `file://` URL — without
+         this the load is blocked (a CSP console warning, not a thrown error),
+         so the audio element just silently never plays. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://cdn.freesound.org data:; media-src https://cdn.freesound.org file:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'"
+    />
+    <title>Super Duper Samples</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

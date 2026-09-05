@@ -1,0 +1,94 @@
+{
+  "count": 6,
+  "next": "https://freesound.org/apiv2/search/text/?query=loops&page=2&page_size=3",
+  "previous": null,
+  "results": [
+    {
+      "id": 500001,
+      "name": "drum loop 90bpm.wav",
+      "username": "beatmaker",
+      "license": "http://creativecommons.org/publicdomain/zero/1.0/",
+      "duration": 4.0,
+      "tags": ["drum", "loop", "90bpm", "beat"],
+      "filesize": 705600,
+      "type": "wav",
+      "samplerate": 44100.0,
+      "channels": 2,
+      "bitdepth": 16,
+      "num_downloads": 812,
+      "avg_rating": 4.2,
+      "created": "2019-03-01T10:00:00.000",
+      "url": "https://freesound.org/people/beatmaker/sounds/500001/",
+      "previews": {
+        "preview-hq-mp3": "https://cdn.freesound.org/previews/500/500001_1-hq.mp3",
+        "preview-lq-mp3": "https://cdn.freesound.org/previews/500/500001_1-lq.mp3",
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/500/500001_1-hq.ogg",
+        "preview-lq-ogg": "https://cdn.freesound.org/previews/500/500001_1-lq.ogg"
+      },
+      "images": {
+        "waveform_m": "https://cdn.freesound.org/displays/500/500001_1_wave_M.png",
+        "waveform_l": "https://cdn.freesound.org/displays/500/500001_1_wave_L.png",
+        "spectral_m": "https://cdn.freesound.org/displays/500/500001_1_spec_M.jpg",
+        "spectral_l": "https://cdn.freesound.org/displays/500/500001_1_spec_L.jpg"
+      }
+    },
+    {
+      "id": 500002,
+      "name": "bass loop Em.aiff",
+      "username": "lowend",
+      "license": "http://creativecommons.org/licenses/by/4.0/",
+      "duration": 8.0,
+      "tags": ["bass", "loop", "minor", "groove"],
+      "filesize": 1411200,
+      "type": "aiff",
+      "samplerate": 44100.0,
+      "channels": 2,
+      "bitdepth": 24,
+      "num_downloads": 402,
+      "avg_rating": 4.6,
+      "created": "2020-07-11T08:30:00.000",
+      "url": "https://freesound.org/people/lowend/sounds/500002/",
+      "previews": {
+        "preview-hq-mp3": "https://cdn.freesound.org/previews/500/500002_2-hq.mp3",
+        "preview-lq-mp3": "https://cdn.freesound.org/previews/500/500002_2-lq.mp3",
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/500/500002_2-hq.ogg",
+        "preview-lq-ogg": "https://cdn.freesound.org/previews/500/500002_2-lq.ogg"
+      },
+      "images": {
+        "waveform_m": "https://cdn.freesound.org/displays/500/500002_2_wave_M.png",
+        "waveform_l": "https://cdn.freesound.org/displays/500/500002_2_wave_L.png",
+        "spectral_m": "https://cdn.freesound.org/displays/500/500002_2_spec_M.jpg",
+        "spectral_l": "https://cdn.freesound.org/displays/500/500002_2_spec_L.jpg"
+      }
+    },
+    {
+      "id": 500003,
+      "name": "vinyl crackle loop.flac",
+      "username": "dustandnoise",
+      "license": "http://creativecommons.org/licenses/by-nc/3.0/",
+      "duration": 16.0,
+      "tags": ["vinyl", "crackle", "loop", "texture", "lofi"],
+      "filesize": 2822400,
+      "type": "flac",
+      "samplerate": 44100.0,
+      "channels": 2,
+      "bitdepth": 16,
+      "num_downloads": 1533,
+      "avg_rating": 4.0,
+      "created": "2018-12-24T21:15:00.000",
+      "url": "https://freesound.org/people/dustandnoise/sounds/500003/",
+      "previews": {
+        "preview-hq-mp3": "https://cdn.freesound.org/previews/500/500003_3-hq.mp3",
+        "preview-lq-mp3": "https://cdn.freesound.org/previews/500/500003_3-lq.mp3",
+        "preview-hq-ogg": "https://cdn.freesound.org/previews/500/500003_3-hq.ogg",
+        "preview-lq-ogg": "https://cdn.freesound.org/previews/500/500003_3-lq.ogg"
+      },
+      "images": {
+        "waveform_m": "https://cdn.freesound.org/displays/500/500003_3_wave_M.png",
+        "waveform_l": "https://cdn.freesound.org/displays/500/500003_3_wave_L.png",
+        "spectral_m": "https://cdn.freesound.org/displays/500/500003_3_spec_M.jpg",
+        "spectral_l": "https://cdn.freesound.org/displays/500/500003_3_spec_L.jpg"
+      }
+    }
+  ]
+}

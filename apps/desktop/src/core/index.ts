@@ -1,0 +1,1533 @@
+import { readdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { mapRawSound } from './gateway/mapRawSound'
+import type { FreesoundGateway, RawSearchPage } from './gateway/index'
+import type {
+  CollectionRef,
+  CollectionSummary,
+  EditSpec,
+  LibraryFilter,
+  LibrarySound,
+  SearchFilter,
+  SearchOptions,
+  SearchPrefs,
+  SearchResult,
+  SearchSort,
+  Sound,
+} from './types'
+import {
+  DEFAULT_RETRY_AFTER_SECONDS,
+  GatewayError,
+  NotSignedInError,
+  ThrottledError,
+} from './errors'
+import {
+  createLogger,
+  NULL_LOG_SINK,
+  type LogLevel,
+  type LogSink,
+  type Logger,
+} from './logging/logger'
+import {
+  EMPTY_UI_STATE,
+  mergeUiState,
+  normaliseUiState,
+  type UiState,
+} from './uiState'
+import { openDb, type DB } from './db/index'
+import { assessStartup, type StartupAssessment } from './startup/assessStartup'
+import {
+  createRebuildService,
+  type RebuildProgress,
+  type RebuildReport,
+  type RebuildRunner,
+  type RebuildService,
+} from './rebuild/rebuildService'
+import { getMeta, setMeta, UI_STATE_KEY } from './db/appMeta'
+import { getSoundsByIds, upsertSound, upsertSounds } from './db/sounds'
+import { getEditFieldsByIds, deleteSoundRow } from './db/edits'
+import {
+  deleteLibraryEntry,
+  getLibraryOverlay,
+  hasLibraryEntry,
+  libraryMembership,
+  listLibraryOverlays,
+  saveLibraryEntry,
+  setCustomName as dbSetCustomName,
+  setCustomTags as dbSetCustomTags,
+  type SortDir,
+} from './db/library'
+import {
+  createEditService,
+  type AudioRenderRunner,
+  type EditEvent,
+  type EditService,
+} from './edits/editService'
+import {
+  addMembers,
+  clearSoundFromAllCollections,
+  collectionsForSounds,
+  deleteCollectionRow,
+  getCollectionName,
+  hasCollection,
+  insertCollection,
+  listCollectionMemberIds,
+  listCollectionSummaries,
+  removeMember,
+  updateCollectionName,
+} from './db/collections'
+import { buildManifest, type Manifest } from './manifest/buildManifest'
+import {
+  hasLibraryFilter,
+  matchesLibraryFilter,
+  normaliseLibraryFilter,
+  normaliseTags,
+} from './library/libraryFilter'
+import {
+  contentPaths,
+  isOriginalOnDisk,
+  removeEditFiles,
+  writeEditSidecarCustomName,
+} from './staging/contentStore'
+import { deletePeaksRecord } from './db/peaks'
+import {
+  createPeakService,
+  type PeakRunner,
+  type PeakService,
+  type PeaksPayload,
+  type PeaksStatusChange,
+} from './peaks/peakService'
+import {
+  cacheKey,
+  readSearchCache,
+  writeSearchCache,
+  type SearchCacheParams,
+} from './db/searchCache'
+import {
+  createSearchController,
+  type SearchController,
+} from './searchController'
+import {
+  createAuthController,
+  createRealScheduler,
+  type AuthController,
+  type AuthPlatform,
+  type AuthState,
+  type Scheduler,
+} from './auth/index'
+import {
+  createStagingController,
+  type StagingController,
+  type StagingConsent,
+  type StagingStatus,
+  type StagingStatusChange,
+} from './staging/stagingController'
+import {
+  createDragController,
+  type DragController,
+  type DragStartResult,
+  type StartDragOptions,
+} from './staging/dragController'
+import type { DragHost } from './staging/dragHost'
+import { createDragRegistry } from './staging/dragRegistry'
+import {
+  DEFAULT_STAGING_BYTE_BUDGET,
+  removeContentFiles,
+  type DiskUsage,
+  type EvictionOutcome,
+} from './staging/eviction'
+
+export type { FreesoundGateway } from './gateway/index'
+export * from './types'
+export {
+  AuthError,
+  DiskError,
+  GatewayError,
+  NetworkError,
+  NotImplemented,
+  NotSignedInError,
+  ThrottledError,
+  DEFAULT_RETRY_AFTER_SECONDS,
+  classifyError,
+} from './errors'
+export type { ClassifiedError, ErrorKind } from './errors'
+export {
+  createFileLogSink,
+  createLogger,
+  formatLogLine,
+  NULL_LOG_SINK,
+  LOG_ROTATE_BYTES,
+} from './logging/logger'
+export type { Logger, LogLevel, LogSink } from './logging/logger'
+export {
+  EMPTY_UI_STATE,
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
+  mergeUiState,
+  normaliseUiState,
+} from './uiState'
+export type { ShellView, UiState, WindowBounds } from './uiState'
+export type {
+  AuthPlatform,
+  AuthState,
+  AuthStatus,
+  AwaitLoopbackCodeOptions,
+  LoopbackResult,
+  Scheduler,
+} from './auth/index'
+export {
+  createRealScheduler,
+  LoopbackPortInUseError,
+  OAuthStateMismatchError,
+  ReauthRequiredError,
+  RetryableTokenError,
+  SignInCancelledError,
+} from './auth/index'
+export {
+  DOWNLOAD_CONCURRENCY,
+  DOWNLOAD_MAX_RETRIES,
+  DOWNLOAD_RETRY_BACKOFF_MS,
+} from './staging/stagingController'
+export type {
+  StagingConsent,
+  StagingStatus,
+  StagingStatusChange,
+} from './staging/stagingController'
+export { OriginalNotStagedError } from './staging/dragController'
+export type {
+  DragController,
+  DragStartResult,
+  StartDragOptions,
+} from './staging/dragController'
+export {
+  createRecordingDragHost,
+  type DragHost,
+  type DragPayload,
+  type RecordingDragHost,
+} from './staging/dragHost'
+export {
+  DEFAULT_STAGING_BYTE_BUDGET,
+  type DiskUsage,
+  type EvictionOutcome,
+} from './staging/eviction'
+export type { LibrarySort, SortDir } from './db/library'
+export {
+  createPeakService,
+  workerRunner as createPeakWorkerRunner,
+} from './peaks/peakService'
+export type {
+  PeakRunner,
+  PeaksPayload,
+  PeaksStatus,
+  PeaksStatusChange,
+} from './peaks/peakService'
+export { BASE_BUCKET_COUNT } from './peaks/computePeaks'
+export { inspectDbHealth } from './db/index'
+export type { DbHealth } from './db/index'
+export { assessStartup, countSidecars } from './startup/assessStartup'
+export type { StartupAssessment } from './startup/assessStartup'
+export {
+  createRebuildService,
+  rebuildWorkerRunner as createRebuildWorkerRunner,
+  scanSidecars,
+  NOT_RECOVERABLE_MESSAGE,
+} from './rebuild/rebuildService'
+export type {
+  RebuildProgress,
+  RebuildReport,
+  RebuildRecovered,
+  RebuildRunner,
+  RebuildService,
+  SidecarScan,
+  ScannedSidecar,
+  MalformedSidecar,
+} from './rebuild/rebuildService'
+export { decodeAudioBuffer, UndecodableAudioError } from './peaks/decodeAudio'
+export { computePeaks } from './peaks/computePeaks'
+export { pickEditName } from './edits/editName'
+export { resolveTrim, InvalidTrimError } from './edits/trim'
+export type {
+  AudioRenderInput,
+  AudioRenderResult,
+  AudioRenderRunner,
+  EditEvent,
+} from './edits/editService'
+export { buildManifest } from './manifest/buildManifest'
+export type {
+  Manifest,
+  ManifestEntry,
+  ManifestSummary,
+  ManifestInput,
+  ManifestSourceSound,
+} from './manifest/buildManifest'
+export {
+  requiresAttribution,
+  restrictsCommercialUse,
+} from './manifest/obligations'
+
+const DEFAULT_PAGE_SIZE = 15
+const DEBOUNCE_MS = 320
+
+/** `app_meta` key holding the persisted active sort + filter (ticket 15). */
+const SEARCH_PREFS_KEY = 'search_prefs'
+
+/** `app_meta` key holding the persisted active Library filter (ticket 13). */
+const LIBRARY_FILTER_KEY = 'library_filter'
+
+/** The neutral prefs: relevance order, no filter. */
+const DEFAULT_SEARCH_PREFS: SearchPrefs = { sort: 'relevance', filter: {} }
+
+/**
+ * Collapse the default sort to `undefined` so a plain query's gateway URL and
+ * cache key are byte-for-byte what they were before ticket 15.
+ */
+function normalizeSort(sort: SearchSort | undefined): SearchSort | undefined {
+  return !sort || sort === 'relevance' ? undefined : sort
+}
+
+/**
+ * Keep only the constraining entries. An all-empty (or absent) filter becomes
+ * `undefined`, so it drops out of the cache key entirely and an "unfiltered"
+ * query hashes exactly as it did pre-ticket-15 — no migration, no collision.
+ */
+function normalizeFilter(
+  filter: SearchFilter | undefined,
+): SearchFilter | undefined {
+  if (!filter) return undefined
+  const out: SearchFilter = {}
+  if (filter.durationMin != null) out.durationMin = filter.durationMin
+  if (filter.durationMax != null) out.durationMax = filter.durationMax
+  if (filter.sampleRate != null) out.sampleRate = filter.sampleRate
+  if (filter.bitDepth != null) out.bitDepth = filter.bitDepth
+  if (filter.channels != null) out.channels = filter.channels
+  if (filter.fileType) out.fileType = filter.fileType
+  if (filter.license) out.license = filter.license
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/**
+ * Read the persisted sort + filter from `app_meta`. Any absence or corruption
+ * falls back to the neutral prefs — bad stored state must never wedge search.
+ */
+function readSearchPrefs(db: DB): SearchPrefs {
+  const raw = getMeta(db, SEARCH_PREFS_KEY)
+  if (!raw) return { ...DEFAULT_SEARCH_PREFS, filter: {} }
+  try {
+    const parsed = JSON.parse(raw) as Partial<SearchPrefs>
+    return {
+      sort: parsed.sort ?? 'relevance',
+      filter: normalizeFilter(parsed.filter) ?? {},
+    }
+  } catch {
+    return { ...DEFAULT_SEARCH_PREFS, filter: {} }
+  }
+}
+
+/**
+ * Read the persisted Library filter from `app_meta` (ticket 13). Absence or a
+ * corrupt blob falls back to the empty filter — a bad stored value must never
+ * wedge the Library view.
+ */
+function readLibraryFilter(db: DB): LibraryFilter {
+  const raw = getMeta(db, LIBRARY_FILTER_KEY)
+  if (!raw) return {}
+  try {
+    return normaliseLibraryFilter(JSON.parse(raw) as LibraryFilter)
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Read the persisted shell state (ticket 18) from `app_meta`. Absence or a
+ * corrupt blob falls back to `EMPTY_UI_STATE` — a bad stored value must never
+ * stop the app opening.
+ */
+function readUiState(db: DB): UiState {
+  const raw = getMeta(db, UI_STATE_KEY)
+  if (!raw) return { ...EMPTY_UI_STATE }
+  try {
+    return normaliseUiState(JSON.parse(raw))
+  } catch {
+    return { ...EMPTY_UI_STATE }
+  }
+}
+
+/**
+ * Empty `<userData>/drag/` of stale hardlinks (ticket 09 left this to 18). The
+ * links only matter for the lifetime of an active OS drag; anything still there
+ * at startup is from a previous run and safe to unlink. Best-effort and silent.
+ */
+function sweepDragDir(dataDir: string, logger: Logger): void {
+  const dir = join(dataDir, 'drag')
+  let entries: string[]
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return
+  }
+  let removed = 0
+  for (const name of entries) {
+    try {
+      rmSync(join(dir, name), { force: true, recursive: false })
+      removed += 1
+    } catch {
+      // A link the OS still holds open from a drag that outlived us — leave it.
+    }
+  }
+  if (removed > 0) logger.info('swept stale drag hardlinks', { removed })
+}
+
+/**
+ * The Library as `LibrarySound[]` — every `sounds` row that has a
+ * `library_entries` row, merged with the user's overlay (custom name + tags),
+ * ordered by date saved, and optionally narrowed by a structured filter. Served
+ * ENTIRELY from SQLite: no gateway call, ever.
+ */
+function readLibrary(
+  db: DB,
+  dir: SortDir,
+  filter?: LibraryFilter,
+): LibrarySound[] {
+  const overlays = listLibraryOverlays(db, dir)
+  const ids = overlays.map((o) => o.soundId)
+  const sounds = getSoundsByIds(db, ids)
+  const byId = new Map(sounds.map((s) => [s.id, s]))
+  const editFields = getEditFieldsByIds(db, ids)
+
+  const hydrated: LibrarySound[] = []
+  for (const o of overlays) {
+    const sound = byId.get(o.soundId)
+    if (!sound) continue
+    const edit = editFields.get(o.soundId)
+    hydrated.push({
+      ...sound,
+      customName: o.customName,
+      effectiveName: o.customName ?? sound.name,
+      customTags: o.customTags,
+      savedAt: o.savedAt,
+      derivedFrom: edit?.derivedFrom ?? null,
+      editSpec: edit?.editSpec ?? null,
+    })
+  }
+
+  if (!hasLibraryFilter(filter)) return hydrated
+  const f = normaliseLibraryFilter(filter)
+  return hydrated.filter((s) => matchesLibraryFilter(s, f))
+}
+
+/**
+ * A Collection's Sounds as `LibrarySound[]` — the same hydrated shape
+ * `readLibrary` produces (Sound + the user's custom name / tags / `savedAt`), so
+ * a Collection browses in the identical list UI with identical playback, drag
+ * and rename behaviour. Members are ordered most-recently-added first (`dir`
+ * flips it). Served ENTIRELY from SQLite: no gateway call, ever.
+ */
+function readCollectionSounds(
+  db: DB,
+  collectionId: number,
+  dir: SortDir,
+): LibrarySound[] {
+  const ids = listCollectionMemberIds(db, collectionId, dir)
+  const sounds = getSoundsByIds(db, ids)
+  const byId = new Map(sounds.map((s) => [s.id, s]))
+  const editFields = getEditFieldsByIds(db, ids)
+
+  const hydrated: LibrarySound[] = []
+  for (const id of ids) {
+    const sound = byId.get(id)
+    if (!sound) continue
+    const o = getLibraryOverlay(db, id)
+    if (!o) continue
+    const edit = editFields.get(id)
+    hydrated.push({
+      ...sound,
+      customName: o.customName,
+      effectiveName: o.customName ?? sound.name,
+      customTags: o.customTags,
+      savedAt: o.savedAt,
+      derivedFrom: edit?.derivedFrom ?? null,
+      editSpec: edit?.editSpec ?? null,
+    })
+  }
+  return hydrated
+}
+
+export interface CoreDeps {
+  /** The sole network boundary. */
+  gateway: FreesoundGateway
+  /** App data directory (Electron `userData` in production; a temp dir in tests). */
+  dataDir: string
+  /** Path to the SQLite database file. Opened here — never on the renderer thread. */
+  dbPath: string
+  /** Debounce window for `searchDebounced`, ms. Defaults to 250. Tests shrink it. */
+  debounceMs?: number
+
+  /**
+   * Where the app's own log is written. `src/main` wires a file sink under
+   * `<userData>/logs/`; tests inject a memory sink or omit this (→ `NULL_LOG_SINK`,
+   * so `getLogPath()` is `null` and nothing is written). Errors that reach the
+   * user are also recorded here so a bug report has something behind it.
+   */
+  logSink?: LogSink
+
+  /**
+   * The three OS capabilities the core cannot provide for itself: system
+   * browser, one-shot loopback listener, `safeStorage`. Real Electron impl in
+   * `src/main/`, fake in tests. When omitted, the auth commands throw and
+   * `getAuthState()` reports `signedOut` — search/preview still work.
+   */
+  authPlatform?: AuthPlatform
+  /** Timer seam for proactive refresh + sign-in timeout. Defaults to real timers. */
+  scheduler?: Scheduler
+  /** `FREESOUND_CLIENT_ID` (public). Required for sign-in. */
+  clientId?: string
+  /** Broadcast every auth-state transition (main forwards it to the renderer). */
+  onAuthStateChange?: (state: AuthState) => void
+
+  /** Broadcast every per-sound staging status change (main forwards it to the renderer). */
+  onStagingStatusChange?: (change: StagingStatusChange) => void
+  /** Cap on concurrent Original downloads. Defaults to `DOWNLOAD_CONCURRENCY` (3). Tests shrink it. */
+  stagingConcurrency?: number
+  /** Retry attempts after a transient download failure. Defaults to 3. */
+  stagingMaxRetries?: number
+  /** Backoff before each retry, ms. Defaults to `[1000, 3000, 9000]`. */
+  stagingBackoffMs?: readonly number[]
+
+  /**
+   * Cap on total bytes of Staged (auditioned-but-unsaved) Originals on disk.
+   * After a stage pushes the total past this, least-recently-accessed Staged
+   * Sounds are evicted — Original + sidecar + row together — until it fits.
+   * Library Sounds and Sounds with a live Drag-Out are never evicted. Runs
+   * silently, off the hot path. Defaults to `DEFAULT_STAGING_BYTE_BUDGET`
+   * (2 GiB). Tests shrink it.
+   */
+  stagingByteBudget?: number
+
+  /**
+   * The single OS drag-and-drop boundary (`webContents.startDrag`). Real impl
+   * in `src/main/`, a recording fake in tests. When omitted, `startDrag` throws
+   * and `getDragCapabilities()` reports no drag support — search/preview/staging
+   * are unaffected.
+   */
+  dragHost?: DragHost
+  /**
+   * Absolute path to the bundled fallback drag icon (a waveform glyph), used
+   * when the renderer cannot supply the Sound's own waveform as the drag image.
+   * Guarantees `startDrag` never hands the OS an empty icon.
+   */
+  dragIconFallbackPath?: string
+
+  /**
+   * Absolute path to the built `peakWorker.js`. When set, waveform-peak
+   * computation runs on a `node:worker_threads` thread — off both the Electron
+   * main process and the renderer. `src/main` passes `out/main/peakWorker.js`.
+   */
+  peakWorkerPath?: string
+  /**
+   * Test seam: replace the peak computation runner entirely (run it in-process,
+   * synchronously or behind a controllable promise). Wins over `peakWorkerPath`.
+   */
+  computePeaksRunner?: PeakRunner
+  /** Broadcast every per-sound peaks status change (main forwards it to the renderer). */
+  onPeaksStatusChange?: (change: PeaksStatusChange) => void
+
+  /**
+   * Absolute path to the built `rebuildWorker.js`. When set, the content-store
+   * scan for `rebuildFromSidecars` runs on a `node:worker_threads` thread — off
+   * the Electron main process. `src/main` passes `out/main/rebuildWorker.js`.
+   */
+  rebuildWorkerPath?: string
+  /**
+   * Test seam: replace the sidecar-scan runner entirely (in-process, or behind a
+   * controllable promise to prove `rebuildFromSidecars` does not block). Wins
+   * over `rebuildWorkerPath`.
+   */
+  rebuildRunner?: RebuildRunner
+  /** Broadcast sidecar-scan progress `{ done, total }` (main forwards it to the renderer). */
+  onRebuildProgress?: (progress: RebuildProgress) => void
+
+  /**
+   * Test/production seam: renders one Edit (trim + encode, ticket 02;
+   * whole-file copy for now). Production wraps a spawned `ffmpeg-static`
+   * binary in `src/main`; tests inject a fake. When omitted, `createEdit`
+   * is a silent no-op — the core never spawns a binary itself.
+   */
+  audioRenderRunner?: AudioRenderRunner
+  /** Broadcast Edit render progress + terminal failure (main forwards it to the renderer). */
+  onEditProgress?: (event: EditEvent) => void
+}
+
+/** The command API. Later tickets add methods here; the bridge forwards them all. */
+export interface Core {
+  /**
+   * Full-text search against Freesound, through the SQLite search cache.
+   *
+   * A cache HIT (same fully-normalized query — text, page, pageSize, and any
+   * future sort/filter params) is served entirely from the DB with ZERO gateway
+   * calls, which makes back-navigation and repeated queries free.
+   *
+   * A cache MISS costs exactly one gateway call: every returned `Sound` is
+   * persisted into `sounds`, the page's id list + `totalCount` + `hasMore` is
+   * written to `search_cache` (kept indefinitely), and the NEXT page is
+   * prefetched in the background so a scroll never stalls.
+   *
+   * An empty result set returns `{ totalCount: 0, sounds: [] }`. A failure throws
+   * a typed error — `ThrottledError` (429, with `retryAfter` seconds),
+   * `GatewayError`, or `NetworkError` — never an empty list, and never a bogus
+   * empty cache row.
+   */
+  search(query: string, opts?: SearchOptions): Promise<SearchResult>
+
+  /**
+   * Debounced `search`: rapid calls within the debounce window collapse into a
+   * single gateway request for the trailing query. The renderer calls this on
+   * every keystroke; the debounce lives here so it is tested at the core seam.
+   */
+  searchDebounced(query: string, opts?: SearchOptions): Promise<SearchResult>
+
+  /**
+   * The persisted active sort + filter state (ticket 15). Read once on startup
+   * so the renderer restores the last session's sort and filters. Returns
+   * `{ sort: 'relevance', filter: {} }` when nothing has been saved yet or the
+   * stored blob is unreadable.
+   */
+  getSearchPrefs(): SearchPrefs
+
+  /**
+   * Persist the active sort + filter state (ticket 15) into `app_meta` so it
+   * survives an app restart. The renderer calls this whenever the user changes
+   * the sort or a filter; it does NOT run a search — the renderer re-runs the
+   * query itself with the new options.
+   */
+  setSearchPrefs(prefs: SearchPrefs): SearchPrefs
+
+  /**
+   * The persisted shell state — window bounds plus the last view, search text,
+   * open Collection and selected Sound. `src/main` reads `window` before it
+   * creates the BrowserWindow so the app opens at the size and place it was left;
+   * the renderer reads the rest on mount to resume where the user was. Returns
+   * `EMPTY_UI_STATE` when nothing has been saved or the blob is unreadable.
+   */
+  getUiState(): UiState
+
+  /**
+   * Persist a patch of shell state into `app_meta`. Keys left `undefined` keep
+   * their stored value; an id key set to `null` clears it. Runs no query and
+   * never throws on a bad patch — it is normalised first.
+   */
+  setUiState(patch: Partial<UiState>): UiState
+
+  /**
+   * The path to the app's own log file, or `null` when logging is not wired
+   * (tests). The renderer offers "reveal in file manager" so a user filing a bug
+   * can attach it.
+   */
+  getLogPath(): string | null
+
+  /** The most recent `maxLines` (default 500) lines of the log, oldest first. */
+  readLog(opts?: { maxLines?: number }): string[]
+
+  /**
+   * Append one line to the app log. The renderer calls this for every error it
+   * shows the user, so what was on screen is also on disk for a bug report.
+   */
+  log(level: LogLevel, message: string, meta?: Record<string, unknown>): void
+
+  /**
+   * Sign in through the system browser (ticket 07). Opens Freesound's authorize
+   * page, catches the code on the loopback listener, exchanges it via the Worker,
+   * shows the username, and stays signed in for days with proactive refresh.
+   * Rejects (leaving state `signedOut`) on port-in-use, `state` mismatch, a
+   * cancelled/timed-out browser step, or a dead grant.
+   */
+  signIn(): Promise<AuthState>
+
+  /**
+   * Sign out: clear the stored tokens only. The Library, downloaded Originals,
+   * Collections and every other table are left untouched (CONTEXT.md § Account).
+   */
+  signOut(): Promise<void>
+
+  /** Current auth state: `signedIn` / `signedOut` / `signingIn` + `username`. */
+  getAuthState(): AuthState
+
+  /**
+   * Subscribe to auth-state transitions. Returns an unsubscribe function. Used
+   * by the main process to push state to the renderer over a `core:event`
+   * channel; the renderer itself reads `getAuthState()` + that event.
+   */
+  subscribeAuthState(listener: (state: AuthState) => void): () => void
+
+  /**
+   * The renderer's audition flow calls this on every play (fire-and-forget). The
+   * core streams the Preview elsewhere; here it enqueues a BACKGROUND download of
+   * the Original so the Sound is on disk and draggable a moment later. It first
+   * cancels the previous audition's download unless that one already finished or
+   * was saved, so skimming a list never leaves dozens of downloads running.
+   *
+   * A silent no-op while signed out, before the first-run consent is granted, or
+   * for a Sound the core has no metadata for. If the Original is already on disk
+   * it just refreshes the staged `last_access_at`.
+   */
+  stageOnAudition(soundId: number): void
+
+  /**
+   * Explicit, user-initiated download of a Sound's Original that ALSO saves the
+   * Sound to the Library once the bytes land (fire-and-forget). Backs the search
+   * row's "Download" button and the `s` shortcut. Unlike `stageOnAudition` it
+   * needs no first-run consent and never cancel-on-skips; a Sound already on
+   * disk is simply promoted into the Library. Every completed download is
+   * recorded against the rolling 24 h quota (`getDownloadsInLast24h`).
+   */
+  downloadToLibrary(soundId: number, sound?: Sound): void
+
+  /**
+   * Count of Originals downloaded from Freesound in the last rolling 24 h. Backs
+   * the always-visible "N downloads left" indicator (Freesound's cap is 2,000).
+   */
+  getDownloadsInLast24h(): number
+
+  /** Cancel a sound's queued/in-flight staged download (renderer calls this on Stop). */
+  cancelStaging(soundId: number): void
+
+  /**
+   * Per-sound staging status for the row indicator:
+   * `not-started | queued | downloading | ready | failed`.
+   */
+  getStagingStatus(ids: number[]): Record<number, StagingStatus>
+
+  /** Whether the first-run "auditioning downloads sounds" notice was acknowledged. */
+  getStagingConsent(): StagingConsent
+
+  /** Record that the user acknowledged the first-run notice. Idempotent. */
+  grantStagingConsent(): StagingConsent
+
+  /**
+   * Subscribe to per-sound staging status transitions. Returns an unsubscribe
+   * function. The main process forwards these over `core:event:stagingStatus`.
+   */
+  subscribeStagingStatus(
+    listener: (change: StagingStatusChange) => void,
+  ): () => void
+
+  /**
+   * Begin an OS drag-out of one or more Sounds whose Originals are on disk.
+   * Hardlinks each Original into a temp directory under a sanitised,
+   * human-readable name and hands those paths to the OS through `DragHost` — the
+   * content-store path (`<id>.<ext>`) is never dragged, and a Preview is never
+   * substituted. Throws `OriginalNotStagedError` (never a silent no-op) if a
+   * requested Sound's Original is not yet staged. A multi-Sound request collapses
+   * to the first Sound on platforms where ticket 01 did not verify that every
+   * file is delivered.
+   */
+  startDrag(
+    soundIds: number | readonly number[],
+    opts?: StartDragOptions,
+  ): DragStartResult
+
+  /**
+   * Drag capabilities for the current platform. `multiSound` is true only where
+   * ticket 01 verified multi-file drag delivers every file (macOS); the UI must
+   * not offer multi-Sound drag when it is false.
+   */
+  getDragCapabilities(): { multiSound: boolean }
+
+  /**
+   * Signal that an OS drag-out of these Sounds has finished (the renderer calls
+   * this from `dragend`, whatever the drop outcome). It releases the
+   * eviction-skip hold that `startDrag` placed on each Sound's Original. Safe to
+   * call with unknown ids, and harmless if a matching `startDrag` never ran — an
+   * unreleased hold also self-expires after a short TTL.
+   */
+  endDrag(soundIds: number | readonly number[]): void
+
+  /**
+   * Current on-disk footprint in bytes, split by intent: `staged` (auditioned
+   * but unsaved), `library` (explicitly kept), and their `total`. For the "disk
+   * usage" panel — the only place staging size is ever surfaced to the user.
+   */
+  getDiskUsage(): Promise<DiskUsage>
+
+  /**
+   * Delete every Staged Original, its sidecar and its `staged_entries` row to
+   * reclaim space now, without waiting for the byte budget to force it. The
+   * Library is left completely untouched; a Sound with a live Drag-Out is
+   * skipped. Resolves with what was removed (`evicted`, `freedBytes`) and what
+   * was spared (`skipped`).
+   */
+  clearStaged(): Promise<EvictionOutcome>
+
+  /**
+   * Save a Sound to the Library — the user's statement of intent to KEEP it
+   * (CONTEXT.md § Library). This is a pure DB write: one `library_entries` row
+   * with `saved_at = now`, and — if the Sound was Staged — its `staged_entries`
+   * row is dropped in the same transaction. The Original is NEVER moved or
+   * copied; the bytes already on disk simply change owner, which is what makes
+   * saving instant (ADR-0003).
+   *
+   * IDEMPOTENT: saving an already-saved Sound keeps the original `saved_at` and
+   * never creates a duplicate — a harmless no-op, never a throw.
+   *
+   * A `sounds` row must exist. Pass the `Sound` (a search result or a Staged
+   * Sound always carries one) and it is upserted first; if none is passed and no
+   * row exists, this throws rather than saving a Sound with no metadata.
+   *
+   * `collectionIds` files the Sound into those Collections in the SAME
+   * transaction as the save (ticket 16) — so filing at save time is one action,
+   * not a separate step. Each id must be an existing Collection or this throws
+   * (before writing anything). Idempotent per Collection.
+   */
+  saveToLibrary(
+    soundId: number,
+    sound?: Sound,
+    collectionIds?: readonly number[],
+  ): void
+
+  /**
+   * Batch "is this in the Library?" for search-result badging, so the user does
+   * not download the same thing twice. One cheap indexed query; every requested
+   * id appears in the result (`false` when absent).
+   */
+  getLibraryMembership(ids: number[]): Record<number, boolean>
+
+  /**
+   * The Library as `LibrarySound[]` (each `Sound` merged with the user's overlay
+   * — custom name + custom tags + `savedAt`), ordered by the date each was saved.
+   * `dir` defaults to `desc` (newest-saved first — "what did I gather for this
+   * project"). Makes NO gateway call: served entirely from the local `sounds` +
+   * `library_entries` tables, so it works fully offline and while signed out.
+   */
+  listLibrary(opts?: { sort?: 'savedAt'; dir?: SortDir }): LibrarySound[]
+
+  /**
+   * The Library narrowed by a structured filter (ticket 13) — by tag, License,
+   * duration, file format and/or a free-text term, composing with AND. Served
+   * ENTIRELY from the database: it never issues a network request, so it is
+   * instant and works offline. An absent / all-empty filter is identical to
+   * `listLibrary`.
+   */
+  filterLibrary(
+    filter: LibraryFilter,
+    opts?: { sort?: 'savedAt'; dir?: SortDir },
+  ): LibrarySound[]
+
+  /**
+   * Give a Library Sound the user's own name (or clear it with `null` / `''`).
+   * Writes ONLY `library_entries.custom_name` — the Sound's author, License,
+   * Freesound name and URL are untouched, so the link to the original is never
+   * severed. The custom name is what a Drag-Out delivers on the file (sanitised
+   * for the filesystem at drag time); the Freesound name is used when it is
+   * unset. Throws if the Sound is not in the Library.
+   *
+   * For an Edit (negative id) the name is also mirrored into its content-store
+   * sidecar (`customName`), because an Edit has no Freesound name to fall back
+   * on and a Library rebuild would otherwise resurrect it as bare `edited`
+   * (ADR-0005). That mirror is best-effort and never fails the rename.
+   */
+  setCustomName(soundId: number, customName: string | null): void
+
+  /**
+   * Replace a Library Sound's own tag list (ticket 13) — the user's tags, kept
+   * separate from the tags inherited from Freesound. Tags are trimmed, de-duped
+   * (case-insensitively) and empties dropped. Pass `[]` to clear them. Throws if
+   * the Sound is not in the Library.
+   */
+  setLibraryTags(soundId: number, tags: string[]): void
+
+  /**
+   * The persisted active Library filter (ticket 13), restored on startup so the
+   * Library view reopens with the user's last filter. `{}` when nothing is saved
+   * or the stored blob is unreadable.
+   */
+  getLibraryFilter(): LibraryFilter
+
+  /**
+   * Persist the active Library filter (ticket 13) into `app_meta`. Does NOT run a
+   * query — the renderer re-reads the Library itself with the new filter.
+   */
+  setLibraryFilter(filter: LibraryFilter): LibraryFilter
+
+  /**
+   * Remove a Sound from the Library: delete its `library_entries` row AND unlink
+   * its Original + sidecar to reclaim disk (Original first, so no orphan audio).
+   * The `sounds` metadata row is kept — the Sound may reappear as an ordinary
+   * search result, just without a Library badge. Makes NO gateway call.
+   */
+  deleteFromLibrary(soundId: number): Promise<void>
+
+  /**
+   * Absolute path to a Sound's Original in the content store, or `null` if it is
+   * not on disk. Pure data for the main process's `shell.showItemInFolder`
+   * ("reveal in Finder/Explorer") — the core cannot call `shell` itself.
+   */
+  getContentPath(soundId: number): string | null
+
+  /**
+   * A Sound's page on freesound.org, or `null` if the core has no metadata for
+   * it. Pure data for the main process's `shell.openExternal` ("open on
+   * freesound.org").
+   */
+  getFreesoundUrl(soundId: number): string | null
+
+  /**
+   * Create a named Collection (CONTEXT.md § Collection). The name is trimmed;
+   * an empty name throws. Returns the new Collection with `count: 0`. Names are
+   * not required to be unique — two "Weather" Collections are allowed.
+   */
+  createCollection(name: string): CollectionSummary
+
+  /** Rename a Collection. The name is trimmed; an empty name throws. No-op if the id is unknown. */
+  renameCollection(collectionId: number, name: string): void
+
+  /**
+   * Delete a Collection. Removes ONLY the `collections` row and its
+   * `collection_members` rows — every member Sound stays in the Library and in
+   * any other Collection. The renderer confirms with the user first
+   * (`window.confirm`, consistent with the Library delete). No-op if unknown.
+   */
+  deleteCollection(collectionId: number): void
+
+  /**
+   * Add one or more Sounds to a Collection in a single transaction. Idempotent —
+   * a Sound already in the Collection is untouched and never duplicated, so
+   * batch-adding a mixed selection is safe. Throws if the Collection does not
+   * exist, or if any Sound is not in the Library (a Collection is a set of
+   * Library Sounds — a Staged Sound cannot belong to one).
+   */
+  addToCollection(collectionId: number, soundIds: readonly number[]): void
+
+  /**
+   * Remove a Sound from a Collection. Deletes only the membership — the Sound
+   * stays in the Library and in every other Collection it belongs to. No-op if
+   * the Sound was not in the Collection.
+   */
+  removeFromCollection(collectionId: number, soundId: number): void
+
+  /**
+   * Every Collection with its current member count, ordered by name. Served
+   * entirely from the database — no gateway call.
+   */
+  listCollections(): CollectionSummary[]
+
+  /**
+   * A Collection's Sounds as `LibrarySound[]` (Sound + the user's custom name /
+   * tags), most-recently-added first (`dir` flips it). Served ENTIRELY from the
+   * local database — it makes NO gateway call (a test asserts this) — so a
+   * Collection browses, plays and drags exactly like the Library, offline and
+   * signed out.
+   */
+  listCollectionSounds(
+    collectionId: number,
+    opts?: { dir?: SortDir },
+  ): LibrarySound[]
+
+  /**
+   * For each requested Sound id, the Collections it belongs to (`{ id, name }`).
+   * Every requested id is present in the result (mapped to `[]` when the Sound
+   * is in no Collection). Drives the per-row "in these Collections" badges.
+   */
+  getCollectionsForSounds(
+    soundIds: number[],
+  ): Record<number, CollectionRef[]>
+
+  /**
+   * Generate an Attribution Manifest for a Collection (ticket 17) — a
+   * human-readable credits document naming every member Sound's title, author,
+   * License and Freesound URL, grouping attribution-required Sounds apart from
+   * CC0, and flagging any Sound licensed for non-commercial use only.
+   *
+   * The result is a SNAPSHOT: it is rendered from the Collection's membership at
+   * the moment of the call and is a plain value — it does not change when the
+   * Collection is edited afterwards. `manifest.text` is the plain-text document
+   * to copy or save verbatim.
+   *
+   * An empty Collection returns a Manifest whose `text` is a clear message, not
+   * a blank document. Throws if the Collection does not exist.
+   */
+  generateManifest(collectionId: number): Manifest
+
+  /**
+   * Cached waveform peaks for a Sound, or `null` when there are none — the
+   * Original is not on disk, or it could not be decoded, or computation has not
+   * finished yet. The renderer draws a sharp <canvas> waveform from these and
+   * falls back to the Freesound waveform image on `null` (no discontinuity when
+   * peaks later arrive). Reads the SQLite cache only — never computes — so it is
+   * instant on every revisit.
+   */
+  getPeaks(soundId: number): PeaksPayload | null
+
+  /**
+   * Ensure peaks exist for a Sound. Returns immediately: if peaks are cached the
+   * status is announced synchronously, otherwise — when the Original is on disk —
+   * decoding + the min/max sweep run OFF this thread (a `worker_threads` Worker
+   * in production) and the outcome is announced when done. Deduped per Sound and
+   * computed at most once ever (an undecodable Original is remembered as such).
+   * The long computation of a long recording never blocks this call or any other
+   * command.
+   */
+  requestPeaks(soundId: number): void
+
+  /**
+   * Subscribe to per-sound peaks status transitions (`ready` / `unavailable`).
+   * Returns an unsubscribe function. The main process forwards these over
+   * `core:event:peaksStatus`; the renderer re-reads `getPeaks` on `ready`.
+   */
+  subscribePeaksStatus(
+    listener: (change: PeaksStatusChange) => void,
+  ): () => void
+
+  /**
+   * The startup health verdict, captured BEFORE the database was opened: whether
+   * the DB file was usable, how many sidecars are in the content store, and
+   * whether the renderer should offer a rebuild rather than show an empty
+   * Library. Carries `notRecoverable` — the sentence to show the user first.
+   */
+  getStartupAssessment(): StartupAssessment
+
+  /**
+   * Reconstruct `sounds` rows and Library membership from the content store's
+   * `<id>.json` sidecars alone — the recovery path ADR-0002 promises. The scan
+   * runs OFF the main thread (a Worker in production) and reports progress via
+   * `subscribeRebuildProgress`; this call returns as soon as the scan resolves
+   * and never blocks other commands while it runs.
+   *
+   * Returns a structured report: what was `recovered` (each with author +
+   * License), `orphanAudio` (Originals with no sidecar — reported, never
+   * imported, never deleted), `orphanSidecars` (sidecars with no Original —
+   * reported and their `.json` removed), `malformed` (bad sidecars, reported
+   * individually — one never aborts the run), and `notRecoverable` (custom
+   * names, custom tags and Collections). Safe to re-run.
+   */
+  rebuildFromSidecars(): Promise<RebuildReport>
+
+  /**
+   * Subscribe to sidecar-scan progress (`{ done, total }`) during a
+   * `rebuildFromSidecars` run. Returns an unsubscribe function. The main process
+   * forwards these over `core:event:rebuildProgress`.
+   */
+  subscribeRebuildProgress(listener: (p: RebuildProgress) => void): () => void
+
+  /**
+   * Render `parentSoundId`'s Original into a new Edit — a derived local
+   * Sound with a negative id, born straight into the Library (ADR-0005).
+   * Resolves `{ editId }` once the file + sidecar are on disk and the
+   * `sounds` / `library_entries` rows are written. Resolves `null` — a
+   * silent no-op, never touching the gateway — when the parent is unknown,
+   * its Original is not on disk, or the render was cancelled via
+   * `cancelEdit`. Rejects on a genuine render failure.
+   */
+  createEdit(
+    parentSoundId: number,
+    spec: EditSpec,
+  ): Promise<{ editId: number } | null>
+
+  /** Abort an in-flight `createEdit` render for this parent. No-op if none is running. */
+  cancelEdit(parentSoundId: number): void
+
+  /**
+   * Subscribe to Edit render progress (`{ status: 'progress', progress }`)
+   * and terminal failure (`{ status: 'failed', error }`). Returns an
+   * unsubscribe function.
+   */
+  subscribeEditProgress(listener: (event: EditEvent) => void): () => void
+
+  /** Release the database handle and cancel any pending debounced/refresh timers. */
+  close(): void
+}
+
+/**
+ * Stand-in when the core is built without `authPlatform` (some unit tests, and
+ * any environment where OAuth is not configured). Its state stays `signedOut`,
+ * so `runSearch` rejects with `NotSignedInError` before it would ever reach
+ * `authorized()` here (ADR-0004: there is no token-auth fallback).
+ */
+function unconfiguredAuth(
+  onStateChange?: (s: AuthState) => void,
+): AuthController {
+  const state: AuthState = {
+    status: 'signedOut',
+    username: null,
+    reauthRequired: false,
+  }
+  const notConfigured = () =>
+    Promise.reject(
+      new Error(
+        'Authentication is not configured (missing AuthPlatform / FREESOUND_CLIENT_ID).',
+      ),
+    )
+  onStateChange?.(state)
+  return {
+    signIn: notConfigured as AuthController['signIn'],
+    signOut: () => Promise.resolve(),
+    getState: () => state,
+    subscribe: () => () => {},
+    authorized: notConfigured as AuthController['authorized'],
+    close: () => {},
+  }
+}
+
+export function createCore(deps: CoreDeps): Core {
+  const { gateway, dbPath, debounceMs = DEBOUNCE_MS } = deps
+
+  const startupAssessment = assessStartup({ dbPath, dataDir: deps.dataDir })
+
+  const db: DB = openDb(dbPath)
+
+  const logger: Logger = createLogger(deps.logSink ?? NULL_LOG_SINK)
+
+  sweepDragDir(deps.dataDir, logger)
+
+  const scheduler: Scheduler = deps.scheduler ?? createRealScheduler()
+
+  const auth: AuthController =
+    deps.authPlatform && deps.scheduler
+      ? createAuthController({
+          gateway,
+          platform: deps.authPlatform,
+          scheduler: deps.scheduler,
+          db,
+          clientId: deps.clientId ?? '',
+          onStateChange: deps.onAuthStateChange,
+        })
+      : unconfiguredAuth(deps.onAuthStateChange)
+
+  const dragRegistry = createDragRegistry()
+
+  const peakService: PeakService = createPeakService({
+    db,
+    dataDir: deps.dataDir,
+    peakWorkerPath: deps.peakWorkerPath,
+    runner: deps.computePeaksRunner,
+    audioRenderRunner: deps.audioRenderRunner,
+    onStatusChange: deps.onPeaksStatusChange,
+  })
+
+  const rebuild: RebuildService = createRebuildService({
+    db,
+    dataDir: deps.dataDir,
+    rebuildWorkerPath: deps.rebuildWorkerPath,
+    runner: deps.rebuildRunner,
+    onProgress: deps.onRebuildProgress,
+  })
+
+  const edits: EditService = createEditService({
+    db,
+    dataDir: deps.dataDir,
+    runner: deps.audioRenderRunner,
+    onEvent: deps.onEditProgress,
+  })
+
+  const staging: StagingController = createStagingController({
+    db,
+    dataDir: deps.dataDir,
+    gateway,
+    auth,
+    scheduler,
+    onStatusChange: (change) => {
+      if (change.status === 'failed') {
+        logger.warn('staged download failed', { soundId: change.soundId })
+      }
+      deps.onStagingStatusChange?.(change)
+    },
+    onOriginalReady: (soundId) => peakService.requestPeaks(soundId),
+    byteBudget: deps.stagingByteBudget ?? DEFAULT_STAGING_BYTE_BUDGET,
+    inFlightDrags: dragRegistry,
+    concurrency: deps.stagingConcurrency,
+    maxRetries: deps.stagingMaxRetries,
+    backoffMs: deps.stagingBackoffMs,
+  })
+
+  const drag: DragController | undefined = deps.dragHost
+    ? createDragController({
+        db,
+        dataDir: deps.dataDir,
+        dragHost: deps.dragHost,
+        fallbackIconPath: deps.dragIconFallbackPath,
+        dragRegistry,
+      })
+    : undefined
+
+  function requireDrag(): DragController {
+    if (!drag) {
+      throw new Error('Drag-out is not configured (no DragHost was provided).')
+    }
+    return drag
+  }
+
+  const inFlight = new Map<string, Promise<SearchResult>>()
+
+  function fromCache(
+    query: string,
+    page: number,
+    pageSize: number,
+    cached: NonNullable<ReturnType<typeof readSearchCache>>,
+  ): SearchResult {
+    return {
+      query,
+      totalCount: cached.totalCount,
+      page,
+      pageSize,
+      sounds: getSoundsByIds(db, cached.soundIds),
+      hasMore: cached.hasMore,
+    }
+  }
+
+  async function fetchAndStore(
+    query: string,
+    page: number,
+    pageSize: number,
+    sort: SearchSort | undefined,
+    filter: SearchFilter | undefined,
+    ck: ReturnType<typeof cacheKey>,
+    allowPrefetch: boolean,
+  ): Promise<SearchResult> {
+    let raw: RawSearchPage
+    try {
+      raw = await auth.authorized((accessToken) =>
+        gateway.search(
+          {
+            query: query.trim(),
+            page,
+            pageSize,
+            ...(sort ? { sort } : {}),
+            ...(filter ? { filter } : {}),
+          },
+          accessToken,
+        ),
+      )
+    } catch (err) {
+      const typed = asTypedError(err)
+      logger.warn('search failed', {
+        query: query.trim(),
+        page,
+        error: typed instanceof Error ? typed.name : String(typed),
+        message: typed instanceof Error ? typed.message : undefined,
+      })
+      throw typed
+    }
+
+    const sounds = raw.results.map(mapRawSound)
+    const hasMore = sounds.length > 0 && page * pageSize < raw.count
+
+    upsertSounds(db, sounds)
+    writeSearchCache(db, ck, {
+      soundIds: sounds.map((s) => s.id),
+      totalCount: raw.count,
+      hasMore,
+    })
+
+    if (allowPrefetch && hasMore) {
+      prefetchNextPage(query, page, pageSize, sort, filter)
+    }
+
+    return { query, totalCount: raw.count, page, pageSize, sounds, hasMore }
+  }
+
+  function runSearch(
+    query: string,
+    opts: SearchOptions | undefined,
+    allowPrefetch: boolean,
+  ): Promise<SearchResult> {
+    const page = opts?.page ?? 1
+    const pageSize = opts?.pageSize ?? DEFAULT_PAGE_SIZE
+    const sort = normalizeSort(opts?.sort)
+    const filter = normalizeFilter(opts?.filter)
+    const trimmed = query.trim()
+
+    if (trimmed === '') {
+      return Promise.resolve({
+        query,
+        totalCount: 0,
+        page,
+        pageSize,
+        sounds: [],
+        hasMore: false,
+      })
+    }
+
+    if (auth.getState().status !== 'signedIn') {
+      return Promise.reject(new NotSignedInError())
+    }
+
+    const params: SearchCacheParams = {
+      query: trimmed,
+      page,
+      pageSize,
+      sort,
+      filter,
+    }
+    const ck = cacheKey(params)
+
+    const cached = readSearchCache(db, ck.key)
+    if (cached) return Promise.resolve(fromCache(query, page, pageSize, cached))
+
+    const existing = inFlight.get(ck.key)
+    if (existing) return existing
+
+    const p = fetchAndStore(
+      query,
+      page,
+      pageSize,
+      sort,
+      filter,
+      ck,
+      allowPrefetch,
+    ).finally(() => {
+      inFlight.delete(ck.key)
+    })
+    inFlight.set(ck.key, p)
+    return p
+  }
+
+  function prefetchNextPage(
+    query: string,
+    page: number,
+    pageSize: number,
+    sort: SearchSort | undefined,
+    filter: SearchFilter | undefined,
+  ): void {
+    const nextParams: SearchCacheParams = {
+      query: query.trim(),
+      page: page + 1,
+      pageSize,
+      sort,
+      filter,
+    }
+    const { key } = cacheKey(nextParams)
+    if (inFlight.has(key) || readSearchCache(db, key)) return
+    void runSearch(
+      query,
+      { page: page + 1, pageSize, sort, filter },
+      false,
+    ).catch(() => {})
+  }
+
+  const controller: SearchController = createSearchController(
+    { search: (q, o) => runSearch(q, o, true) },
+    { debounceMs },
+  )
+
+  return {
+    search: (query, opts) => runSearch(query, opts, true),
+    searchDebounced: (query, opts) => controller.query(query, opts),
+    getSearchPrefs: () => readSearchPrefs(db),
+    setSearchPrefs: (prefs) => {
+      const clean: SearchPrefs = {
+        sort: prefs.sort ?? 'relevance',
+        filter: normalizeFilter(prefs.filter) ?? {},
+      }
+      setMeta(db, SEARCH_PREFS_KEY, JSON.stringify(clean))
+      return clean
+    },
+
+    getUiState: () => readUiState(db),
+    setUiState: (patch) => {
+      const next = mergeUiState(readUiState(db), patch ?? {})
+      setMeta(db, UI_STATE_KEY, JSON.stringify(next))
+      return next
+    },
+    getLogPath: () => logger.path(),
+    readLog: (opts) => logger.read(opts?.maxLines ?? 500),
+    log: (level, message, meta) => logger[level]?.(message, meta),
+    signIn: () => auth.signIn(),
+    signOut: () => auth.signOut(),
+    getAuthState: () => auth.getState(),
+    subscribeAuthState: (listener) => auth.subscribe(listener),
+    stageOnAudition: (soundId) => staging.stageOnAudition(soundId),
+    downloadToLibrary: (soundId, sound) =>
+      staging.downloadToLibrary(soundId, sound),
+    getDownloadsInLast24h: () => staging.getDownloadsInLast24h(),
+    cancelStaging: (soundId) => staging.cancelStaging(soundId),
+    getStagingStatus: (ids) => staging.getStagingStatus(ids),
+    getStagingConsent: () => staging.getStagingConsent(),
+    grantStagingConsent: () => staging.grantStagingConsent(),
+    subscribeStagingStatus: (listener) => staging.subscribe(listener),
+    startDrag: (soundIds, opts) => requireDrag().startDrag(soundIds, opts),
+    getDragCapabilities: () => ({
+      multiSound: drag?.multiSoundDragSupported ?? false,
+    }),
+    endDrag: (soundIds) =>
+      dragRegistry.end(typeof soundIds === 'number' ? [soundIds] : soundIds),
+    getDiskUsage: () => staging.getDiskUsage(),
+    clearStaged: () => staging.clearStaged(),
+
+    saveToLibrary: (soundId, sound, collectionIds) => {
+      if (sound) upsertSound(db, sound)
+      if (!getSoundsByIds(db, [soundId])[0]) {
+        throw new Error(
+          `saveToLibrary: no metadata for sound ${soundId} — search or audition it first`,
+        )
+      }
+      const fileInto = collectionIds ?? []
+      for (const cid of fileInto) {
+        if (!hasCollection(db, cid)) {
+          throw new Error(`saveToLibrary: no collection ${cid}`)
+        }
+      }
+      const now = Date.now()
+      const tx = db.transaction(() => {
+        saveLibraryEntry(db, soundId, now)
+        for (const cid of fileInto) addMembers(db, cid, [soundId], now)
+      })
+      tx()
+    },
+    getLibraryMembership: (ids) => libraryMembership(db, ids),
+    listLibrary: (opts) => readLibrary(db, opts?.dir ?? 'desc'),
+    filterLibrary: (filter, opts) =>
+      readLibrary(db, opts?.dir ?? 'desc', filter),
+    setCustomName: (soundId, customName) => {
+      if (!hasLibraryEntry(db, soundId)) {
+        throw new Error(
+          `setCustomName: sound ${soundId} is not in the Library — save it first`,
+        )
+      }
+      const trimmed = (customName ?? '').trim()
+      const next = trimmed === '' ? null : trimmed
+      dbSetCustomName(db, soundId, next)
+      if (soundId < 0) {
+        const localPath = getEditFieldsByIds(db, [soundId]).get(soundId)?.localPath
+        if (localPath) {
+          try {
+            writeEditSidecarCustomName(localPath, next)
+          } catch (err) {
+            logger.warn('failed to mirror Edit name into its sidecar', {
+              soundId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
+      }
+    },
+    setLibraryTags: (soundId, tags) => {
+      if (!hasLibraryEntry(db, soundId)) {
+        throw new Error(
+          `setLibraryTags: sound ${soundId} is not in the Library — save it first`,
+        )
+      }
+      dbSetCustomTags(db, soundId, normaliseTags(tags))
+    },
+    getLibraryFilter: () => readLibraryFilter(db),
+    setLibraryFilter: (filter) => {
+      const clean = normaliseLibraryFilter(filter)
+      setMeta(db, LIBRARY_FILTER_KEY, JSON.stringify(clean))
+      return clean
+    },
+    deleteFromLibrary: async (soundId) => {
+      const isEdit = soundId < 0
+      const sound = getSoundsByIds(db, [soundId])[0]
+      const editLocalPath = isEdit
+        ? getEditFieldsByIds(db, [soundId]).get(soundId)?.localPath
+        : null
+      db.transaction(() => {
+        deleteLibraryEntry(db, soundId)
+        clearSoundFromAllCollections(db, soundId)
+        deletePeaksRecord(db, soundId)
+        if (isEdit) deleteSoundRow(db, soundId)
+      })()
+      if (isEdit) {
+        if (editLocalPath) await removeEditFiles(editLocalPath)
+      } else if (sound) {
+        await removeContentFiles(deps.dataDir, sound)
+      }
+    },
+    getPeaks: (soundId) => peakService.getPeaks(soundId),
+    requestPeaks: (soundId) => peakService.requestPeaks(soundId),
+    subscribePeaksStatus: (listener) => peakService.subscribe(listener),
+    getContentPath: (soundId) => {
+      if (soundId < 0) {
+        const edit = getEditFieldsByIds(db, [soundId]).get(soundId)
+        return edit?.localPath ?? null
+      }
+      const sound = getSoundsByIds(db, [soundId])[0]
+      if (!sound || !isOriginalOnDisk(deps.dataDir, sound)) return null
+      return contentPaths(deps.dataDir, sound).original
+    },
+    getFreesoundUrl: (soundId) => getSoundsByIds(db, [soundId])[0]?.url ?? null,
+
+    createCollection: (name) => {
+      const clean = name.trim()
+      if (clean === '') throw new Error('createCollection: name is empty')
+      const id = insertCollection(db, clean, Date.now())
+      return { id, name: clean, count: 0 }
+    },
+    renameCollection: (collectionId, name) => {
+      const clean = name.trim()
+      if (clean === '') throw new Error('renameCollection: name is empty')
+      updateCollectionName(db, collectionId, clean)
+    },
+    deleteCollection: (collectionId) => deleteCollectionRow(db, collectionId),
+    addToCollection: (collectionId, soundIds) => {
+      if (!hasCollection(db, collectionId)) {
+        throw new Error(`addToCollection: no collection ${collectionId}`)
+      }
+      for (const id of soundIds) {
+        if (!hasLibraryEntry(db, id)) {
+          throw new Error(
+            `addToCollection: sound ${id} is not in the Library — save it first`,
+          )
+        }
+      }
+      addMembers(db, collectionId, soundIds, Date.now())
+    },
+    removeFromCollection: (collectionId, soundId) =>
+      removeMember(db, collectionId, soundId),
+    listCollections: () => listCollectionSummaries(db),
+    listCollectionSounds: (collectionId, opts) =>
+      readCollectionSounds(db, collectionId, opts?.dir ?? 'desc'),
+    getCollectionsForSounds: (soundIds) => collectionsForSounds(db, soundIds),
+    generateManifest: (collectionId) => {
+      const name = getCollectionName(db, collectionId)
+      if (name === null) {
+        throw new Error(`generateManifest: no collection ${collectionId}`)
+      }
+      const sounds = readCollectionSounds(db, collectionId, 'desc')
+
+      const parentIds = sounds
+        .map((s) => s.derivedFrom)
+        .filter((id): id is number => id != null)
+      const parentNameById = new Map(
+        getSoundsByIds(db, parentIds).map((p) => [p.id, p.name]),
+      )
+      const soundsForManifest = sounds.map((s) =>
+        s.derivedFrom != null && parentNameById.has(s.derivedFrom)
+          ? { ...s, name: parentNameById.get(s.derivedFrom)! }
+          : s,
+      )
+
+      return buildManifest({
+        collectionId,
+        collectionName: name,
+        generatedAt: Date.now(),
+        sounds: soundsForManifest,
+      })
+    },
+
+    getStartupAssessment: () => startupAssessment,
+    rebuildFromSidecars: () => rebuild.rebuildFromSidecars(),
+    subscribeRebuildProgress: (listener) => rebuild.subscribe(listener),
+
+    createEdit: (parentSoundId, spec) => edits.createEdit(parentSoundId, spec),
+    cancelEdit: (parentSoundId) => edits.cancelEdit(parentSoundId),
+    subscribeEditProgress: (listener) => edits.subscribe(listener),
+
+    close: () => {
+      controller.dispose()
+      staging.close()
+      peakService.close()
+      rebuild.close()
+      edits.close()
+      auth.close()
+      dragRegistry.clear()
+      db.close()
+    },
+  }
+}
+
+/** Map a 429 gateway error to the distinct `ThrottledError`; pass anything else through. */
+function asTypedError(err: unknown): unknown {
+  if (err instanceof GatewayError && err.status === 429) {
+    return new ThrottledError(err.retryAfter ?? DEFAULT_RETRY_AFTER_SECONDS)
+  }
+  return err
+}

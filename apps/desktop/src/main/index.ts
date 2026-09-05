@@ -1,0 +1,342 @@
+import { existsSync, renameSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
+import { join, sep } from 'node:path'
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from 'electron'
+import ffmpegStaticPath from 'ffmpeg-static'
+import {
+  assessStartup,
+  createCore,
+  createFileLogSink,
+  createRealScheduler,
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
+  type AuthState,
+  type Core,
+  type EditEvent,
+  type PeaksStatusChange,
+  type RebuildProgress,
+  type StagingStatusChange,
+  type WindowBounds,
+} from '../core'
+import { HttpFreesoundGateway } from '../core/gateway/http'
+import { createElectronAuthPlatform } from './authPlatform'
+import { createElectronDragHost } from './dragHost'
+import { createFfmpegAudioRenderRunner } from './ffmpegRunner'
+import { loadConfig } from './config'
+
+/**
+ * The bundled fallback drag icon (ticket 09). In the electron-vite `out/` layout
+ * `__dirname` is `out/main`, so the committed `resources/` dir sits two levels
+ * up; a packaged build (ticket 19) will ship it under `process.resourcesPath`.
+ */
+function resolveDragIconPath(): string {
+  const candidates = [
+    join(__dirname, '../../resources/drag-icon.png'),
+    process.resourcesPath ? join(process.resourcesPath, 'drag-icon.png') : '',
+  ].filter(Boolean)
+  return candidates.find((p) => existsSync(p)) ?? candidates[0]!
+}
+
+/**
+ * `ffmpeg-static` exports a path computed from its own `__dirname`, which in a
+ * packaged build sits *inside* `app.asar` — a file, not a directory, so
+ * `spawn()` fails with `ENOTDIR`. electron-builder unpacks the binary to
+ * `app.asar.unpacked` (see `asarUnpack` in electron-builder.yml); rewrite the
+ * path to match. Harmless in dev, where the path contains no `app.asar` segment.
+ */
+function resolveFfmpegPath(): string | null {
+  if (!ffmpegStaticPath) return null
+  const unpacked = ffmpegStaticPath.replace(
+    `app.asar${sep}`,
+    `app.asar.unpacked${sep}`,
+  )
+  return existsSync(unpacked) ? unpacked : ffmpegStaticPath
+}
+
+/** Channel the renderer listens on for auth-state pushes (ticket 07). */
+const AUTH_STATE_CHANNEL = 'core:event:authState'
+/** Channel the renderer listens on for per-sound staging status pushes (ticket 08). */
+const STAGING_STATUS_CHANNEL = 'core:event:stagingStatus'
+/** Channel the renderer listens on for per-sound computed-peaks status pushes (ticket 12). */
+const PEAKS_STATUS_CHANNEL = 'core:event:peaksStatus'
+/** Channel the main process pushes a "your database is gone — rebuild?" offer on (ticket 14). */
+const REBUILD_OFFER_CHANNEL = 'core:event:rebuildOffer'
+/** Channel the main process pushes sidecar-scan progress on during a rebuild (ticket 14). */
+const REBUILD_PROGRESS_CHANNEL = 'core:event:rebuildProgress'
+/** Channel the renderer listens on for Edit render progress / terminal failure pushes (ticket 08). */
+const EDIT_PROGRESS_CHANNEL = 'core:event:editProgress'
+
+const DEFAULT_WINDOW = { width: 960, height: 720 }
+
+/**
+ * Clamp stored bounds to something visible: at least the minimum size, and with
+ * the top-left corner on some currently-attached display (a monitor that was
+ * unplugged since last run must not strand the window offscreen).
+ */
+function usableBounds(stored: WindowBounds | undefined): WindowBounds {
+  if (!stored) return { ...DEFAULT_WINDOW }
+  const width = Math.max(MIN_WINDOW_WIDTH, stored.width)
+  const height = Math.max(MIN_WINDOW_HEIGHT, stored.height)
+  if (stored.x === undefined || stored.y === undefined) {
+    return { width, height, maximized: stored.maximized }
+  }
+  const onScreen = screen.getAllDisplays().some((d) => {
+    const wa = d.workArea
+    return (
+      stored.x! >= wa.x - 8 &&
+      stored.y! >= wa.y - 8 &&
+      stored.x! < wa.x + wa.width - 40 &&
+      stored.y! < wa.y + wa.height - 40
+    )
+  })
+  return onScreen
+    ? { width, height, x: stored.x, y: stored.y, maximized: stored.maximized }
+    : { width, height, maximized: stored.maximized }
+}
+
+function createWindow(core: Core): void {
+  const bounds = usableBounds(core.getUiState().window)
+
+  const win = new BrowserWindow({
+    width: bounds.width,
+    height: bounds.height,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
+    ...(bounds.x !== undefined && bounds.y !== undefined
+      ? { x: bounds.x, y: bounds.y }
+      : {}),
+    show: false,
+    backgroundColor: '#0a0a0a',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+
+  if (bounds.maximized) win.maximize()
+  win.once('ready-to-show', () => win.show())
+
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!devUrl || url !== devUrl) event.preventDefault()
+  })
+
+  let saveTimer: NodeJS.Timeout | undefined
+  const persistBounds = (): void => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      if (win.isDestroyed()) return
+      const b = win.getBounds()
+      core.setUiState({
+        window: {
+          width: b.width,
+          height: b.height,
+          x: b.x,
+          y: b.y,
+          maximized: win.isMaximized(),
+        },
+      })
+    }, 400)
+  }
+  win.on('resize', persistBounds)
+  win.on('move', persistBounds)
+  win.on('maximize', persistBounds)
+  win.on('unmaximize', persistBounds)
+  win.on('close', () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    if (win.isDestroyed()) return
+    const b = win.getBounds()
+    core.setUiState({
+      window: {
+        width: b.width,
+        height: b.height,
+        x: b.x,
+        y: b.y,
+        maximized: win.isMaximized(),
+      },
+    })
+  })
+
+  if (devUrl) {
+    void win.loadURL(devUrl)
+  } else {
+    void win.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+}
+
+function registerIpc(core: Core): void {
+  ipcMain.handle('core:search', (_event, query: string, opts?: unknown) =>
+    core.search(query, opts as Parameters<Core['search']>[1]),
+  )
+
+  ipcMain.handle('core:revealInFinder', (_event, soundId: number) => {
+    const path = core.getContentPath(soundId)
+    if (path) shell.showItemInFolder(path)
+  })
+  ipcMain.handle('core:openExternal', (_event, soundId: number) => {
+    const url = core.getFreesoundUrl(soundId)
+    if (url) return shell.openExternal(url)
+  })
+
+  ipcMain.handle('core:openSupportPage', () =>
+    shell.openExternal('https://ko-fi.com/sparlos'),
+  )
+
+  ipcMain.handle(
+    'core:openSupportEmail',
+    (_event, opts?: { subject?: string; body?: string }) => {
+      const parts: string[] = []
+      if (opts?.subject)
+        parts.push(`subject=${encodeURIComponent(opts.subject)}`)
+      if (opts?.body) parts.push(`body=${encodeURIComponent(opts.body)}`)
+      const query = parts.join('&')
+      return shell.openExternal(
+        `mailto:info@superdupersoftware.net${query ? `?${query}` : ''}`,
+      )
+    },
+  )
+
+  ipcMain.handle('core:showLogs', () => {
+    const path = core.getLogPath()
+    if (path && existsSync(path)) shell.showItemInFolder(path)
+    else void shell.openPath(join(app.getPath('userData'), 'logs'))
+  })
+
+  ipcMain.handle(
+    'core:saveManifest',
+    async (_event, defaultFileName: string, text: string) => {
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      const result = await (win
+        ? dialog.showSaveDialog(win, {
+            defaultPath: defaultFileName,
+            filters: [{ name: 'Text', extensions: ['txt'] }],
+          })
+        : dialog.showSaveDialog({
+            defaultPath: defaultFileName,
+            filters: [{ name: 'Text', extensions: ['txt'] }],
+          }))
+      if (result.canceled || !result.filePath) return { saved: false }
+      await writeFile(result.filePath, text, 'utf8')
+      return { saved: true, path: result.filePath }
+    },
+  )
+
+  ipcMain.handle(
+    'core:invoke',
+    (_event, method: string, args: unknown[] = []) => {
+      const fn = (core as unknown as Record<string, unknown>)[method]
+      if (typeof fn !== 'function') {
+        throw new Error(`unknown core command: ${method}`)
+      }
+      return (fn as (...a: unknown[]) => unknown)(...args)
+    },
+  )
+}
+
+function broadcastAuthState(state: AuthState): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(AUTH_STATE_CHANNEL, state)
+  }
+}
+
+function broadcastStagingStatus(change: StagingStatusChange): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(STAGING_STATUS_CHANNEL, change)
+  }
+}
+
+function broadcastPeaksStatus(change: PeaksStatusChange): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(PEAKS_STATUS_CHANNEL, change)
+  }
+}
+
+function broadcastRebuildProgress(progress: RebuildProgress): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(REBUILD_PROGRESS_CHANNEL, progress)
+  }
+}
+
+function broadcastEditProgress(event: EditEvent): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(EDIT_PROGRESS_CHANNEL, event)
+  }
+}
+
+void app.whenReady().then(() => {
+  const config = loadConfig()
+  const dataDir = app.getPath('userData')
+  const dbPath = join(dataDir, 'library.db')
+
+  const startup = assessStartup({ dbPath, dataDir })
+  if (!startup.db.ok && startup.db.reason === 'unreadable') {
+    try {
+      renameSync(dbPath, `${dbPath}.corrupt-${Date.now()}`)
+    } catch {
+      // If we cannot move it, `openDb` will throw and Electron will surface it —
+      // still better than silently continuing on a corrupt file.
+    }
+  }
+
+  const gateway = new HttpFreesoundGateway({
+    tokenWorkerUrl: config.tokenWorkerUrl,
+  })
+  const dragIconFallbackPath = resolveDragIconPath()
+  const core = createCore({
+    gateway,
+    dataDir,
+    dbPath,
+    logSink: createFileLogSink(join(dataDir, 'logs')),
+    authPlatform: createElectronAuthPlatform(),
+    scheduler: createRealScheduler(),
+    clientId: config.freesoundClientId,
+    onAuthStateChange: broadcastAuthState,
+    onStagingStatusChange: broadcastStagingStatus,
+    onPeaksStatusChange: broadcastPeaksStatus,
+    onRebuildProgress: broadcastRebuildProgress,
+    peakWorkerPath: join(__dirname, 'peakWorker.js'),
+    rebuildWorkerPath: join(__dirname, 'rebuildWorker.js'),
+    dragHost: createElectronDragHost({
+      getWindow: () => BrowserWindow.getAllWindows()[0] ?? null,
+      fallbackIconPath: dragIconFallbackPath,
+    }),
+    dragIconFallbackPath,
+    audioRenderRunner: (() => {
+      const ffmpegPath = resolveFfmpegPath()
+      return ffmpegPath ? createFfmpegAudioRenderRunner(ffmpegPath) : undefined
+    })(),
+    onEditProgress: broadcastEditProgress,
+  })
+
+  registerIpc(core)
+
+  app.on('browser-window-created', (_e, win) => {
+    win.webContents.on('did-finish-load', () => {
+      win.webContents.send(AUTH_STATE_CHANNEL, core.getAuthState())
+      if (startup.offerRebuild) {
+        win.webContents.send(REBUILD_OFFER_CHANNEL, {
+          reason: startup.db.ok ? null : startup.db.reason,
+          sidecarCount: startup.sidecarCount,
+          notRecoverable: startup.notRecoverable,
+        })
+      }
+    })
+  })
+
+  createWindow(core)
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(core)
+  })
+
+  app.on('will-quit', () => core.close())
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
+})

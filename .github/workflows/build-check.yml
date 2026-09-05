@@ -1,0 +1,33 @@
+# Ticket 19 — catch packaging breakage before a release tag.
+#
+# Runs the full electron-vite build + `electron-builder --dir` (no installer, no
+# publish) on both OSes for every PR and every push to main. It proves the
+# native-module rebuild, asar-unpack list and afterPack signing hook still work;
+# it does not upload anything.
+
+name: build-check
+
+# disable for now before public to save on private build minutes
+# on:
+#   pull_request:
+#   push:
+#     branches: [main]
+
+jobs:
+  pack-dir:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @superduper/desktop test
+      - run: pnpm --filter @superduper/desktop typecheck
+      - run: pnpm --filter @superduper/desktop pack:dir

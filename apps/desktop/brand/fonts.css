@@ -1,0 +1,51 @@
+/* ============================================================================
+   Super Duper Software - typefaces
+   Self-hosted. No CDN, no Google Fonts request.
+
+   Archivo Variable carries BOTH axes we need in a single file:
+     wght 100..900   font-weight
+     wdth  62..125   font-stretch   <- the display voice lives here
+   So the display face and the UI face are the same font. One request.
+
+   IBM Plex Mono is static (no variable build exists); we ship 400 + 600 only.
+
+   Paths are relative to this file. Copy `fonts/` alongside it.
+   Licences: Archivo (SIL OFL 1.1, Omnibus-Type) · IBM Plex Mono (SIL OFL 1.1, IBM)
+   ========================================================================= */
+
+@font-face {
+	font-family: "Archivo Variable";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 100 900;
+	font-stretch: 62% 125%;
+	src: url("./fonts/archivo-latin-wdth-normal.woff2") format("woff2-variations");
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+		U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+		U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "IBM Plex Mono";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 400;
+	src: url("./fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+		U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+		U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: "IBM Plex Mono";
+	font-style: normal;
+	font-display: swap;
+	font-weight: 600;
+	src: url("./fonts/ibm-plex-mono-latin-600-normal.woff2") format("woff2");
+	unicode-range:
+		U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+		U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+		U+2212, U+2215, U+FEFF, U+FFFD;
+}

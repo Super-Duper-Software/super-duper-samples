@@ -1,0 +1,80 @@
+# electron-builder — packaging config for ticket 19.
+#
+# Scope (docs/adr/0007): produce UNSIGNED-for-distribution installers for macOS
+# and Windows. No Developer ID, no notarization, no Authenticate signing, no
+# auto-update. macOS gets an ad-hoc signature (scripts/electron-builder-after-pack.mjs)
+# because Apple Silicon refuses to launch a bundle with no signature at all;
+# first launch still shows the Gatekeeper prompt (see INSTALL.md).
+#
+# electron-vite writes the app bundles to out/ (main, preload, renderer). This
+# file packages that plus the production node_modules electron-builder resolves
+# on its own (native better-sqlite3, ffmpeg-static — both asar-unpacked below).
+
+appId: net.superdupersoftware.samples
+productName: Super Duper Samples
+copyright: © Super Duper Software
+
+directories:
+  output: dist
+  buildResources: resources
+
+# What goes inside the app. node_modules production deps are always included by
+# electron-builder regardless of this list; we only need the built output.
+files:
+  - out/**
+  - package.json
+
+# The bundled fallback drag icon (ticket 09). main/index.ts resolves it from
+# process.resourcesPath in a packaged build.
+extraResources:
+  - from: resources/drag-icon.png
+    to: drag-icon.png
+
+# Native / binary payloads must live outside the asar so they are executable and
+# loadable at runtime.
+asarUnpack:
+  - '**/node_modules/better-sqlite3/**'
+  - '**/node_modules/ffmpeg-static/**'
+
+# electron-builder rebuilds native modules (better-sqlite3) against the target
+# Electron ABI. CI runs this per-OS on native runners so there is no cross-compile.
+npmRebuild: true
+
+# No release channel — the GitHub Release is assembled by the workflow, not by
+# electron-builder, and there is no updater to feed.
+publish: null
+
+mac:
+  category: public.app-category.music
+  icon: resources/icon.icns
+  darkModeSupport: true
+  # Skip electron-builder's own signing (no cert to find); the afterPack hook
+  # applies an ad-hoc signature instead.
+  identity: null
+  gatekeeperAssess: false
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+
+dmg:
+  # Plain default window (app icon + Applications alias) — no background art to maintain.
+  artifactName: SDS-${version}-${arch}.dmg
+
+win:
+  icon: resources/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  artifactName: SDS-Setup-${version}.exe
+
+afterPack: ./scripts/electron-builder-after-pack.mjs

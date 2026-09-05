@@ -1,0 +1,11 @@
+{
+  "name": "super-duper-samples",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Super Duper Samples desktop client — pnpm workspace root.",
+  "license": "MIT",
+  "packageManager": "pnpm@10.15.1",
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0"
+  }
+}

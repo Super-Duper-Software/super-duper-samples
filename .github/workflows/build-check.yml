@@ -1,20 +1,14 @@
-# Ticket 19 — catch packaging breakage before a release tag.
-#
-# Runs the full electron-vite build + `electron-builder --dir` (no installer, no
-# publish) on both OSes for every PR and every push to main. It proves the
-# native-module rebuild, asar-unpack list and afterPack signing hook still work;
-# it does not upload anything.
-
 name: build-check
 
-# disable for now before public to save on private build minutes
-# on:
-#   pull_request:
-#   push:
-#     branches: [main]
+on:
+  pull_request:
+  push:
+    branches: [main]
 
 jobs:
   pack-dir:
+    # disable for now before public to save on private build minutes
+    if: false
     strategy:
       fail-fast: false
       matrix:

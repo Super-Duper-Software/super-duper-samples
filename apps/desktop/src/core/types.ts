@@ -28,7 +28,7 @@ export interface SpectralUrls {
 
 /**
  * A single Freesound Sound, carrying the COMPLETE field set needed to render a
- * result row (ticket 03) from ONE search call — no per-Sound detail request is
+ * result row from ONE search call — no per-Sound detail request is
  * ever made.
  */
 export interface Sound {
@@ -59,7 +59,7 @@ export interface Sound {
 }
 
 /**
- * Result ordering (ticket 15). `'relevance'` is Freesound's default text-match
+ * Result ordering. `'relevance'` is Freesound's default text-match
  * score; the rest map to Freesound's `duration_asc` / `duration_desc` /
  * `rating_desc` / `downloads_desc` / `created_desc` sort values.
  */
@@ -72,7 +72,7 @@ export type SearchSort =
   | 'created'
 
 /**
- * License pre-filter (ticket 15). `'commercial'` is the headline control —
+ * License pre-filter. `'commercial'` is the headline control —
  * "usable in commercial work": it admits ONLY CC0 and CC-BY, which excludes the
  * non-commercial material (CC-BY-NC and legacy Sampling+) a commercial user must
  * not build on. The other values pin the search to one specific license.
@@ -85,7 +85,7 @@ export type LicenseFilter =
   'commercial' | 'cc0' | 'cc-by' | 'cc-by-nc' | 'sampling-plus'
 
 /**
- * Structured, pre-search constraints (ticket 15). Every field is optional; an
+ * Structured, pre-search constraints. Every field is optional; an
  * absent or all-empty filter constrains nothing. The gateway translates this to
  * Freesound's Solr-style `filter=` string; the core folds it into the search
  * cache key so a filtered query is cached and served independently.
@@ -107,7 +107,7 @@ export interface SearchFilter {
   license?: LicenseFilter
 }
 
-/** The persisted active sort + filter state (ticket 15, stored in `app_meta`). */
+/** The persisted active sort + filter state (stored in `app_meta`). */
 export interface SearchPrefs {
   sort: SearchSort
   filter: SearchFilter
@@ -132,7 +132,7 @@ export interface EditSpec {
 }
 
 /**
- * A Library Sound plus the user's local overlay (ticket 13). `customName` and
+ * A Library Sound plus the user's local overlay. `customName` and
  * `customTags` are the user's own vocabulary; the Freesound `name` / `tags`
  * inherited from {@link Sound} are still present and unchanged. `effectiveName`
  * is `customName ?? name` — the name that arrives in the DAW on a Drag-Out.
@@ -157,7 +157,7 @@ export interface LibrarySound extends Sound {
 }
 
 /**
- * Structured, database-only Library filter (ticket 13). Every field is optional;
+ * Structured, database-only Library filter. Every field is optional;
  * an absent or all-empty filter returns the whole Library. Applied entirely from
  * the local database — it never triggers a network request. Dimensions compose
  * with AND; `tags` matches a Sound carrying ANY of the listed tags (inherited or

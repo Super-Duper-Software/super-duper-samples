@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createSearchController } from '../src/core/searchController'
+import { createSearchController } from '../src/core/search/searchController'
 import type { SearchResult } from '../src/core'
 import { makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
 

@@ -114,7 +114,7 @@ export interface StagingControllerDeps {
   /** Broadcast every status change (main forwards it to the renderer). */
   onStatusChange?: (change: StagingStatusChange) => void
   /**
-   * Called once a Sound's Original has just landed on disk (ticket 12). The core
+   * Called once a Sound's Original has just landed on disk. The core
    * wires this to the peak service so waveform peaks are computed off-thread the
    * moment the audio is available, not only when the user first looks at it.
    */

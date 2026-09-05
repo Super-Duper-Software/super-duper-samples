@@ -7,9 +7,9 @@ export interface SearchCacheParams {
   query: string
   page: number
   pageSize: number
-  /** ticket 15 — result ordering; omitted by the core when it is `relevance`. */
+  /** Result ordering; omitted by the core when it is `relevance`. */
   sort?: SearchSort
-  /** ticket 15 — structured pre-filter; omitted by the core when it is empty. */
+  /** Structured pre-filter; omitted by the core when it is empty. */
   filter?: SearchFilter
   [k: string]: unknown
 }

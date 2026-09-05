@@ -18,7 +18,7 @@ export interface UiState {
   /** The Sound row that was selected, so the cursor lands back on it. */
   selectedSoundId?: number | null
   /**
-   * The Library Sound open in the Edit view (ticket 07), so a restart lands
+   * The Library Sound open in the Edit view, so a restart lands
    * back in it when `view` is `'edit'`. `null`/absent outside the Edit view.
    */
   editSoundId?: number | null

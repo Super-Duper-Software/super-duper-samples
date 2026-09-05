@@ -31,7 +31,7 @@ export interface ResultListProps {
   removeLabel?: string
   /** Override the per-row remove button tooltip. */
   removeTitle?: string
-  /** Library / collection variants: open the Edit view (ticket 07) on a row. */
+  /** Library / collection variants: open the Edit view on a row. */
   onEdit?: (sound: Sound) => void
   /**
    * Rendered as a non-scrolling strip above the list body. Spec 0003 puts the

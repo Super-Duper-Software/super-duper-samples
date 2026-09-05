@@ -1,4 +1,4 @@
-import type { SearchOptions, SearchResult } from './types'
+import type { SearchOptions, SearchResult } from '../types'
 
 export interface SearchController {
   /** Debounced search. Collapses rapid calls; resolves all with the trailing result. */

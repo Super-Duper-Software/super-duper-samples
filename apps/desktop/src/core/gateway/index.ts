@@ -14,12 +14,12 @@ export interface GatewaySearchParams {
   page: number
   pageSize: number
   /**
-   * ticket 15 — result ordering. Absent means Freesound's default relevance
+   * Result ordering. Absent means Freesound's default relevance
    * (`score`). Translated to a `sort=` param by `freesoundSortParam`.
    */
   sort?: SearchSort
   /**
-   * ticket 15 — structured pre-filter. Absent or all-empty means no constraint.
+   * Structured pre-filter. Absent or all-empty means no constraint.
    * Translated to a Solr-style `filter=` string by `freesoundFilterString`.
    */
   filter?: SearchFilter
@@ -102,9 +102,8 @@ export interface DownloadOriginalResult {
 }
 
 /**
- * The network boundary. `search` is the only method implemented for ticket 02;
- * the rest are declared so later tickets extend one interface, and throw
- * `NotImplemented` until then.
+ * The network boundary. Every call the app makes to Freesound goes through
+ * this interface and nowhere else; unimplemented members throw `NotImplemented`.
  */
 export interface FreesoundGateway {
   /**
@@ -120,15 +119,15 @@ export interface FreesoundGateway {
     accessToken: string,
   ): Promise<RawSearchPage>
 
-  /** ticket 04 — stream a Sound's Preview for auditioning. */
+  /** Stream a Sound's Preview for auditioning. */
   getPreviewStream(soundId: number): Promise<never>
 
   /**
-   * ticket 08 — download a Sound's Original as the signed-in user.
+   * Download a Sound's Original as the signed-in user.
    * `GET https://freesound.org/apiv2/sounds/<id>/download/` with
    * `Authorization: Bearer <accessToken>`. This IS an authenticated call and MUST
    * be invoked through the core's `authorized()` wrapper so a 401 refreshes once
-   * and retries once (ticket 07). Streams the response body; `opts.signal` aborts
+   * and retries once. Streams the response body; `opts.signal` aborts
    * it mid-stream, in which case the promise rejects with an `AbortError`.
    */
   downloadOriginal(
@@ -138,7 +137,7 @@ export interface FreesoundGateway {
   ): Promise<DownloadOriginalResult>
 
   /**
-   * ticket 07 — exchange an OAuth authorization code for tokens, via the token
+   * Exchange an OAuth authorization code for tokens, via the token
    * Worker (`POST ${workerUrl}/exchange`). The app never holds `client_secret`.
    * `redirectUri` is the single registered loopback URI and is forwarded to the
    * Worker. Maps the Worker's `{ error: "reauthorize" }` to `ReauthRequiredError`
@@ -147,13 +146,13 @@ export interface FreesoundGateway {
   exchangeToken(code: string, redirectUri: string): Promise<TokenSet>
 
   /**
-   * ticket 07 — refresh an expiring OAuth access token, via the token Worker
+   * Refresh an expiring OAuth access token, via the token Worker
    * (`POST ${workerUrl}/refresh`). Same error mapping as `exchangeToken`.
    */
   refreshToken(refreshToken: string): Promise<TokenSet>
 
   /**
-   * ticket 07 — fetch the signed-in user's profile straight from Freesound
+   * Fetch the signed-in user's profile straight from Freesound
    * (`GET /apiv2/me/`, `Authorization: Bearer <accessToken>`), for the username
    * shown in the app. A 401 here is thrown as a `GatewayError` with `status: 401`
    * so the core's auth wrapper triggers exactly one refresh + retry.

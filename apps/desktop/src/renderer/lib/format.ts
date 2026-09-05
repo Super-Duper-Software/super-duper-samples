@@ -10,7 +10,7 @@ export function formatDuration(seconds: number): string {
 /**
  * `34.723` -> `"0:34.72"` — one decimal of a second more than
  * {@link formatDuration}, for the Edit view's region readout where whole
- * seconds are too coarse to see an edge move (ticket 07).
+ * seconds are too coarse to see an edge move.
  */
 export function formatPreciseDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00.00'

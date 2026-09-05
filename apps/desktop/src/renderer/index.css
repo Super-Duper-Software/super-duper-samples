@@ -94,7 +94,7 @@
 }
 
 /*
- * Auditioning playhead (ticket 04). Its horizontal position is the CSS custom
+ * Auditioning playhead. Its horizontal position is the CSS custom
  * property `--playhead` (0..1 of the WHOLE file), written DIRECTLY on this node
  * at 60fps by audioController's requestAnimationFrame loop — never through React
  * state, so the row it lives in does not re-render as playback advances.

@@ -30,7 +30,7 @@ const CONTROL_CHARS = /[\x00-\x1f\x7f]/g
 
 /**
  * A drag was requested for a Sound whose Original is not on disk yet, or an
- * Edit (ticket 04) whose render has not finished (or whose file has gone
+ * Edit whose render has not finished (or whose file has gone
  * missing). The renderer shows `message` verbatim. Distinct type so the
  * renderer never mistakes it for a generic failure and never falls back to a
  * Preview.
@@ -72,15 +72,15 @@ export interface StartDragOptions {
 
 export interface DragController {
   /**
-   * `soundIds` may mix ordinary (positive) Sound ids with negative Edit ids
-   * (ticket 04) — an Edit drags out exactly like a Sound, just from its own
-   * `local_path` file rather than the id-named content-store path.
+   * `soundIds` may mix ordinary (positive) Sound ids with negative Edit ids: an
+   * Edit drags out exactly like a Sound, just from its own `local_path` file
+   * rather than the id-named content-store path.
    */
   startDrag(
     soundIds: number | readonly number[],
     opts?: StartDragOptions,
   ): DragStartResult
-  /** Whether the UI may offer multi-Sound drag on this platform (ticket 01). */
+  /** Whether the UI may offer multi-Sound drag on this platform. */
   readonly multiSoundDragSupported: boolean
 }
 
@@ -91,11 +91,11 @@ export interface DragControllerDeps {
   /**
    * Absolute path to the bundled fallback drag icon (a waveform glyph). Handed
    * to the OS when the renderer sends no icon or an unusable one. Required so
-   * `startDrag` never passes an empty icon (ticket 01 findings §2.3).
+   * `startDrag` never passes an empty icon.
    */
   fallbackIconPath?: string
   /**
-   * In-flight-drag registry (ticket 10). `startDrag` marks each dragged Sound as
+   * In-flight-drag registry. `startDrag` marks each dragged Sound as
    * having a live Drag-Out; `core.endDrag` (from the renderer's `dragend`) clears
    * it. Eviction skips any Sound it still holds so the OS never loses the path
    * mid-drop. Optional — when absent, in-flight tracking is simply not recorded.
@@ -163,7 +163,7 @@ export function createDragController(deps: DragControllerDeps): DragController {
 
   /**
    * The file a drag of this row should hand to the OS: the content-store
-   * Original for a real Sound, or an Edit's own `local_path` (ticket 04) —
+   * Original for a real Sound, or an Edit's own `local_path` —
    * never a path derived from an Edit's negative id, which names nothing on
    * disk. Returns `null` when that file isn't there yet, which for an Edit
    * covers both "still rendering" and "row not inserted yet" (both look like
@@ -179,7 +179,7 @@ export function createDragController(deps: DragControllerDeps): DragController {
 
   /**
    * The name the dropped file should carry: the user's custom Library name when
-   * they have set one (ticket 13), otherwise the Freesound name. A blank/whitespace
+   * they have set one, otherwise the Freesound name. A blank/whitespace
    * custom name is ignored. Sanitisation happens later in `sanitiseStem`.
    */
   function effectiveDragName(sound: Sound): string {
@@ -189,7 +189,7 @@ export function createDragController(deps: DragControllerDeps): DragController {
   }
 
   /**
-   * Link `srcPath` — a Sound's Original, or an Edit's own file (ticket 04) —
+   * Link `srcPath` — a Sound's Original, or an Edit's own file —
    * into `<dataDir>/drag/` as `<pretty name>.<ext>`. Reuses an existing link
    * to the SAME file; disambiguates a different Sound/Edit that sanitises to
    * the same name with ` (2)`, ` (3)`, …
@@ -235,7 +235,7 @@ export function createDragController(deps: DragControllerDeps): DragController {
   /**
    * Write the renderer's waveform data URL to a PNG and return its path; fall
    * back to the bundled glyph. Throws only if there is genuinely no icon to
-   * hand over — which `startDrag` must never do (ticket 01 findings §2.3).
+   * hand over — which `startDrag` must never do.
    */
   function resolveIconPath(iconDataUrl?: string): string {
     const decoded = decodeDataUrl(iconDataUrl)

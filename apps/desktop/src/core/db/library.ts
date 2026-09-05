@@ -32,7 +32,7 @@ export function deleteLibraryEntry(db: DB, soundId: number): void {
   db.prepare('DELETE FROM library_entries WHERE sound_id = ?').run(soundId)
 }
 
-/** The user's local overlay on a Library Sound (ticket 13). */
+/** The user's local overlay on a Library Sound. */
 export interface LibraryOverlay {
   soundId: number
   /** `null` when the user has not renamed the Sound. */

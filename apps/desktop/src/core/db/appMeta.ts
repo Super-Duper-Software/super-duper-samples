@@ -16,7 +16,7 @@ export function setMeta(db: DB, key: string, value: string): void {
   ).run(key, value)
 }
 
-/** The one key ticket 08 owns: epoch ms the user acknowledged the staging notice. */
+/** Epoch ms at which the user acknowledged the staging notice. */
 export const STAGING_CONSENT_KEY = 'staging_consent_at'
 
 /** Ticket 18 — the persisted shell state blob (window bounds, last view/search/selection). */

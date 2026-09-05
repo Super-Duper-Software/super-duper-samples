@@ -4,7 +4,7 @@ import { computePeaksFromFile, type TrimWindow } from './computeFromFile'
 export interface PeakWorkerRequest {
   filePath: string
   targetBuckets: number
-  /** Slice the decode to this window (seconds) before the sweep — an Edit sliced from its parent (ticket 03). */
+  /** Slice the decode to this window (seconds) before the sweep — an Edit sliced from its parent. */
   trim?: TrimWindow | null
 }
 

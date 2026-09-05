@@ -22,7 +22,7 @@ export interface DragHost {
    */
   startDrag(payload: DragPayload): void
   /**
-   * True only on platforms where ticket 01 verified that EVERY file of a
+   * True only on platforms verified to deliver EVERY file of a
    * multi-file drag reaches EVERY target application (macOS). Elsewhere —
    * notably Windows Explorer, which drops all but one file (electron#9019) — the
    * UI must not offer multi-Sound drag and the controller drags only the first

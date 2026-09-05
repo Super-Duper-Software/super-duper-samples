@@ -58,7 +58,7 @@ export class NotImplemented extends Error {
 
 /**
  * A download was deliberately cancelled — the user moved past the Sound before
- * its Original finished staging (ticket 08). Distinct from a failure: the
+ * its Original finished staging. Distinct from a failure: the
  * download queue neither retries it nor marks the Sound `failed`. The gateway
  * throws this (or any error whose `name` is `AbortError`) when the caller's
  * `AbortSignal` fires mid-stream.
@@ -83,7 +83,7 @@ export function isAbortError(err: unknown): boolean {
 }
 
 /**
- * Sign-in is required or has failed (ticket 18). Distinct from a `GatewayError`
+ * Sign-in is required or has failed. Distinct from a `GatewayError`
  * so the renderer can say "sign in to download" rather than "download failed".
  */
 export class AuthError extends Error {

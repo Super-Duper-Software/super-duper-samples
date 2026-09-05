@@ -22,7 +22,7 @@ export interface TrimWindow {
 }
 
 /**
- * Restrict decoded audio to a frame window (ticket 03 — an Edit's peaks are
+ * Restrict decoded audio to a frame window (an Edit's peaks are
  * sliced from its parent's decode rather than decoding the Edit's own exported
  * file). Bounds are clamped to the decoded length; always at least one frame.
  */

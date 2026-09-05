@@ -37,7 +37,7 @@ let switching = false
  * Every registered playhead DOM node, mapped to the sound id it belongs to.
  * There can be more than one for the current sound at once — e.g. the result
  * row's inline waveform and the transport bar's larger zoomable waveform
- * (ticket 12). The rAF loop writes `--playhead` to every node whose id matches
+ *. The rAF loop writes `--playhead` to every node whose id matches
  * the sound currently loaded.
  */
 const playheadNodes = new Map<HTMLElement, number>()

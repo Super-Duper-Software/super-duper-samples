@@ -71,7 +71,7 @@ function pathsFor(
  * sidecar-without-audio. Missing files are not an error. Touches no DB row — the
  * caller owns whichever row (`staged_entries` / `library_entries`) pointed at
  * these files. Shared by staging eviction (below) and `core.deleteFromLibrary`
- * (ticket 11).
+ *.
  */
 export async function removeContentFiles(
   dataDir: string,

@@ -81,7 +81,7 @@ export interface FakeFreesoundGatewayConfig {
 /**
  * Test gateway driven by recorded JSON fixtures. Records every call so tests can
  * assert that one search costs exactly one gateway call and nothing follows it,
- * and (ticket 07) that a 401 causes exactly one refresh and one retry.
+ * and that a 401 causes exactly one refresh and one retry.
  */
 export class FakeFreesoundGateway implements FreesoundGateway {
   /** Every `search` call, in order. */

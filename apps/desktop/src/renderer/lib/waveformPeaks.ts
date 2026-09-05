@@ -168,9 +168,8 @@ export function zoomWindow(
 /**
  * Slide the zoom window by `deltaFraction` (of the WHOLE file), keeping its
  * span fixed — a horizontal scroll while zoomed in. Clamped so the window
- * stays inside [0, 1] and never changes width, even at an edge (ticket 07:
- * without this, zooming in on the Edit view has no way to reach the rest of
- * the file).
+ * stays inside [0, 1] and never changes width, even at an edge — without this,
+ * zooming in on the Edit view has no way to reach the rest of the file.
  */
 export function panWindow(
   windowStart: number,

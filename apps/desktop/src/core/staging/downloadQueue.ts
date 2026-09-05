@@ -53,9 +53,9 @@ export interface DownloadQueue {
   status(soundId: number): StagingStatus
   /** Ids the queue currently tracks (queued + downloading + failed). */
   tracked(): number[]
-  /** queued + downloading count. */
+  /** Queued + downloading count. */
   readonly size: number
-  /** downloading count. */
+  /** Downloading count. */
   readonly active: number
   /** Cancel everything. For `core.close()`. */
   clear(): void

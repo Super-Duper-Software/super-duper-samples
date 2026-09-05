@@ -5,7 +5,7 @@ import { MIGRATIONS, type Migration } from './migrations'
 export type DB = Database.Database
 
 /**
- * Verdict on whether the database at a path can be used (ticket 14). Anything
+ * Verdict on whether the database at a path can be used. Anything
  * other than `{ ok: true }` is a cue for `src/main` to offer a rebuild from
  * sidecars rather than launch into a broken app or a silently empty Library.
  *

@@ -36,13 +36,13 @@ export interface AudioRenderInput {
   signal: AbortSignal
   /** Fraction in [0, 1], reported as often as the runner can manage. */
   onProgress?: (fraction: number) => void
-  /** Tags the runner must write into the output file's metadata (ticket 02). */
+  /** Tags the runner must write into the output file's metadata. */
   metadata: { title: string; author: string; licenseUrl: string }
 }
 
 /**
  * Renders one Edit. Production wraps a spawned `ffmpeg-static` binary in
- * `src/main` (ticket 02); tests inject a fake that can simulate a fast
+ * `src/main`; tests inject a fake that can simulate a fast
  * success, a slow success with progress, an abort, and a failure.
  */
 export type AudioRenderRunner = (

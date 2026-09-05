@@ -34,7 +34,7 @@ export function getStagedEntry(db: DB, soundId: number): StagedEntry | undefined
   return row ? rowToEntry(row) : undefined
 }
 
-/** All staged entries (ticket 10 will sort these LRU-first). */
+/** All staged entries. */
 export function listStagedEntries(db: DB): StagedEntry[] {
   const rows = db
     .prepare('SELECT * FROM staged_entries ORDER BY last_access_at ASC')

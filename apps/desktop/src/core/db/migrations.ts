@@ -52,9 +52,9 @@ const m001: Migration = {
     -- "cached indefinitely") — there is no TTL and no eviction here.
     --
     -- \`key\` is a hash of \`params_json\`. \`params_json\` is the canonical JSON of
-    -- EVERY parameter that affects results (query text, page, pageSize, and — from
-    -- ticket 15 — sort and filters). Because the key is derived from an open-ended
-    -- JSON object, ticket 15 can add sort/filter fields to the key WITHOUT a
+    -- EVERY parameter that affects results (query text, page, pageSize, sort and
+    -- filters). Because the key is derived from an open-ended
+    -- JSON object, new sort/filter fields can join the key WITHOUT a
     -- migration: a request that carries new params simply hashes to a new key and
     -- old rows keep serving the unfiltered query.
     CREATE TABLE search_cache (
@@ -68,7 +68,7 @@ const m001: Migration = {
 
     -- ---- created empty now; populated by later tickets ---------------------
 
-    -- ticket 11: the user's intent to KEEP a Sound, plus their overlay.
+    -- the user's intent to KEEP a Sound, plus their overlay.
     CREATE TABLE library_entries (
       sound_id    INTEGER PRIMARY KEY REFERENCES sounds(id) ON DELETE CASCADE,
       custom_name TEXT,
@@ -76,7 +76,7 @@ const m001: Migration = {
       saved_at    INTEGER NOT NULL
     );
 
-    -- ticket 16: user-named, unordered sets of Library Sounds.
+    -- user-named, unordered sets of Library Sounds.
     CREATE TABLE collections (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       name       TEXT    NOT NULL,
@@ -90,14 +90,14 @@ const m001: Migration = {
       PRIMARY KEY (collection_id, sound_id)
     );
 
-    -- ticket 10: LRU bookkeeping for the staging byte budget.
+    -- LRU bookkeeping for the staging byte budget.
     CREATE TABLE staged_entries (
       sound_id       INTEGER PRIMARY KEY REFERENCES sounds(id) ON DELETE CASCADE,
       byte_size      INTEGER NOT NULL,
       last_access_at INTEGER NOT NULL
     );
 
-    -- ticket 12: computed waveform peak data, one blob per Sound.
+    -- computed waveform peak data, one blob per Sound.
     CREATE TABLE peaks (
       sound_id     INTEGER PRIMARY KEY REFERENCES sounds(id) ON DELETE CASCADE,
       sample_rate  INTEGER NOT NULL,
@@ -106,7 +106,7 @@ const m001: Migration = {
       computed_at  INTEGER NOT NULL
     );
 
-    -- ticket 07: the single encrypted OAuth blob + access-token expiry.
+    -- the single encrypted OAuth blob + access-token expiry.
     CREATE TABLE auth (
       id                   INTEGER PRIMARY KEY CHECK (id = 1),
       refresh_token_enc    BLOB,
@@ -116,11 +116,11 @@ const m001: Migration = {
 }
 
 /**
- * Migration 002 — staging (ticket 08).
+ * Migration 002 — staging.
  *
  * `staged_entries` was created empty by 001 with just `sound_id`, `byte_size`
  * and `last_access_at`. Ticket 08 needs to know WHERE each staged Original sits
- * and WHEN it was first staged, so eviction (ticket 10) can act on it without
+ * and WHEN it was first staged, so eviction can act on it without
  * re-deriving paths. Two nullable columns are added (the table is empty, so no
  * backfill is required); every row this ticket writes fills both.
  *
@@ -172,7 +172,7 @@ const m003: Migration = {
 }
 
 /**
- * Migration 004 — Edits (ticket 01, ADR-0005).
+ * Migration 004 — Edits (ADR-0005).
  *
  * An Edit is represented as an ordinary `sounds` row with a negative `id`
  * (Freesound ids are always positive, so the two id spaces never collide),
@@ -202,9 +202,9 @@ const m004: Migration = {
 }
 
 /**
- * Migration 005 — retire stale "undecodable" peak sentinels (ticket 20).
+ * Migration 005 — retire stale "undecodable" peak sentinels.
  *
- * Before ticket 20, a plain Sound whose Original was a compressed container
+ * Previously, a plain Sound whose Original was a compressed container
  * (FLAC, MP3, OGG) failed the local WAV/AIFF-only decoder and wrote an
  * undecodable sentinel row (`bucket_count = 0`) so it was never retried. Ticket
  * 20 gives those Originals an ffmpeg scratch-PCM render path — but the sentinel

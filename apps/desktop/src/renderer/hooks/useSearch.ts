@@ -43,7 +43,7 @@ export function useSearch(
   query: string,
   sort: SearchSort = 'relevance',
   filter: SearchFilter = {},
-  /** Wait until the persisted sort/filter prefs have loaded (ticket 15). */
+  /** Wait until the persisted sort/filter prefs have loaded. */
   ready = true,
 ): UseSearch {
   const [status, setStatus] = useState<SearchStatus>('idle')

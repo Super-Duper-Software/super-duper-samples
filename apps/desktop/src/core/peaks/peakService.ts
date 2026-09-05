@@ -45,7 +45,7 @@ export interface PeaksStatusChange {
 export type PeakRunner = (
   filePath: string,
   targetBuckets: number,
-  /** Slice the decode to this window (seconds) first — an Edit computed from its parent's decode (ticket 03). */
+  /** Slice the decode to this window (seconds) first — an Edit computed from its parent's decode. */
   trim?: TrimWindow | null,
 ) => Promise<PeakResult>
 

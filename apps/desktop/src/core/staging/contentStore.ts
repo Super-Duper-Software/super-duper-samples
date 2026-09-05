@@ -8,8 +8,8 @@ import type { EditSpec, Sound } from '../types'
 export const CONTENT_DIRNAME = 'content'
 
 /**
- * Bump when the sidecar shape changes so ticket 14 can migrate old files.
- * v2 (ticket 01, ADR-0005) adds the optional `derivedFrom` / `editSpec` fields
+ * Bump when the sidecar shape changes so a rebuild can migrate old files.
+ * v2 (ADR-0005) adds the optional `derivedFrom` / `editSpec` fields
  * for an Edit's sidecar; every existing field is unchanged.
  * v3 adds the optional `customName` field so an Edit's user-chosen name — its
  * only real name, ADR-0005 — survives a Library rebuild. It is kept in sync by
@@ -18,7 +18,7 @@ export const CONTENT_DIRNAME = 'content'
 export const SIDECAR_SCHEMA_VERSION = 3
 
 /**
- * The sidecar document. Everything ticket 14 needs to reconstruct a `sounds` row
+ * The sidecar document. Everything a rebuild needs to reconstruct a `sounds` row
  * (+ a `library_entries` row for files that were saved) from the directory alone.
  *
  * `derivedFrom` / `editSpec` are set only for an Edit's sidecar (ADR-0005) —

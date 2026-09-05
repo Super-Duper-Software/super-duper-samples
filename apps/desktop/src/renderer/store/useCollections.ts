@@ -3,7 +3,7 @@ import type { CollectionRef, CollectionSummary } from '../../preload'
 
 export interface CollectionsState {
   collections: CollectionSummary[]
-  /** soundId -> the Collections it belongs to. Absent id = not fetched yet. */
+  /** SoundId -> the Collections it belongs to. Absent id = not fetched yet. */
   memberships: Record<number, CollectionRef[]>
   /** Bumped on every create / rename / delete / add / remove. */
   revision: number

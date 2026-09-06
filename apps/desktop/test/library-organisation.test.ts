@@ -1,154 +1,82 @@
 import { basename, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { createRecordingDragHost, type RecordingDragHost } from '../src/core'
-import { writeOriginal } from '../src/core/staging/contentStore'
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
 import {
   matchesLibraryFilter,
   LICENSE_FILTER_NAMES,
 } from '../src/core/library/libraryFilter'
-import type { LibrarySound, Sound } from '../src/core/types'
-import { makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
+import type { LibrarySound } from '../src/core/types'
+import {
+  dragCore,
+  fakeSound,
+  LICENSES,
+  makeTestCore,
+  originalBytes,
+  RAIN,
+  seedLibrarySound,
+  sleep,
+  stageReady,
+} from './helpers'
 
-const RAIN_ID = 321967
-
-const cleanups: Array<() => void> = []
-afterEach(() => {
-  for (const c of cleanups.splice(0)) {
-    try {
-      c()
-    } catch {
-      /* ignore */
-    }
-  }
-})
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((r) => setTimeout(r, ms))
-
-async function waitUntil(pred: () => boolean, ms = 3000): Promise<void> {
-  const start = Date.now()
-  while (!pred()) {
-    if (Date.now() - start > ms) throw new Error('waitUntil timed out')
-    await sleep(5)
-  }
-}
-
-function fakeSound(id: number, over: Partial<Sound> = {}): Sound {
-  return {
-    id,
-    name: `sound ${id}`,
-    username: 'tester',
-    license: {
-      url: 'http://creativecommons.org/publicdomain/zero/1.0/',
-      name: 'CC0',
-    },
-    duration: 3,
-    tags: ['test'],
-    filesize: 1,
-    type: 'wav',
-    samplerate: 44100,
-    channels: 2,
-    bitdepth: 16,
-    previewUrls: { hqMp3: 'hq.mp3', lqMp3: 'lq.mp3', hqOgg: '', lqOgg: '' },
-    waveformUrls: { m: 'm.png', l: 'l.png' },
-    url: `https://freesound.org/s/${id}/`,
-    downloadCount: 0,
-    avgRating: 0,
-    created: '2020-01-01T00:00:00Z',
-    ...over,
-  }
-}
-
-/** Seed a `sounds` row + Original on disk and save it to the Library, no network. */
-async function seedSaved(
-  core: Awaited<ReturnType<typeof makeTestCore>>['core'],
-  dataDir: string,
-  sound: Sound,
-): Promise<void> {
-  await writeOriginal(
-    dataDir,
-    sound,
-    new TextEncoder().encode(`ORIG-${sound.id}`),
-    Date.now(),
-  )
-  core.saveToLibrary(sound.id, sound)
-}
-
-/** A signed-in, consenting core wired to a recording DragHost (for the drag tests). */
-async function dragCore() {
-  const host = createRecordingDragHost({ multiFileDragSupported: false })
-  const gateway = makeFakeGateway()
-  const tc = await makeTestCore({ gateway, dragHost: host })
-  cleanups.push(() => tc.core.close())
-  await tc.core.signIn()
-  tc.core.grantStagingConsent()
-  await tc.core.search('rain')
-  tc.core.stageOnAudition(RAIN_ID)
-  await waitUntil(
-    () => tc.core.getStagingStatus([RAIN_ID])[RAIN_ID] === 'ready',
-  )
-  tc.core.saveToLibrary(RAIN_ID)
-  return { ...tc, host: host as RecordingDragHost, gateway }
+/** The drag tests all want RAIN staged AND saved to the Library first. */
+async function dragCoreWithSavedRain(): ReturnType<typeof dragCore> {
+  const tc = await dragCore()
+  await stageReady(tc.core, RAIN.id)
+  tc.core.saveToLibrary(RAIN.id)
+  return tc
 }
 
 describe('a custom name flows through to the Drag-Out path', () => {
   it('the file handed to DragHost carries the user’s name, not the Freesound name', async () => {
-    const { core, host, dataDir } = await dragCore()
+    const { core, host, dataDir } = await dragCoreWithSavedRain()
 
-    core.setCustomName(RAIN_ID, 'Distant City Rain')
-    const res = core.startDrag(RAIN_ID)
+    core.setCustomName(RAIN.id, 'Distant City Rain')
+    const res = core.startDrag(RAIN.id)
 
     expect(host.last!.filePath).toBe(res.filePath)
     expect(basename(res.filePath)).toBe('Distant City Rain.wav')
     expect(res.filePath.startsWith(join(dataDir, 'drag'))).toBe(true)
-    const { readFileSync } = await import('node:fs')
-    expect(readFileSync(res.filePath, 'utf8')).toBe(`FAKE-ORIGINAL:${RAIN_ID}`)
+    expect(readFileSync(res.filePath, 'utf8')).toBe(originalBytes(RAIN.id))
   })
 
   it('falls back to the Freesound name when the custom name is cleared', async () => {
-    const { core } = await dragCore()
+    const { core } = await dragCoreWithSavedRain()
 
-    core.setCustomName(RAIN_ID, 'Temp name')
-    core.setCustomName(RAIN_ID, null)
-    const res = core.startDrag(RAIN_ID)
+    core.setCustomName(RAIN.id, 'Temp name')
+    core.setCustomName(RAIN.id, null)
+    const res = core.startDrag(RAIN.id)
 
     expect(basename(res.filePath)).toMatch(/rain/i)
     expect(basename(res.filePath)).not.toMatch(/temp name/i)
   })
 
   it('sanitises unsafe characters in a custom name and keeps collisions disambiguated', async () => {
-    const { core } = await dragCore()
+    const { core } = await dragCoreWithSavedRain()
 
-    core.setCustomName(RAIN_ID, 'Bad/Name: "quote" *?<>|')
-    const res = core.startDrag(RAIN_ID)
+    core.setCustomName(RAIN.id, 'Bad/Name: "quote" *?<>|')
+    const res = core.startDrag(RAIN.id)
     const name = basename(res.filePath)
 
     expect(name.endsWith('.wav')).toBe(true)
     expect(name).not.toMatch(/[/\\:*?"<>|]/)
     expect(name.startsWith('Bad Name')).toBe(true)
 
-    const again = core.startDrag(RAIN_ID)
+    const again = core.startDrag(RAIN.id)
     expect(again.filePath).toBe(res.filePath)
   })
 })
 
 describe('renaming preserves author, License and Freesound linkage', () => {
   it('sets custom_name only — the sounds row (author / License / URL / name) is untouched', async () => {
-    const { core, dataDir } = await makeTestCore({
-      gateway: makeFakeGateway(),
-    })
-    cleanups.push(() => core.close())
+    const { core, dataDir } = await makeTestCore()
 
     const sound = fakeSound(500001, {
       name: 'Original Freesound Title',
       username: 'field_recordist',
-      license: {
-        url: 'http://creativecommons.org/licenses/by/4.0/',
-        name: 'CC-BY',
-      },
+      license: LICENSES.by,
       url: 'https://freesound.org/s/500001/',
     })
-    await seedSaved(core, dataDir, sound)
+    await seedLibrarySound(core, dataDir, sound)
 
     core.setCustomName(500001, 'My Take On It')
     core.setLibraryTags(500001, ['scene-7', 'keeper'])
@@ -159,42 +87,27 @@ describe('renaming preserves author, License and Freesound linkage', () => {
     expect(entry.effectiveName).toBe('My Take On It')
     expect(entry.name).toBe('Original Freesound Title')
     expect(entry.username).toBe('field_recordist')
-    expect(entry.license).toEqual({
-      url: 'http://creativecommons.org/licenses/by/4.0/',
-      name: 'CC-BY',
-    })
+    expect(entry.license).toEqual(LICENSES.by)
     expect(entry.url).toBe('https://freesound.org/s/500001/')
     expect(entry.tags).toEqual(['test'])
     expect(entry.customTags).toEqual(['scene-7', 'keeper'])
   })
 
   it('setCustomName / setLibraryTags throw for a Sound that is not in the Library', async () => {
-    const { core } = await makeTestCore({ gateway: makeFakeGateway() })
-    cleanups.push(() => core.close())
+    const { core } = await makeTestCore()
     expect(() => core.setCustomName(999, 'x')).toThrow(/not in the Library/i)
     expect(() => core.setLibraryTags(999, ['x'])).toThrow(/not in the Library/i)
   })
 
   it('custom name + tags survive an app restart (they are on disk, not in memory)', async () => {
-    const first = await makeTestCore({ gateway: makeFakeGateway() })
-    cleanups.push(() => {
-      try {
-        first.core.close()
-      } catch {
-        /* maybe closed */
-      }
-    })
+    const first = await makeTestCore()
     const sound = fakeSound(500002, { name: 'freesound name' })
-    await seedSaved(first.core, first.dataDir, sound)
+    await seedLibrarySound(first.core, first.dataDir, sound)
     first.core.setCustomName(500002, 'Persisted Name')
     first.core.setLibraryTags(500002, ['alpha', 'beta'])
     first.core.close()
 
-    const reopened = await makeTestCore({
-      gateway: makeFakeGateway(),
-      dbPath: first.dbPath,
-    })
-    cleanups.push(() => reopened.core.close())
+    const reopened = await makeTestCore({ dbPath: first.dbPath })
     const [entry] = reopened.core.listLibrary() as LibrarySound[]
     expect(entry.customName).toBe('Persisted Name')
     expect(entry.customTags).toEqual(['alpha', 'beta'])
@@ -204,9 +117,7 @@ describe('renaming preserves author, License and Freesound linkage', () => {
 
 describe('core.filterLibrary — every dimension, no gateway call', () => {
   async function seededLibrary() {
-    const gateway = makeFakeGateway()
-    const { core, dataDir, dbPath } = await makeTestCore({ gateway })
-    cleanups.push(() => core.close())
+    const { core, gateway, dataDir, dbPath } = await makeTestCore()
 
     const a = fakeSound(600001, {
       name: 'Rainstorm field recording',
@@ -232,11 +143,11 @@ describe('core.filterLibrary — every dimension, no gateway call', () => {
       tags: ['ambient'],
       license: { url: 'x', name: 'CC-BY-NC' },
     })
-    await seedSaved(core, dataDir, a)
+    await seedLibrarySound(core, dataDir, a)
     await sleep(3)
-    await seedSaved(core, dataDir, b)
+    await seedLibrarySound(core, dataDir, b)
     await sleep(3)
-    await seedSaved(core, dataDir, c)
+    await seedLibrarySound(core, dataDir, c)
 
     core.setLibraryTags(600002, ['favourite'])
     core.setCustomName(600003, 'Carol Special Bed')
@@ -308,15 +219,12 @@ describe('core.filterLibrary — every dimension, no gateway call', () => {
     expect(saved.text).toBe('storm')
     core.close()
 
-    const reopened = await makeTestCore({ gateway: makeFakeGateway(), dbPath })
-    cleanups.push(() => reopened.core.close())
+    const reopened = await makeTestCore({ dbPath })
     expect(reopened.core.getLibraryFilter()).toEqual(saved)
   })
 
   it('setLibraryFilter does not run a search', async () => {
-    const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ gateway })
-    cleanups.push(() => core.close())
+    const { core, gateway } = await makeTestCore()
     core.setLibraryFilter({ text: 'anything', fileType: 'wav' })
     expect(gateway.searchCallCount).toBe(0)
   })

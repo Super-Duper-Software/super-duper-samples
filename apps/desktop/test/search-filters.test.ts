@@ -6,9 +6,14 @@ import {
   freesoundFilterString,
   freesoundSortParam,
 } from '../src/core/gateway/freesoundQuery'
-import { openDb } from '../src/core/db/index'
 import type { SearchFilter } from '../src/core/types'
-import { loadFixture, makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
+import {
+  countRows,
+  loadFixture,
+  makeFakeGateway,
+  openTempDb,
+  signedInCore,
+} from './helpers'
 
 describe('freesoundSortParam', () => {
   it('maps every SearchSort to a real Freesound sort value; relevance is the default (omitted)', () => {
@@ -132,7 +137,7 @@ describe('core.search — each filter dimension reaches the gateway', () => {
   for (const [name, filter] of cases) {
     it(`passes the ${name} filter through as a structured constraint`, async () => {
       const gateway = makeFakeGateway()
-      const { core } = await makeTestCore({ signedIn: true, gateway })
+      const { core } = await signedInCore({ gateway })
 
       await core.search('thunder', { filter })
 
@@ -144,7 +149,7 @@ describe('core.search — each filter dimension reaches the gateway', () => {
 
   it('drops empty filter fields so an all-empty filter is indistinguishable from none', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     await core.search('thunder', {
       filter: { fileType: '', durationMin: undefined },
@@ -158,13 +163,13 @@ describe('core.search — each filter dimension reaches the gateway', () => {
   it('passes each sort option through, and collapses relevance to the default', async () => {
     for (const sort of ['duration_asc', 'duration_desc', 'rating', 'downloads', 'created'] as const) {
       const gateway = makeFakeGateway()
-      const { core } = await makeTestCore({ signedIn: true, gateway })
+      const { core } = await signedInCore({ gateway })
       await core.search('thunder', { sort })
       expect(gateway.calls[0]!.sort).toBe(sort)
     }
 
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
     await core.search('thunder', { sort: 'relevance' })
     expect(gateway.calls[0]!.sort).toBeUndefined()
   })
@@ -173,7 +178,7 @@ describe('core.search — each filter dimension reaches the gateway', () => {
 describe('core.search — filters, sort and text query compose', () => {
   it('carries the text query, the sort and every filter field in one gateway call', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     const filter = {
       durationMin: 1,
@@ -198,7 +203,7 @@ describe('core.search — filters, sort and text query compose', () => {
 describe('core.search — filter/sort state is part of the cache key', () => {
   it('differently-filtered queries get their own rows and are served independently', async () => {
     const gateway = makeFakeGateway()
-    const { core, dbPath } = await makeTestCore({ signedIn: true, gateway })
+    const { core, dbPath } = await signedInCore({ gateway })
 
     await core.search('thunder')
     await core.search('thunder', { filter: { fileType: 'wav' } })
@@ -210,17 +215,12 @@ describe('core.search — filter/sort state is part of the cache key', () => {
     await core.search('thunder', { sort: 'downloads' })
     expect(gateway.searchCallCount).toBe(3)
 
-    const db = openDb(dbPath)
-    const rows = (
-      db.prepare('SELECT COUNT(*) AS n FROM search_cache').get() as { n: number }
-    ).n
-    db.close()
-    expect(rows).toBe(3)
+    expect(countRows(openTempDb(dbPath), 'search_cache')).toBe(3)
   })
 
   it('an unfiltered query hashes exactly as before — the filtered row does not shadow it', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     const plain = await core.search('thunder')
     await core.search('thunder', { filter: { license: 'commercial' } })
@@ -232,7 +232,7 @@ describe('core.search — filter/sort state is part of the cache key', () => {
 
   it('two filter states that differ only in one field do not collide', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     await core.search('thunder', { filter: { channels: 1 } })
     await core.search('thunder', { filter: { channels: 2 } })
@@ -248,7 +248,7 @@ describe('core.search — next-page prefetch keeps the filter + sort', () => {
         loops: [loadFixture('search-loops-p1.json'), loadFixture('search-loops-p2.json')],
       },
     })
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     const filter = { fileType: 'wav', durationMax: 5 }
     await core.search('loops', { page: 1, pageSize: 3, sort: 'downloads', filter })
@@ -273,12 +273,12 @@ describe('core.search — next-page prefetch keeps the filter + sort', () => {
 
 describe('core search prefs — persisted in app_meta', () => {
   it('defaults to relevance + no filter before anything is saved', async () => {
-    const { core } = await makeTestCore({ signedIn: true })
+    const { core } = await signedInCore()
     expect(core.getSearchPrefs()).toEqual({ sort: 'relevance', filter: {} })
   })
 
   it('round-trips the active sort + filter through a fresh core on the same DB', async () => {
-    const { core, dbPath } = await makeTestCore({ signedIn: true })
+    const { core, dbPath } = await signedInCore()
 
     core.setSearchPrefs({
       sort: 'duration_asc',
@@ -286,7 +286,7 @@ describe('core search prefs — persisted in app_meta', () => {
     })
     core.close()
 
-    const { core: reopened } = await makeTestCore({ signedIn: true, dbPath })
+    const { core: reopened } = await signedInCore({ dbPath })
     expect(reopened.getSearchPrefs()).toEqual({
       sort: 'duration_asc',
       filter: { license: 'commercial', bitDepth: 24 }, // empty fileType pruned
@@ -295,7 +295,7 @@ describe('core search prefs — persisted in app_meta', () => {
 
   it('setSearchPrefs does not run a search', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     core.setSearchPrefs({ sort: 'rating', filter: { channels: 2 } })
 

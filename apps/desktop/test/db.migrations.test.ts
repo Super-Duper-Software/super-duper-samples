@@ -1,26 +1,21 @@
-import { mkdtemp, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { openDb, runMigrations } from '../src/core/db/index'
+import { describe, expect, it } from 'vitest'
+import { runMigrations, type DB } from '../src/core/db/index'
 import { MIGRATIONS } from '../src/core/db/migrations'
 import { createCore } from '../src/core'
-import { makeFakeGateway } from './helpers/makeTestCore'
-import { FakeAuthPlatform } from './helpers/fakeAuthPlatform'
-import { FakeScheduler } from './helpers/fakeScheduler'
-
-const dirs: string[] = []
-afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
-})
+import {
+  FakeAuthPlatform,
+  FakeScheduler,
+  makeFakeGateway,
+  makeTempDir,
+  openTempDb,
+} from './helpers'
 
 async function tempDbPath(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'freesound-migrations-'))
-  dirs.push(dir)
-  return join(dir, 'library.db')
+  return join(await makeTempDir('freesound-migrations-'), 'library.db')
 }
 
-function tableNames(db: ReturnType<typeof openDb>): string[] {
+function tableNames(db: DB): string[] {
   return (
     db
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -30,7 +25,7 @@ function tableNames(db: ReturnType<typeof openDb>): string[] {
 
 describe('database migrations', () => {
   it('opening a fresh database creates the whole schema', async () => {
-    const db = openDb(await tempDbPath())
+    const db = openTempDb(await tempDbPath())
 
     const tables = tableNames(db)
     for (const t of [
@@ -50,11 +45,10 @@ describe('database migrations', () => {
     }
 
     expect(db.pragma('user_version', { simple: true })).toBe(5)
-    db.close()
   })
 
   it('migration 002 adds the staging content-store columns and app_meta', async () => {
-    const db = openDb(await tempDbPath())
+    const db = openTempDb(await tempDbPath())
 
     const cols = (
       db.prepare("PRAGMA table_info('staged_entries')").all() as { name: string }[]
@@ -69,11 +63,10 @@ describe('database migrations', () => {
         .value,
     ).toBe('v')
 
-    db.close()
   })
 
   it('migration 003 adds the append-only download_log', async () => {
-    const db = openDb(await tempDbPath())
+    const db = openTempDb(await tempDbPath())
 
     const cols = (
       db.prepare("PRAGMA table_info('download_log')").all() as { name: string }[]
@@ -95,11 +88,10 @@ describe('database migrations', () => {
       ).n,
     ).toBe(1)
 
-    db.close()
   })
 
   it('migration 004 adds the three nullable Edit columns to sounds', async () => {
-    const db = openDb(await tempDbPath())
+    const db = openTempDb(await tempDbPath())
 
     const cols = (
       db.prepare("PRAGMA table_info('sounds')").all() as { name: string }[]
@@ -108,11 +100,10 @@ describe('database migrations', () => {
       expect(cols).toContain(c)
     }
 
-    db.close()
   })
 
   it('migration 005 deletes undecodable peak sentinels and leaves real peak rows', async () => {
-    const db = openDb(await tempDbPath())
+    const db = openTempDb(await tempDbPath())
     db.pragma('foreign_keys = OFF')
 
     const insert = db.prepare(
@@ -130,20 +121,18 @@ describe('database migrations', () => {
     ).map((r) => r.sound_id)
     expect(ids).toEqual([1])
 
-    db.close()
   })
 
   it('opening an already-current database applies nothing', async () => {
     const dbPath = await tempDbPath()
 
-    const first = openDb(dbPath)
-    first.close()
+    const created = openTempDb(dbPath)
+    expect(created.pragma('user_version', { simple: true })).toBe(5)
 
-    const second = openDb(dbPath)
+    const second = openTempDb(dbPath)
     const result = runMigrations(second)
     expect(result.applied).toEqual([])
     expect(second.pragma('user_version', { simple: true })).toBe(5)
-    second.close()
   })
 
   it('sounds rows persist across two createCore instances on the same dbPath', async () => {

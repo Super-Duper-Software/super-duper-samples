@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FakeFreesoundGateway } from '../src/core/gateway/fake'
-import { loadFixture, makeTestCore } from './helpers/makeTestCore'
+import { loadFixture, signedInCore } from './helpers'
 
 describe('core.search — next-page prefetch', () => {
   it('after page 1 resolves, page 2 costs no additional gateway call', async () => {
@@ -9,7 +9,7 @@ describe('core.search — next-page prefetch', () => {
         loops: [loadFixture('search-loops-p1.json'), loadFixture('search-loops-p2.json')],
       },
     })
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     await core.search('loops', { page: 1, pageSize: 3 })
 
@@ -31,7 +31,7 @@ describe('core.search — next-page prefetch', () => {
         loops: [loadFixture('search-loops-p1.json'), loadFixture('search-loops-p2.json')],
       },
     })
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     await core.search('loops', { page: 1, pageSize: 3 })
     await core.search('loops', { page: 2, pageSize: 3 })

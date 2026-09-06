@@ -8,7 +8,7 @@ import { FakeFreesoundGateway } from '../src/core/gateway/fake'
 import { HttpFreesoundGateway } from '../src/core/gateway/http'
 import { SEARCH_FIELDS } from '../src/core/gateway/index'
 import { GatewayError, NetworkError } from '../src/core/errors'
-import { loadFixture } from './helpers/makeTestCore'
+import { loadFixture } from './helpers'
 
 describe('FakeFreesoundGateway', () => {
   it('returns the fixture page for a known query and records the call', async () => {

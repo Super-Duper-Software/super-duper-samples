@@ -1,35 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { shallow } from 'zustand/shallow'
-import type { Sound } from '../src/core/types'
 import { __resetForTest } from '../src/renderer/store/audioController'
 import { selectRowTransport, useTransport } from '../src/renderer/store/useTransport'
+import { fakeSound } from './helpers'
 
-function fakeSound(id: number, withPreview = true): Sound {
-  return {
-    id,
-    name: `sound ${id}`,
-    username: 'tester',
-    license: { url: 'http://creativecommons.org/publicdomain/zero/1.0/', name: 'CC0' },
-    duration: 3,
+/** A Sound whose Preview URLs are real-looking, or empty for "no Preview". */
+const soundWithPreview = (id: number, withPreview = true) =>
+  fakeSound(id, {
     tags: [],
-    filesize: 1,
-    type: 'wav',
-    samplerate: 44100,
-    channels: 2,
-    bitdepth: 16,
     previewUrls: {
       hqMp3: withPreview ? `https://cdn.freesound.org/previews/${id}-hq.mp3` : '',
       lqMp3: withPreview ? `https://cdn.freesound.org/previews/${id}-lq.mp3` : '',
       hqOgg: '',
       lqOgg: '',
     },
-    waveformUrls: { m: 'm.png', l: 'l.png' },
-    url: `https://freesound.org/s/${id}/`,
-    downloadCount: 0,
-    avgRating: 0,
-    created: '2020-01-01T00:00:00Z',
-  }
-}
+  })
 
 beforeEach(() => {
   __resetForTest()
@@ -53,7 +38,7 @@ describe('transport store — playhead cannot re-render rows', () => {
   })
 
   it('volume / loop / seek leave every row selector output shallow-equal', () => {
-    useTransport.getState().playSound(fakeSound(1))
+    useTransport.getState().playSound(soundWithPreview(1))
 
     const before = selectRowTransport(2)(useTransport.getState())
 
@@ -66,13 +51,13 @@ describe('transport store — playhead cannot re-render rows', () => {
   })
 
   it('starting a track flips isCurrent for exactly the two rows involved', () => {
-    useTransport.getState().playSound(fakeSound(1))
+    useTransport.getState().playSound(soundWithPreview(1))
     expect(selectRowTransport(1)(useTransport.getState()).isCurrent).toBe(true)
     expect(selectRowTransport(2)(useTransport.getState()).isCurrent).toBe(false)
 
     const bystanderBefore = selectRowTransport(3)(useTransport.getState())
 
-    useTransport.getState().playSound(fakeSound(2))
+    useTransport.getState().playSound(soundWithPreview(2))
     expect(selectRowTransport(1)(useTransport.getState()).isCurrent).toBe(false)
     expect(selectRowTransport(2)(useTransport.getState()).isCurrent).toBe(true)
 
@@ -87,7 +72,7 @@ describe('transport store — playhead cannot re-render rows', () => {
   })
 
   it('a Sound with no Preview URL and no bridge to fall back to fails instead of becoming current', () => {
-    useTransport.getState().playSound(fakeSound(9, false))
+    useTransport.getState().playSound(soundWithPreview(9, false))
     expect(selectRowTransport(9)(useTransport.getState()).failed).toBe(true)
   })
 })
@@ -103,7 +88,7 @@ describe('transport store — an Edit with no Preview falls back to its local Or
     ;(globalThis as { window?: unknown }).window = {
       core: { getContentPath: async () => '/library/9-edited.wav' },
     }
-    useTransport.getState().playSound(fakeSound(9, false))
+    useTransport.getState().playSound(soundWithPreview(9, false))
     await new Promise((r) => setTimeout(r, 0))
 
     expect(selectRowTransport(9)(useTransport.getState()).isCurrent).toBe(true)
@@ -114,7 +99,7 @@ describe('transport store — an Edit with no Preview falls back to its local Or
     ;(globalThis as { window?: unknown }).window = {
       core: { getContentPath: async () => null },
     }
-    useTransport.getState().playSound(fakeSound(9, false))
+    useTransport.getState().playSound(soundWithPreview(9, false))
     await new Promise((r) => setTimeout(r, 0))
 
     expect(selectRowTransport(9)(useTransport.getState()).failed).toBe(true)

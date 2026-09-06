@@ -1,112 +1,16 @@
-import { writeFile } from 'node:fs/promises'
-import { afterEach, describe, expect, it } from 'vitest'
-import { writeOriginal } from '../src/core/staging/contentStore'
+import { describe, expect, it } from 'vitest'
 import { buildManifest } from '../src/core/manifest/buildManifest'
 import {
   requiresAttribution,
   restrictsCommercialUse,
 } from '../src/core/manifest/obligations'
-import type { FreesoundGateway } from '../src/core/gateway/index'
-import type { Sound } from '../src/core/types'
-import type { AudioRenderRunner, EditSpec } from '../src/core'
-import { makeTestCore } from './helpers/makeTestCore'
-
-const WHOLE_FILE_SPEC: EditSpec = { trim: null, format: 'wav' }
-
-/** A fast, deterministic fake `audioRenderRunner` — copies fixed bytes to `outPath`. */
-function fakeRunner(bytes = 'FAKE-EDIT-BYTES'): AudioRenderRunner {
-  return async ({ outPath }) => {
-    await writeFile(outPath, bytes)
-    return { byteSize: Buffer.byteLength(bytes), durationSec: 3 }
-  }
-}
-
-const cleanups: Array<() => void> = []
-afterEach(() => {
-  for (const c of cleanups.splice(0)) {
-    try {
-      c()
-    } catch {
-      /* ignore */
-    }
-  }
-})
-
-function deadGateway(): FreesoundGateway {
-  const fail = (): Promise<never> =>
-    Promise.reject(new Error('gateway unavailable (offline)'))
-  return {
-    search: fail,
-    getPreviewStream: fail,
-    downloadOriginal: fail,
-    exchangeToken: fail,
-    refreshToken: fail,
-    getMe: fail,
-  } as unknown as FreesoundGateway
-}
-
-const LICENSES = {
-  cc0: {
-    url: 'http://creativecommons.org/publicdomain/zero/1.0/',
-    name: 'CC0',
-  },
-  by: { url: 'http://creativecommons.org/licenses/by/4.0/', name: 'CC-BY' },
-  byNc: {
-    url: 'http://creativecommons.org/licenses/by-nc/4.0/',
-    name: 'CC-BY-NC',
-  },
-} as const
-
-function fakeSound(id: number, over: Partial<Sound> = {}): Sound {
-  return {
-    id,
-    name: `sound ${id}`,
-    username: `author${id}`,
-    license: LICENSES.cc0,
-    duration: 3,
-    tags: ['test'],
-    filesize: 1,
-    type: 'wav',
-    samplerate: 44100,
-    channels: 2,
-    bitdepth: 16,
-    previewUrls: { hqMp3: 'hq.mp3', lqMp3: 'lq.mp3', hqOgg: '', lqOgg: '' },
-    waveformUrls: { m: 'm.png', l: 'l.png' },
-    url: `https://freesound.org/s/${id}/`,
-    downloadCount: 0,
-    avgRating: 0,
-    created: '2020-01-01T00:00:00Z',
-    ...over,
-  }
-}
-
-/** A core with no network and the given Sounds seeded on disk + in the Library. */
-async function offlineCoreWithLibrary(
-  sounds: Sound[],
-  opts: { audioRenderRunner?: AudioRenderRunner } = {},
-) {
-  const tc = await makeTestCore({
-    gateway: deadGateway(),
-    audioRenderRunner: opts.audioRenderRunner,
-  })
-  cleanups.push(() => {
-    try {
-      tc.core.close()
-    } catch {
-      /* already closed */
-    }
-  })
-  for (const s of sounds) {
-    await writeOriginal(
-      tc.dataDir,
-      s,
-      new TextEncoder().encode(`BYTES-${s.id}`),
-      Date.now(),
-    )
-    tc.core.saveToLibrary(s.id, s)
-  }
-  return tc
-}
+import {
+  fakeRenderRunner,
+  fakeSound,
+  LICENSES,
+  offlineCoreWithLibrary,
+  WHOLE_FILE_SPEC,
+} from './helpers'
 
 describe('license obligations', () => {
   it('requires attribution for everything except CC0', () => {
@@ -334,7 +238,7 @@ describe('Edits in the Attribution Manifest (ticket 05)', () => {
           license: LICENSES.by,
         }),
       ],
-      { audioRenderRunner: fakeRunner() },
+      { audioRenderRunner: fakeRenderRunner() },
     )
     const { editId } = (await core.createEdit(1, WHOLE_FILE_SPEC))!
 
@@ -359,7 +263,7 @@ describe('Edits in the Attribution Manifest (ticket 05)', () => {
   it("titles an Edit's entry with the PARENT's original name, not the Edit's own", async () => {
     const { core } = await offlineCoreWithLibrary(
       [fakeSound(1, { name: 'Rain on tin', username: 'fieldrec', license: LICENSES.by })],
-      { audioRenderRunner: fakeRunner() },
+      { audioRenderRunner: fakeRenderRunner() },
     )
     const { editId } = (await core.createEdit(1, WHOLE_FILE_SPEC))!
     core.setCustomName(editId, 'My cool edit')
@@ -376,7 +280,7 @@ describe('Edits in the Attribution Manifest (ticket 05)', () => {
   it('flags and segregates an Edit of a CC-BY-NC Sound exactly like its parent', async () => {
     const { core } = await offlineCoreWithLibrary(
       [fakeSound(1, { name: 'Thunder', username: 'sky', license: LICENSES.byNc })],
-      { audioRenderRunner: fakeRunner() },
+      { audioRenderRunner: fakeRenderRunner() },
     )
     const { editId } = (await core.createEdit(1, WHOLE_FILE_SPEC))!
 
@@ -398,7 +302,7 @@ describe('Edits in the Attribution Manifest (ticket 05)', () => {
   it('remains an unchanged snapshot when the Edit is later renamed or removed', async () => {
     const { core } = await offlineCoreWithLibrary(
       [fakeSound(1, { name: 'Rain on tin', license: LICENSES.by })],
-      { audioRenderRunner: fakeRunner() },
+      { audioRenderRunner: fakeRenderRunner() },
     )
     const { editId } = (await core.createEdit(1, WHOLE_FILE_SPEC))!
     const c = core.createCollection('Snapshot with an edit')

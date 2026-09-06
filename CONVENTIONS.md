@@ -12,7 +12,9 @@ apps/desktop/        Electron app (electron-vite). The product.
   src/main/          Electron main process. Thin adapter. No business logic.
   src/preload/       contextBridge surface. The core command API, forwarded verbatim.
   src/renderer/      React 19 + Tailwind. Presentation only. Reaches core via preload.
-  test/             Vitest. Constructs the core in-process, no Electron.
+  test/              Vitest. Constructs the core in-process, no Electron.
+  test/helpers/      Shared test seam: `makeTestCore`, fakes, scenarios, fixtures.
+                     Import from `./helpers` (the barrel), not the modules directly.
   test/fixtures/     Recorded FreesoundGateway fixtures.
 worker/              Cloudflare Worker. Own package, own deploy. wrangler.
 ```

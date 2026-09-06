@@ -1,97 +1,15 @@
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { openDb, type DB } from '../src/core/db/index'
-import { writeOriginal } from '../src/core/staging/contentStore'
-import type { FreesoundGateway } from '../src/core/gateway/index'
-import type { Sound } from '../src/core/types'
-import { makeTestCore } from './helpers/makeTestCore'
-
-const cleanups: Array<() => void> = []
-afterEach(() => {
-  for (const c of cleanups.splice(0)) {
-    try {
-      c()
-    } catch {
-      /* ignore */
-    }
-  }
-})
-
-/** Every method rejects — stands in for "no internet connection". */
-function deadGateway(): FreesoundGateway {
-  const fail = (): Promise<never> =>
-    Promise.reject(new Error('gateway unavailable (offline)'))
-  return {
-    search: fail,
-    getPreviewStream: fail,
-    downloadOriginal: fail,
-    exchangeToken: fail,
-    refreshToken: fail,
-    getMe: fail,
-  } as unknown as FreesoundGateway
-}
-
-function fakeSound(id: number, over: Partial<Sound> = {}): Sound {
-  return {
-    id,
-    name: `sound ${id}`,
-    username: 'tester',
-    license: {
-      url: 'http://creativecommons.org/publicdomain/zero/1.0/',
-      name: 'CC0',
-    },
-    duration: 3,
-    tags: ['test'],
-    filesize: 1,
-    type: 'wav',
-    samplerate: 44100,
-    channels: 2,
-    bitdepth: 16,
-    previewUrls: { hqMp3: 'hq.mp3', lqMp3: 'lq.mp3', hqOgg: '', lqOgg: '' },
-    waveformUrls: { m: 'm.png', l: 'l.png' },
-    url: `https://freesound.org/s/${id}/`,
-    downloadCount: 0,
-    avgRating: 0,
-    created: '2020-01-01T00:00:00Z',
-    ...over,
-  }
-}
-
-/** A core with no network, and N Sounds seeded on disk + saved to the Library. */
-async function offlineCoreWithLibrary(ids: number[]) {
-  const tc = await makeTestCore({ gateway: deadGateway() })
-  cleanups.push(() => {
-    try {
-      tc.core.close()
-    } catch {
-      /* already closed */
-    }
-  })
-  for (const id of ids) {
-    const s = fakeSound(id, { name: `sound ${id}` })
-    await writeOriginal(
-      tc.dataDir,
-      s,
-      new TextEncoder().encode(`BYTES-${id}`),
-      Date.now(),
-    )
-    tc.core.saveToLibrary(id, s)
-  }
-  return tc
-}
-
-function openTemp(dbPath: string): DB {
-  const db = openDb(dbPath)
-  cleanups.push(() => {
-    try {
-      db.close()
-    } catch {
-      /* already closed */
-    }
-  })
-  return db
-}
+import { describe, expect, it } from 'vitest'
+import {
+  countRows,
+  fakeSound,
+  getRow,
+  offlineCore,
+  offlineCoreWithLibrary,
+  openTempDb,
+  originalPath,
+  seedOriginal,
+} from './helpers'
 
 describe('creating and renaming Collections', () => {
   it('creates a named Collection, visible in listCollections with a zero count', async () => {
@@ -120,9 +38,12 @@ describe('creating and renaming Collections', () => {
     expect(core.listCollections()).toEqual([
       { id: c.id, name: 'Client — Ferry Ad', count: 2 },
     ])
-    expect(core.listCollectionSounds(c.id).map((s) => s.id).sort()).toEqual([
-      1, 2,
-    ])
+    expect(
+      core
+        .listCollectionSounds(c.id)
+        .map((s) => s.id)
+        .sort(),
+    ).toEqual([1, 2])
   })
 })
 
@@ -137,7 +58,10 @@ describe('a Sound can belong to multiple Collections at once', () => {
 
     expect(core.listCollectionSounds(weather.id).map((s) => s.id)).toEqual([10])
     expect(
-      core.listCollectionSounds(ferry.id).map((s) => s.id).sort(),
+      core
+        .listCollectionSounds(ferry.id)
+        .map((s) => s.id)
+        .sort(),
     ).toEqual([10, 11])
 
     const badges = core.getCollectionsForSounds([10, 11])
@@ -152,23 +76,22 @@ describe('a Sound can belong to multiple Collections at once', () => {
     const { core, dbPath } = await offlineCoreWithLibrary([10])
     const c = core.createCollection('Weather')
     core.addToCollection(c.id, [10])
-    const db = openTemp(dbPath)
-    const first = (
-      db
-        .prepare(
-          'SELECT added_at FROM collection_members WHERE collection_id = ? AND sound_id = ?',
-        )
-        .get(c.id, 10) as { added_at: number }
-    ).added_at
+    const db = openTempDb(dbPath)
+    const where = 'collection_id = ? AND sound_id = ?'
+    const first = getRow<{ added_at: number }>(
+      db,
+      'collection_members',
+      where,
+      c.id,
+      10,
+    )!.added_at
 
     core.addToCollection(c.id, [10])
-    const rows = db
-      .prepare(
-        'SELECT added_at FROM collection_members WHERE collection_id = ? AND sound_id = ?',
-      )
-      .all(c.id, 10) as { added_at: number }[]
-    expect(rows).toHaveLength(1)
-    expect(rows[0]!.added_at).toBe(first)
+    expect(countRows(db, 'collection_members', where, c.id, 10)).toBe(1)
+    expect(
+      getRow<{ added_at: number }>(db, 'collection_members', where, c.id, 10)!
+        .added_at,
+    ).toBe(first)
     expect(core.listCollections()[0]!.count).toBe(1)
   })
 })
@@ -180,9 +103,12 @@ describe('several selected Sounds are added in one action', () => {
     core.addToCollection(c.id, [1])
     core.addToCollection(c.id, [1, 2, 3, 4])
 
-    expect(core.listCollectionSounds(c.id).map((s) => s.id).sort()).toEqual([
-      1, 2, 3, 4,
-    ])
+    expect(
+      core
+        .listCollectionSounds(c.id)
+        .map((s) => s.id)
+        .sort(),
+    ).toEqual([1, 2, 3, 4])
     expect(core.listCollections()[0]!.count).toBe(4)
   })
 
@@ -229,9 +155,14 @@ describe('deleting a Collection', () => {
     core.deleteCollection(c.id)
 
     expect(core.listCollections()).toEqual([])
-    expect(core.listLibrary().map((s) => s.id).sort()).toEqual([1, 2])
-    expect(existsSync(join(dataDir, 'content', '1.wav'))).toBe(true)
-    expect(existsSync(join(dataDir, 'content', '2.wav'))).toBe(true)
+    expect(
+      core
+        .listLibrary()
+        .map((s) => s.id)
+        .sort(),
+    ).toEqual([1, 2])
+    expect(existsSync(originalPath(dataDir, fakeSound(1)))).toBe(true)
+    expect(existsSync(originalPath(dataDir, fakeSound(2)))).toBe(true)
   })
 
   it('drops the collection_members rows with the Collection', async () => {
@@ -240,16 +171,10 @@ describe('deleting a Collection', () => {
     core.addToCollection(c.id, [1])
     core.deleteCollection(c.id)
 
-    const db = openTemp(dbPath)
-    expect(
-      (
-        db
-          .prepare(
-            'SELECT COUNT(*) AS n FROM collection_members WHERE collection_id = ?',
-          )
-          .get(c.id) as { n: number }
-      ).n,
-    ).toBe(0)
+    const db = openTempDb(dbPath)
+    expect(countRows(db, 'collection_members', 'collection_id = ?', c.id)).toBe(
+      0,
+    )
   })
 })
 
@@ -267,32 +192,20 @@ describe('deleting a Sound from the Library', () => {
     expect(core.listCollectionSounds(b.id)).toEqual([])
     expect(core.getCollectionsForSounds([5])[5]).toEqual([])
 
-    const db = openTemp(dbPath)
-    expect(
-      (
-        db
-          .prepare('SELECT COUNT(*) AS n FROM collection_members WHERE sound_id = ?')
-          .get(5) as { n: number }
-      ).n,
-    ).toBe(0)
+    const db = openTempDb(dbPath)
+    expect(countRows(db, 'collection_members', 'sound_id = ?', 5)).toBe(0)
     expect(core.listCollections().find((c) => c.id === a.id)!.count).toBe(1)
   })
 })
 
 describe('a Sound is filed into a Collection at the moment it is saved', () => {
   it('saveToLibrary(id, sound, [collectionIds]) saves and files in one action', async () => {
-    const tc = await makeTestCore({ gateway: deadGateway() })
-    cleanups.push(() => tc.core.close())
+    const tc = await offlineCore()
     const weather = tc.core.createCollection('Weather')
     const ferry = tc.core.createCollection('Client — Ferry Ad')
 
     const rain = fakeSound(900, { name: 'good rain' })
-    await writeOriginal(
-      tc.dataDir,
-      rain,
-      new TextEncoder().encode('BYTES-900'),
-      Date.now(),
-    )
+    await seedOriginal(tc.dataDir, rain)
     tc.core.saveToLibrary(rain.id, rain, [weather.id, ferry.id])
 
     expect(tc.core.getLibraryMembership([900])[900]).toBe(true)
@@ -305,23 +218,17 @@ describe('a Sound is filed into a Collection at the moment it is saved', () => {
   })
 
   it('throws (saving nothing) when a named Collection does not exist', async () => {
-    const tc = await makeTestCore({ gateway: deadGateway() })
-    cleanups.push(() => tc.core.close())
+    const tc = await offlineCore()
     const s = fakeSound(901)
-    await writeOriginal(
-      tc.dataDir,
-      s,
-      new TextEncoder().encode('B'),
-      Date.now(),
-    )
+    await seedOriginal(tc.dataDir, s)
     expect(() => tc.core.saveToLibrary(901, s, [77])).toThrow(/no collection/i)
     expect(tc.core.getLibraryMembership([901])[901]).toBe(false)
   })
 })
 
 describe('Collections are served from the database', () => {
-  it('listCollectionSounds makes no gateway call and carries the user overlay', async () => {
-    const { core, gateway } = await offlineCoreWithLibrary([1, 2])
+  it('listCollectionSounds needs no gateway and carries the user overlay', async () => {
+    const { core } = await offlineCoreWithLibrary([1, 2])
     const c = core.createCollection('Weather')
     core.addToCollection(c.id, [1, 2])
 
@@ -329,9 +236,6 @@ describe('Collections are served from the database', () => {
     core.setLibraryTags(1, ['storm'])
 
     const sounds = core.listCollectionSounds(c.id)
-    expect(
-      (gateway as unknown as { searchCallCount?: number }).searchCallCount ?? 0,
-    ).toBe(0)
     const one = sounds.find((s) => s.id === 1)!
     expect(one.customName).toBe('my rain')
     expect(one.effectiveName).toBe('my rain')
@@ -344,18 +248,19 @@ describe('Collections are served from the database', () => {
     first.core.addToCollection(c.id, [1, 2])
     first.core.close()
 
-    const reopened = await makeTestCore({
-      gateway: deadGateway(),
+    const reopened = await offlineCore({
       dbPath: first.dbPath,
       dataDir: first.dataDir,
     })
-    cleanups.push(() => reopened.core.close())
 
     expect(reopened.core.listCollections()).toEqual([
       { id: c.id, name: 'Weather', count: 2 },
     ])
     expect(
-      reopened.core.listCollectionSounds(c.id).map((s) => s.id).sort(),
+      reopened.core
+        .listCollectionSounds(c.id)
+        .map((s) => s.id)
+        .sort(),
     ).toEqual([1, 2])
   })
 })

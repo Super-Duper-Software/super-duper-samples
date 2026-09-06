@@ -1,9 +1,7 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { mkdtemp } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { assessStartup, inspectDbHealth } from '../src/core'
 import {
   NOT_RECOVERABLE_MESSAGE,
@@ -12,77 +10,30 @@ import {
   type RebuildRunner,
   type SidecarScan,
 } from '../src/core/rebuild/rebuildService'
-import { writeOriginal } from '../src/core/staging/contentStore'
-import type { Sound } from '../src/core/types'
-import { makeTestCore } from './helpers/makeTestCore'
-
-const cleanups: Array<() => void> = []
-afterEach(() => {
-  for (const c of cleanups.splice(0)) {
-    try {
-      c()
-    } catch {
-      /* ignore */
-    }
-  }
-})
-
-const FIXED_NOW = 1_700_000_000_000
-
-function fakeSound(id: number, over: Partial<Sound> = {}): Sound {
-  return {
-    id,
-    name: `sound ${id}`,
-    username: `author_${id}`,
-    license: {
-      url: 'http://creativecommons.org/publicdomain/zero/1.0/',
-      name: 'CC0',
-    },
-    duration: 3,
-    tags: ['test'],
-    filesize: 5,
-    type: 'wav',
-    samplerate: 44100,
-    channels: 2,
-    bitdepth: 16,
-    previewUrls: { hqMp3: 'hq.mp3', lqMp3: 'lq.mp3', hqOgg: '', lqOgg: '' },
-    waveformUrls: { m: 'm.png', l: 'l.png' },
-    url: `https://freesound.org/s/${id}/`,
-    downloadCount: 0,
-    avgRating: 0,
-    created: '2020-01-01T00:00:00Z',
-    ...over,
-  }
-}
-
-/** Write a complete Original + sidecar pair into `<dataDir>/content/`. */
-async function writePair(
-  dataDir: string,
-  sound: Sound,
-  bytes = `ORIGINAL:${sound.id}`,
-): Promise<void> {
-  await writeOriginal(dataDir, sound, new TextEncoder().encode(bytes), FIXED_NOW)
-}
-
-function contentPath(dataDir: string, name: string): string {
-  return join(dataDir, 'content', name)
-}
+import {
+  contentDir,
+  contentPath,
+  fakeSound,
+  LICENSES,
+  makeTempDir,
+  makeTestCore,
+  seedOriginal,
+} from './helpers'
 
 describe('scanSidecars — pairs Originals with sidecars and classifies the rest', () => {
   it('separates recovered pairs, orphan audio, orphan sidecars and malformed', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'rebuild-scan-'))
-    cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }))
+    const dataDir = await makeTempDir('rebuild-scan-')
 
-    await writePair(dataDir, fakeSound(1))
-    await writePair(dataDir, fakeSound(2))
-    await writePair(dataDir, fakeSound(3))
+    await seedOriginal(dataDir, fakeSound(1))
+    await seedOriginal(dataDir, fakeSound(2))
+    await seedOriginal(dataDir, fakeSound(3))
     rmSync(contentPath(dataDir, '3.wav'))
     writeFileSync(contentPath(dataDir, '99.wav'), 'loose bytes')
     writeFileSync(contentPath(dataDir, '77.wav'), 'x')
     writeFileSync(contentPath(dataDir, '77.json'), '{ not valid json')
     writeFileSync(contentPath(dataDir, '5.wav.abc123.part'), 'partial')
 
-    const scan = await scanSidecars(contentPath(dataDir, '').replace(/\/$/, ''))
+    const scan = await scanSidecars(contentDir(dataDir))
 
     expect(scan.recovered.map((r) => r.soundId).sort()).toEqual([1, 2])
     expect(scan.orphanAudio).toEqual(['99.wav'])
@@ -93,7 +44,9 @@ describe('scanSidecars — pairs Originals with sidecars and classifies the rest
   })
 
   it('a missing content directory yields an all-empty scan (a fresh install)', async () => {
-    const scan = await scanSidecars(join(tmpdir(), 'does-not-exist-' + Date.now()))
+    const scan = await scanSidecars(
+      join(await makeTempDir('rebuild-none-'), 'nope'),
+    )
     expect(scan).toEqual({
       recovered: [],
       orphanAudio: [],
@@ -107,20 +60,16 @@ describe('scanSidecars — pairs Originals with sidecars and classifies the rest
 describe('core.rebuildFromSidecars — reconstructs the Library from disk', () => {
   it('rebuilds Library membership and metadata with author + License intact', async () => {
     const tc = await makeTestCore()
-    cleanups.push(() => tc.core.close())
 
-    await writePair(
+    await seedOriginal(
       tc.dataDir,
       fakeSound(101, {
         name: 'Distant thunder',
         username: 'fieldrecorder',
-        license: {
-          url: 'http://creativecommons.org/licenses/by/4.0/',
-          name: 'CC-BY',
-        },
+        license: LICENSES.by,
       }),
     )
-    await writePair(
+    await seedOriginal(
       tc.dataDir,
       fakeSound(202, { name: 'Creek', username: 'hydrophile' }),
     )
@@ -136,24 +85,24 @@ describe('core.rebuildFromSidecars — reconstructs the Library from disk', () =
       license: 'CC-BY',
       name: 'Distant thunder',
     })
-    expect(byId.get(202)).toMatchObject({ author: 'hydrophile', license: 'CC0' })
+    expect(byId.get(202)).toMatchObject({
+      author: 'hydrophile',
+      license: 'CC0',
+    })
 
     const lib = tc.core.listLibrary()
     expect(lib.map((s) => s.id).sort()).toEqual([101, 202])
     const thunder = lib.find((s) => s.id === 101)!
     expect(thunder.username).toBe('fieldrecorder')
-    expect(thunder.license).toEqual({
-      url: 'http://creativecommons.org/licenses/by/4.0/',
-      name: 'CC-BY',
-    })
+    expect(thunder.license).toEqual(LICENSES.by)
     expect(tc.core.getContentPath(101)).toBe(contentPath(tc.dataDir, '101.wav'))
     expect(tc.core.getFreesoundUrl(202)).toBe('https://freesound.org/s/202/')
   })
 
   it('survives a real database deletion + restart', async () => {
     const tc1 = await makeTestCore()
-    await writePair(tc1.dataDir, fakeSound(11))
-    await writePair(tc1.dataDir, fakeSound(22))
+    await seedOriginal(tc1.dataDir, fakeSound(11))
+    await seedOriginal(tc1.dataDir, fakeSound(22))
     tc1.core.saveToLibrary(11, fakeSound(11))
     tc1.core.saveToLibrary(22, fakeSound(22))
     expect(tc1.core.listLibrary()).toHaveLength(2)
@@ -176,19 +125,22 @@ describe('core.rebuildFromSidecars — reconstructs the Library from disk', () =
       dbPath: tc1.dbPath,
       dataDir: tc1.dataDir,
     })
-    cleanups.push(() => tc2.core.close())
     expect(tc2.core.getStartupAssessment().offerRebuild).toBe(true)
     expect(tc2.core.listLibrary()).toEqual([])
 
     const report = await tc2.core.rebuildFromSidecars()
     expect(report.counts.recovered).toBe(2)
-    expect(tc2.core.listLibrary().map((s) => s.id).sort()).toEqual([11, 22])
+    expect(
+      tc2.core
+        .listLibrary()
+        .map((s) => s.id)
+        .sort(),
+    ).toEqual([11, 22])
   })
 
   it('re-running is safe: an already-present Sound is left as it is', async () => {
     const tc = await makeTestCore()
-    cleanups.push(() => tc.core.close())
-    await writePair(tc.dataDir, fakeSound(1))
+    await seedOriginal(tc.dataDir, fakeSound(1))
 
     await tc.core.rebuildFromSidecars()
     const second = await tc.core.rebuildFromSidecars()
@@ -201,9 +153,8 @@ describe('core.rebuildFromSidecars — reconstructs the Library from disk', () =
 describe('core.rebuildFromSidecars — orphans and malformed', () => {
   it('reports orphan audio without dropping it or importing it', async () => {
     const tc = await makeTestCore()
-    cleanups.push(() => tc.core.close())
 
-    await writePair(tc.dataDir, fakeSound(1))
+    await seedOriginal(tc.dataDir, fakeSound(1))
     writeFileSync(contentPath(tc.dataDir, '5150.wav'), 'no sidecar here')
 
     const report = await tc.core.rebuildFromSidecars()
@@ -216,10 +167,9 @@ describe('core.rebuildFromSidecars — orphans and malformed', () => {
 
   it('reports an orphan sidecar and removes its .json', async () => {
     const tc = await makeTestCore()
-    cleanups.push(() => tc.core.close())
 
-    await writePair(tc.dataDir, fakeSound(1))
-    await writePair(tc.dataDir, fakeSound(404))
+    await seedOriginal(tc.dataDir, fakeSound(1))
+    await seedOriginal(tc.dataDir, fakeSound(404))
     rmSync(contentPath(tc.dataDir, '404.wav'))
 
     const report = await tc.core.rebuildFromSidecars()
@@ -233,10 +183,9 @@ describe('core.rebuildFromSidecars — orphans and malformed', () => {
 
   it('one malformed sidecar does not abort the rebuild', async () => {
     const tc = await makeTestCore()
-    cleanups.push(() => tc.core.close())
 
-    await writePair(tc.dataDir, fakeSound(1))
-    await writePair(tc.dataDir, fakeSound(2))
+    await seedOriginal(tc.dataDir, fakeSound(1))
+    await seedOriginal(tc.dataDir, fakeSound(2))
     writeFileSync(contentPath(tc.dataDir, '2.json'), '{ "soundId": 2, oops')
     writeFileSync(contentPath(tc.dataDir, '3.wav'), 'x')
     writeFileSync(
@@ -259,9 +208,8 @@ describe('core.rebuildFromSidecars — orphans and malformed', () => {
 })
 
 describe('startup detection of a missing / unreadable / half-migrated database', () => {
-  it('inspectDbHealth flags an unreadable file and a schema-less file', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rebuild-health-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  it('inspectDbHealth flags an unreadable file and a schema-less file', async () => {
+    const dir = await makeTempDir('rebuild-health-')
 
     expect(inspectDbHealth(join(dir, 'nope.db'))).toEqual({
       ok: false,
@@ -284,14 +232,13 @@ describe('startup detection of a missing / unreadable / half-migrated database',
   })
 
   it('offers a rebuild only when the DB is unusable AND sidecars exist', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rebuild-offer-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const dir = await makeTempDir('rebuild-offer-')
     const dbPath = join(dir, 'library.db')
 
     expect(assessStartup({ dbPath, dataDir: dir }).offerRebuild).toBe(false)
 
     writeFileSync(dbPath, 'corrupt')
-    await writePair(dir, fakeSound(1))
+    await seedOriginal(dir, fakeSound(1))
     const a = assessStartup({ dbPath, dataDir: dir })
     expect(a.db).toEqual({ ok: false, reason: 'unreadable' })
     expect(a.sidecarCount).toBe(1)
@@ -300,8 +247,7 @@ describe('startup detection of a missing / unreadable / half-migrated database',
 
   it('states plainly — before and after — what a rebuild cannot recover', async () => {
     const tc = await makeTestCore()
-    cleanups.push(() => tc.core.close())
-    await writePair(tc.dataDir, fakeSound(1))
+    await seedOriginal(tc.dataDir, fakeSound(1))
 
     expect(tc.core.getStartupAssessment().notRecoverable).toMatch(
       /custom names.*tags.*Collections/i,
@@ -323,7 +269,6 @@ describe('core.rebuildFromSidecars — runs off the calling thread, reports prog
       return gate
     }
     const tc = await makeTestCore({ rebuildRunner: runner })
-    cleanups.push(() => tc.core.close())
 
     const pending = tc.core.rebuildFromSidecars()
     let settled = false
@@ -348,10 +293,9 @@ describe('core.rebuildFromSidecars — runs off the calling thread, reports prog
 
   it('emits { done, total } progress through subscribeRebuildProgress', async () => {
     const tc = await makeTestCore()
-    cleanups.push(() => tc.core.close())
-    await writePair(tc.dataDir, fakeSound(1))
-    await writePair(tc.dataDir, fakeSound(2))
-    await writePair(tc.dataDir, fakeSound(3))
+    await seedOriginal(tc.dataDir, fakeSound(1))
+    await seedOriginal(tc.dataDir, fakeSound(2))
+    await seedOriginal(tc.dataDir, fakeSound(3))
 
     const seen: Array<{ done: number; total: number }> = []
     const off = tc.core.subscribeRebuildProgress((p) => seen.push(p))
@@ -364,8 +308,7 @@ describe('core.rebuildFromSidecars — runs off the calling thread, reports prog
   })
 
   it('the real scan runs on a worker_threads thread via rebuildWorkerRunner', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rebuild-worker-'))
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const dir = await makeTempDir('rebuild-worker-')
     const workerJs = join(dir, 'worker.mjs')
     writeFileSync(
       workerJs,

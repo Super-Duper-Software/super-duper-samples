@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import { NetworkError } from '../src/core'
 import { FakeFreesoundGateway } from '../src/core/gateway/fake'
-import { openDb } from '../src/core/db/index'
-import { loadFixture, makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
+import {
+  countRows,
+  getRow,
+  loadFixture,
+  makeFakeGateway,
+  openTempDb,
+  signedInCore,
+} from './helpers'
 
 describe('core.search — SQLite cache', () => {
   it('a repeated query makes no gateway call (cache hit)', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     await core.search('thunder')
     const callsAfterFirst = gateway.searchCallCount
@@ -21,7 +27,7 @@ describe('core.search — SQLite cache', () => {
     const gateway = new FakeFreesoundGateway({
       pages: { thunder: loadFixture('search-thunder.json') }, // count 2, hasMore=false
     })
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     await core.search('thunder', { pageSize: 200 })
 
@@ -30,7 +36,7 @@ describe('core.search — SQLite cache', () => {
 
   it('returning to a previous query after moving away is instant and gateway-call-free', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     await core.search('rain')
     await core.search('thunder')
@@ -45,7 +51,7 @@ describe('core.search — SQLite cache', () => {
 
   it('cached and live results are identical in shape', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     const live = await core.search('rain')
     const cached = await core.search('rain')
@@ -58,15 +64,16 @@ describe('core.search — SQLite cache', () => {
   })
 
   it('persists Sound metadata from the search response into the sounds table', async () => {
-    const { core, dbPath } = await makeTestCore({ signedIn: true })
+    const { core, dbPath } = await signedInCore()
 
     const res = await core.search('rain')
 
-    const db = openDb(dbPath)
-    const row = db
-      .prepare('SELECT * FROM sounds WHERE id = ?')
-      .get(res.sounds[0]!.id) as Record<string, unknown>
-    db.close()
+    const row = getRow<Record<string, unknown>>(
+      openTempDb(dbPath),
+      'sounds',
+      'id = ?',
+      res.sounds[0]!.id,
+    )!
 
     expect(row).toBeDefined()
     expect(row['name']).toBe(res.sounds[0]!.name)
@@ -76,18 +83,13 @@ describe('core.search — SQLite cache', () => {
 
   it('a connectivity failure on a cache MISS throws and persists nothing (no bogus empty cache row)', async () => {
     const gateway = makeFakeGateway({ failWith: new NetworkError('offline') })
-    const { core, dbPath } = await makeTestCore({ signedIn: true, gateway })
+    const { core, dbPath } = await signedInCore({ gateway })
 
     await expect(core.search('rain')).rejects.toBeInstanceOf(NetworkError)
 
-    const db = openDb(dbPath)
-    const cacheRows = (
-      db.prepare('SELECT COUNT(*) AS n FROM search_cache').get() as { n: number }
-    ).n
-    const soundRows = (
-      db.prepare('SELECT COUNT(*) AS n FROM sounds').get() as { n: number }
-    ).n
-    db.close()
+    const db = openTempDb(dbPath)
+    const cacheRows = countRows(db, 'search_cache')
+    const soundRows = countRows(db, 'sounds')
 
     expect(cacheRows).toBe(0)
     expect(soundRows).toBe(0)

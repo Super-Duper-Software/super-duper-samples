@@ -1,73 +1,37 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { openDb, type DB } from '../src/core/db/index'
+import { readFileSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
 import { FakeFreesoundGateway } from '../src/core/gateway/fake'
 import {
   createDownloadQueue,
   DOWNLOAD_CONCURRENCY,
   type StagingStatus,
 } from '../src/core/staging/downloadQueue'
-import type { Sidecar } from '../src/core/staging/contentStore'
-import { FakeScheduler } from './helpers/fakeScheduler'
-import { makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
-
-const RAIN = { id: 321967, ext: 'wav', author: 'klankbeeld', license: 'CC-BY' }
-
-const cleanups: Array<() => void> = []
-afterEach(() => {
-  for (const c of cleanups.splice(0)) {
-    try {
-      c()
-    } catch {
-      /* ignore */
-    }
-  }
-})
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((r) => setTimeout(r, ms))
-}
-
-async function waitUntil(pred: () => boolean, ms = 3000): Promise<void> {
-  const start = Date.now()
-  while (!pred()) {
-    if (Date.now() - start > ms) throw new Error('waitUntil timed out')
-    await sleep(5)
-  }
-}
-
-/** A test core that is signed in and (by default) has granted staging consent. */
-async function signedInCore(
-  opts: Parameters<typeof makeTestCore>[0] = {},
-  { consent = true }: { consent?: boolean } = {},
-) {
-  const gateway = (opts.gateway as FakeFreesoundGateway | undefined) ?? makeFakeGateway()
-  const tc = await makeTestCore({ ...opts, gateway })
-  cleanups.push(() => tc.core.close())
-  await tc.core.signIn()
-  if (consent) tc.core.grantStagingConsent()
-  return { ...tc, gateway }
-}
-
-function openTemp(dbPath: string): DB {
-  const db = openDb(dbPath)
-  cleanups.push(() => {
-    try {
-      db.close()
-    } catch {
-      /* already closed */
-    }
-  })
-  return db
-}
+import {
+  countRows,
+  DRIZZLE,
+  FakeScheduler,
+  getRow,
+  LOOP_IDS,
+  listContent,
+  makeFakeGateway,
+  openTempDb,
+  originalBytes,
+  originalPath,
+  RAIN,
+  readSidecar,
+  sidecarPath,
+  signedInCore,
+  sleep,
+  waitUntil,
+} from './helpers'
 
 describe('DownloadQueue', () => {
   it('never runs more than the concurrency limit at once', async () => {
     const gateway = new FakeFreesoundGateway({ downloadDelayMs: 25 })
     const q = createDownloadQueue({
       scheduler: new FakeScheduler(),
-      runDownload: (id, signal) => gateway.downloadOriginal(id, 'AT', { signal }),
+      runDownload: (id, signal) =>
+        gateway.downloadOriginal(id, 'AT', { signal }),
       onComplete: () => {},
     })
 
@@ -75,7 +39,9 @@ describe('DownloadQueue', () => {
     await waitUntil(() => q.tracked().length === 0)
 
     expect(gateway.downloadCallCount).toBe(12)
-    expect(gateway.downloadMaxConcurrent).toBeLessThanOrEqual(DOWNLOAD_CONCURRENCY)
+    expect(gateway.downloadMaxConcurrent).toBeLessThanOrEqual(
+      DOWNLOAD_CONCURRENCY,
+    )
     expect(gateway.downloadMaxConcurrent).toBe(DOWNLOAD_CONCURRENCY)
   })
 
@@ -84,7 +50,8 @@ describe('DownloadQueue', () => {
     const q = createDownloadQueue({
       scheduler: new FakeScheduler(),
       concurrency: 1,
-      runDownload: (id, signal) => gateway.downloadOriginal(id, 'AT', { signal }),
+      runDownload: (id, signal) =>
+        gateway.downloadOriginal(id, 'AT', { signal }),
       onComplete: () => {},
     })
 
@@ -110,7 +77,8 @@ describe('DownloadQueue', () => {
     const q = createDownloadQueue({
       scheduler,
       backoffMs: [0, 0, 0],
-      runDownload: (id, signal) => gateway.downloadOriginal(id, 'AT', { signal }),
+      runDownload: (id, signal) =>
+        gateway.downloadOriginal(id, 'AT', { signal }),
       onComplete: () => {},
       onStatusChange: (_id, s) => seen.push(s),
     })
@@ -131,7 +99,8 @@ describe('DownloadQueue', () => {
       scheduler,
       maxRetries: 2,
       backoffMs: [0, 0],
-      runDownload: (id, signal) => gateway.downloadOriginal(id, 'AT', { signal }),
+      runDownload: (id, signal) =>
+        gateway.downloadOriginal(id, 'AT', { signal }),
       onComplete: () => {},
       onStatusChange: (_id, s) => seen.push(s),
     })
@@ -156,25 +125,27 @@ describe('core.stageOnAudition', () => {
     core.stageOnAudition(RAIN.id)
     await waitUntil(() => core.getStagingStatus([RAIN.id])[RAIN.id] === 'ready')
 
-    const contentDir = join(dataDir, 'content')
-    const original = join(contentDir, `${RAIN.id}.${RAIN.ext}`)
-    const sidecarPath = join(contentDir, `${RAIN.id}.json`)
+    expect(readFileSync(originalPath(dataDir, RAIN), 'utf8')).toBe(
+      originalBytes(RAIN.id),
+    )
 
-    expect(readFileSync(original, 'utf8')).toBe(`FAKE-ORIGINAL:${RAIN.id}`)
-
-    const sidecar = JSON.parse(readFileSync(sidecarPath, 'utf8')) as Sidecar
+    const sidecar = readSidecar(sidecarPath(dataDir, RAIN.id))
     expect(sidecar.author.username).toBe(RAIN.author)
     expect(sidecar.license.name).toBe(RAIN.license)
     expect(sidecar.license.url).toMatch(/creativecommons\.org/)
     expect(sidecar.freesoundUrl).toContain(`/${RAIN.id}/`)
     expect(sidecar.sound.id).toBe(RAIN.id)
 
-    expect(readdirSync(contentDir).some((f) => f.endsWith('.part'))).toBe(false)
+    expect(listContent(dataDir).some((f) => f.endsWith('.part'))).toBe(false)
 
-    const forSound = events.filter((e) => e.soundId === RAIN.id).map((e) => e.status)
+    const forSound = events
+      .filter((e) => e.soundId === RAIN.id)
+      .map((e) => e.status)
     expect(forSound).toEqual(['queued', 'downloading', 'ready'])
 
-    expect(gateway.downloadCalls.filter((c) => c.soundId === RAIN.id)).toHaveLength(1)
+    expect(
+      gateway.downloadCalls.filter((c) => c.soundId === RAIN.id),
+    ).toHaveLength(1)
   })
 
   it('writes a staged_entries row with size + last-accessed, and a re-audition bumps last-accessed only', async () => {
@@ -184,16 +155,20 @@ describe('core.stageOnAudition', () => {
     core.stageOnAudition(RAIN.id)
     await waitUntil(() => core.getStagingStatus([RAIN.id])[RAIN.id] === 'ready')
 
-    const db = openTemp(dbPath)
-    const row1 = db
-      .prepare('SELECT * FROM staged_entries WHERE sound_id = ?')
-      .get(RAIN.id) as {
+    interface StagedRow {
       byte_size: number
       last_access_at: number
       created_at: number
       path: string
     }
-    expect(row1.byte_size).toBe(`FAKE-ORIGINAL:${RAIN.id}`.length)
+    const db = openTempDb(dbPath)
+    const row1 = getRow<StagedRow>(
+      db,
+      'staged_entries',
+      'sound_id = ?',
+      RAIN.id,
+    )!
+    expect(row1.byte_size).toBe(originalBytes(RAIN.id).length)
     expect(row1.path).toContain(`${RAIN.id}.${RAIN.ext}`)
     expect(row1.created_at).toBeGreaterThan(0)
     expect(row1.last_access_at).toBeGreaterThan(0)
@@ -202,28 +177,35 @@ describe('core.stageOnAudition', () => {
     await sleep(8)
     core.stageOnAudition(RAIN.id)
 
-    const row2 = db
-      .prepare('SELECT * FROM staged_entries WHERE sound_id = ?')
-      .get(RAIN.id) as { last_access_at: number; created_at: number }
+    const row2 = getRow<StagedRow>(
+      db,
+      'staged_entries',
+      'sound_id = ?',
+      RAIN.id,
+    )!
     expect(row2.last_access_at).toBeGreaterThan(row1.last_access_at)
     expect(row2.created_at).toBe(row1.created_at)
     expect(gateway.downloadCallCount).toBe(callsAfterFirst)
   })
 
   it('moving past a Sound quickly cancels its in-flight download', async () => {
-    const { core } = await signedInCore({ gateway: makeFakeGateway({ downloadDelayMs: 200 }) })
+    const { core } = await signedInCore({
+      gateway: makeFakeGateway({ downloadDelayMs: 200 }),
+    })
     await core.search('rain')
 
-    core.stageOnAudition(321967)
-    await waitUntil(() => core.getStagingStatus([321967])[321967] === 'downloading')
+    core.stageOnAudition(RAIN.id)
+    await waitUntil(
+      () => core.getStagingStatus([RAIN.id])[RAIN.id] === 'downloading',
+    )
 
-    core.stageOnAudition(408535)
-    expect(core.getStagingStatus([321967])[321967]).toBe('not-started')
+    core.stageOnAudition(DRIZZLE.id)
+    expect(core.getStagingStatus([RAIN.id])[RAIN.id]).toBe('not-started')
 
     await sleep(60)
-    expect(core.getStagingStatus([321967])[321967]).toBe('not-started')
+    expect(core.getStagingStatus([RAIN.id])[RAIN.id]).toBe('not-started')
     expect(['queued', 'downloading', 'ready']).toContain(
-      core.getStagingStatus([408535])[408535],
+      core.getStagingStatus([DRIZZLE.id])[DRIZZLE.id],
     )
   })
 
@@ -233,30 +215,33 @@ describe('core.stageOnAudition', () => {
     })
     await core.search('loops', { page: 1, pageSize: 3 })
     await core.search('loops', { page: 2, pageSize: 3 })
-    const ids = [500001, 500002, 500003, 500004, 500005, 500006]
 
-    for (const id of ids) core.stageOnAudition(id)
+    for (const id of LOOP_IDS) core.stageOnAudition(id)
 
-    const nowStatuses = core.getStagingStatus(ids)
-    const live = ids.filter((id) =>
+    const nowStatuses = core.getStagingStatus(LOOP_IDS)
+    const live = LOOP_IDS.filter((id) =>
       ['queued', 'downloading'].includes(nowStatuses[id] as string),
     )
     expect(live.length).toBeLessThanOrEqual(1)
-    expect(gateway.downloadMaxConcurrent).toBeLessThanOrEqual(DOWNLOAD_CONCURRENCY)
+    expect(gateway.downloadMaxConcurrent).toBeLessThanOrEqual(
+      DOWNLOAD_CONCURRENCY,
+    )
 
     await waitUntil(
       () =>
-        ids.every((id) =>
+        LOOP_IDS.every((id) =>
           ['not-started', 'ready'].includes(
             core.getStagingStatus([id])[id] as string,
           ),
         ),
       5000,
     )
-    const ready = ids.filter((id) => core.getStagingStatus([id])[id] === 'ready')
+    const ready = LOOP_IDS.filter(
+      (id) => core.getStagingStatus([id])[id] === 'ready',
+    )
     expect(ready).toEqual([500006])
-    expect(gateway.downloadCallCount).toBeLessThan(ids.length)
-    expect(readdirSync(join(dataDir, 'content')).filter((f) => f.endsWith('.flac'))).toEqual([
+    expect(gateway.downloadCallCount).toBeLessThan(LOOP_IDS.length)
+    expect(listContent(dataDir).filter((f) => f.endsWith('.flac'))).toEqual([
       '500006.flac',
     ])
   })
@@ -271,19 +256,18 @@ describe('core.stageOnAudition', () => {
     await waitUntil(() => core.getStagingStatus([RAIN.id])[RAIN.id] === 'ready')
 
     expect(gateway.refreshCalls).toHaveLength(1)
-    expect(gateway.downloadCalls.filter((c) => c.soundId === RAIN.id)).toHaveLength(2)
-    expect(readFileSync(join(dataDir, 'content', `${RAIN.id}.wav`), 'utf8')).toBe(
-      `FAKE-ORIGINAL:${RAIN.id}`,
+    expect(
+      gateway.downloadCalls.filter((c) => c.soundId === RAIN.id),
+    ).toHaveLength(2)
+    expect(readFileSync(originalPath(dataDir, RAIN), 'utf8')).toBe(
+      originalBytes(RAIN.id),
     )
   })
 })
 
 describe('staging gates', () => {
   it('does not stage anything while signed out (auditioning still works)', async () => {
-    const gateway = makeFakeGateway()
-    const { core, dataDir, dbPath } = await makeTestCore({ signedIn: true, gateway })
-    cleanups.push(() => core.close())
-    core.grantStagingConsent()
+    const { core, gateway, dataDir, dbPath } = await signedInCore()
 
     const result = await core.search('rain')
     expect(result.sounds.length).toBeGreaterThan(0)
@@ -294,17 +278,16 @@ describe('staging gates', () => {
 
     expect(gateway.downloadCallCount).toBe(0)
     expect(core.getStagingStatus([RAIN.id])[RAIN.id]).toBe('not-started')
-    expect(() => readdirSync(join(dataDir, 'content'))).toThrow()
+    expect(() => listContent(dataDir)).toThrow()
 
-    const db = openTemp(dbPath)
-    expect(
-      (db.prepare('SELECT COUNT(*) AS n FROM staged_entries').get() as { n: number }).n,
-    ).toBe(0)
+    expect(countRows(openTempDb(dbPath), 'staged_entries')).toBe(0)
   })
 
   it('does not stage before consent is granted; stages after grantStagingConsent()', async () => {
-    const gateway = makeFakeGateway()
-    const { core, dataDir } = await signedInCore({ gateway }, { consent: false })
+    const { core, gateway, dataDir } = await signedInCore(
+      {},
+      { consent: false },
+    )
     await core.search('rain')
 
     core.stageOnAudition(RAIN.id)
@@ -318,8 +301,8 @@ describe('staging gates', () => {
     core.stageOnAudition(RAIN.id)
     await waitUntil(() => core.getStagingStatus([RAIN.id])[RAIN.id] === 'ready')
     expect(gateway.downloadCallCount).toBeGreaterThanOrEqual(1)
-    expect(readFileSync(join(dataDir, 'content', `${RAIN.id}.wav`), 'utf8')).toBe(
-      `FAKE-ORIGINAL:${RAIN.id}`,
+    expect(readFileSync(originalPath(dataDir, RAIN), 'utf8')).toBe(
+      originalBytes(RAIN.id),
     )
   })
 
@@ -330,11 +313,10 @@ describe('staging gates', () => {
     const second = core.grantStagingConsent().grantedAt
     expect(second).toBe(first)
 
-    const db = openTemp(dbPath)
+    const db = openTempDb(dbPath)
     expect(
-      (db.prepare("SELECT value FROM app_meta WHERE key = 'staging_consent_at'").get() as {
-        value: string
-      }).value,
+      getRow<{ value: string }>(db, 'app_meta', "key = 'staging_consent_at'")!
+        .value,
     ).toBe(String(first))
   })
 })
@@ -347,14 +329,12 @@ describe('core.downloadToLibrary', () => {
     core.downloadToLibrary(RAIN.id)
     await waitUntil(() => core.getStagingStatus([RAIN.id])[RAIN.id] === 'ready')
 
-    const original = join(dataDir, 'content', `${RAIN.id}.${RAIN.ext}`)
-    expect(readFileSync(original, 'utf8')).toBe(`FAKE-ORIGINAL:${RAIN.id}`)
+    expect(readFileSync(originalPath(dataDir, RAIN), 'utf8')).toBe(
+      originalBytes(RAIN.id),
+    )
 
     expect(core.getLibraryMembership([RAIN.id])[RAIN.id]).toBe(true)
-    const db = openTemp(dbPath)
-    expect(
-      db.prepare('SELECT COUNT(*) AS n FROM staged_entries').get() as { n: number },
-    ).toEqual({ n: 0 })
+    expect(countRows(openTempDb(dbPath), 'staged_entries')).toBe(0)
 
     expect(core.getDownloadsInLast24h()).toBe(1)
   })
@@ -370,13 +350,7 @@ describe('core.downloadToLibrary', () => {
   })
 
   it('does nothing while signed out', async () => {
-    const { core } = await makeTestCore({
-      signedIn: true,
-      gateway: makeFakeGateway(),
-    }).then((tc) => {
-      cleanups.push(() => tc.core.close())
-      return tc
-    })
+    const { core } = await signedInCore({}, { consent: false })
     await core.search('rain')
     await core.signOut()
 
@@ -390,16 +364,13 @@ describe('core.downloadToLibrary', () => {
 
   it('getDownloadsInLast24h counts only the trailing 24 h', async () => {
     const { core, dbPath } = await signedInCore()
-    const db = openTemp(dbPath)
+    const db = openTempDb(dbPath)
     const now = Date.now()
-    db.prepare('INSERT INTO download_log (sound_id, downloaded_at) VALUES (?, ?)').run(
-      1,
-      now - 2 * 60 * 60 * 1000,
+    const insert = db.prepare(
+      'INSERT INTO download_log (sound_id, downloaded_at) VALUES (?, ?)',
     )
-    db.prepare('INSERT INTO download_log (sound_id, downloaded_at) VALUES (?, ?)').run(
-      2,
-      now - 25 * 60 * 60 * 1000,
-    )
+    insert.run(1, now - 2 * 60 * 60 * 1000)
+    insert.run(2, now - 25 * 60 * 60 * 1000)
     expect(core.getDownloadsInLast24h()).toBe(1)
   })
 })

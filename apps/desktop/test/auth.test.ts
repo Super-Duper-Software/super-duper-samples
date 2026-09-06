@@ -1,7 +1,7 @@
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { openDb, type DB } from '../src/core/db/index'
+import { describe, expect, it } from 'vitest'
+import type { DB } from '../src/core/db/index'
 import {
   createAuthController,
   type AuthControllerDeps,
@@ -11,29 +11,22 @@ import {
   ReauthRequiredError,
 } from '../src/core/auth/errors'
 import { FakeFreesoundGateway } from '../src/core/gateway/fake'
-import { FakeAuthPlatform } from './helpers/fakeAuthPlatform'
-import { FakeScheduler } from './helpers/fakeScheduler'
-import { makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
+import {
+  countRows,
+  FakeAuthPlatform,
+  FakeScheduler,
+  makeFakeGateway,
+  makeTestCore,
+  openTempDb,
+} from './helpers'
 
 const REDIRECT_URI = 'http://localhost:8910/callback'
-
-const openDbs: DB[] = []
-afterEach(() => {
-  for (const db of openDbs.splice(0)) {
-    try {
-      db.close()
-    } catch {
-      /* already closed */
-    }
-  }
-})
 
 function setup(
   gatewayCfg: ConstructorParameters<typeof FakeFreesoundGateway>[0] = {},
   ctrlCfg: Partial<AuthControllerDeps> = {},
-  db: DB = openDb(':memory:'),
+  db: DB = openTempDb(':memory:'),
 ) {
-  openDbs.push(db)
   const gateway = new FakeFreesoundGateway(gatewayCfg)
   const platform = new FakeAuthPlatform()
   const scheduler = new FakeScheduler()
@@ -255,8 +248,7 @@ describe('failed refresh', () => {
 
 describe('session persistence', () => {
   it('restores a signed-in session from the encrypted store on construction and refreshes on demand', async () => {
-    const db = openDb(':memory:')
-    openDbs.push(db)
+    const db = openTempDb(':memory:')
 
     const first = setup({ username: 'eve', refreshToken: 'rt-eve' }, {}, db)
     await first.controller.signIn()
@@ -289,8 +281,7 @@ describe('sign-out', () => {
     expect(core.getAuthState().status).toBe('signedIn')
     await core.search('rain')
 
-    const seed = openDb(dbPath)
-    openDbs.push(seed)
+    const seed = openTempDb(dbPath)
     const soundId = (
       seed.prepare('SELECT id FROM sounds LIMIT 1').get() as { id: number }
     ).id
@@ -299,29 +290,15 @@ describe('sign-out', () => {
       .run(soundId, Date.now())
     const filePath = join(dataDir, `${soundId}.wav`)
     writeFileSync(filePath, 'RIFF----fake-original-audio')
-    seed.close()
 
     await core.signOut()
 
     expect(core.getAuthState().status).toBe('signedOut')
 
-    const check = openDb(dbPath)
-    openDbs.push(check)
-    expect(
-      (check.prepare('SELECT COUNT(*) AS n FROM auth').get() as { n: number }).n,
-    ).toBe(0)
-    expect(
-      (
-        check
-          .prepare('SELECT COUNT(*) AS n FROM library_entries')
-          .get() as { n: number }
-      ).n,
-    ).toBe(1)
-    expect(
-      (check.prepare('SELECT COUNT(*) AS n FROM sounds').get() as { n: number })
-        .n,
-    ).toBeGreaterThan(0)
-    check.close()
+    const check = openTempDb(dbPath)
+    expect(countRows(check, 'auth')).toBe(0)
+    expect(countRows(check, 'library_entries')).toBe(1)
+    expect(countRows(check, 'sounds')).toBeGreaterThan(0)
 
     expect(existsSync(filePath)).toBe(true)
   })

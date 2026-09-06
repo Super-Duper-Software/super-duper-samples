@@ -1,6 +1,5 @@
-import { mkdtemp, mkdir, writeFile, readdir } from 'node:fs/promises'
+import { mkdir, writeFile, readdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -15,7 +14,12 @@ import {
   GatewayError,
   type LogSink,
 } from '../src/core'
-import { makeTestCore, makeFakeGateway } from './helpers/makeTestCore'
+import {
+  makeFakeGateway,
+  makeTempDir,
+  makeTestCore,
+  signedInCore,
+} from './helpers'
 
 /** An in-memory `LogSink` so a test can read back exactly what was written. */
 function memorySink(): LogSink & { lines: string[] } {
@@ -133,7 +137,6 @@ describe('core.getUiState / setUiState', () => {
       query: 'rain',
       window: { width: 1200, height: 800, x: 10, y: 10 },
     })
-    again.core.close()
   })
 })
 
@@ -143,7 +146,6 @@ describe('the app log', () => {
     expect(core.getLogPath()).toBeNull()
     core.log('info', 'nothing to see')
     expect(core.readLog()).toEqual([])
-    core.close()
   })
 
   it('records lines through log() and returns the tail oldest-first', async () => {
@@ -159,25 +161,23 @@ describe('the app log', () => {
     expect(all[1]).toMatch(/WARN\s+something odd\s+\{"soundId":5\}/)
     expect(core.readLog({ maxLines: 1 })).toEqual([all[2]])
     expect(core.getLogPath()).toBe('/tmp/fake/app.log')
-    core.close()
   })
 
   it('logs a failed search — the failure the user sees is also on disk', async () => {
     const sink = memorySink()
     const gateway = makeFakeGateway()
     gateway.search = () => Promise.reject(new NetworkError('offline'))
-    const { core } = await makeTestCore({ signedIn: true, gateway, logSink: sink })
+    const { core } = await signedInCore({ gateway, logSink: sink })
 
     await expect(core.search('rain')).rejects.toThrow()
     expect(sink.lines.some((l) => /search failed/.test(l))).toBe(true)
     expect(sink.lines.some((l) => /NetworkError/.test(l))).toBe(true)
-    core.close()
   })
 })
 
 describe('createFileLogSink — a real file under <userData>/logs', () => {
   it('creates the dir on first write and reads whole lines back', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'freesound-log-'))
+    const dir = await makeTempDir('freesound-log-')
     const sink = createFileLogSink(join(dir, 'logs'))
     sink.append('2026-08-31T00:00:00.000Z  INFO   one')
     sink.append('2026-08-31T00:00:01.000Z  WARN   two')
@@ -227,13 +227,12 @@ describe('classifyError — the one classifier every surface shares', () => {
 
 describe('drag-dir sweep on startup (ticket 09 deferred this to 18)', () => {
   it('clears leftover hardlinks from a previous run', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'freesound-drag-'))
+    const dataDir = await makeTempDir('freesound-drag-')
     await mkdir(join(dataDir, 'drag'), { recursive: true })
     await writeFile(join(dataDir, 'drag', '123.wav'), 'stale')
     await writeFile(join(dataDir, 'drag', '456.wav'), 'stale')
 
-    const { core } = await makeTestCore({ dataDir })
+    await makeTestCore({ dataDir })
     expect(await readdir(join(dataDir, 'drag'))).toEqual([])
-    core.close()
   })
 })

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { GatewayError, NetworkError, type Sound } from '../src/core'
 import { FakeFreesoundGateway } from '../src/core/gateway/fake'
-import { loadFixture, makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
+import { loadFixture, makeFakeGateway, signedInCore } from './helpers'
 
 function assertFullRowShape(s: Sound): void {
   expect(typeof s.id).toBe('number')
@@ -30,7 +30,7 @@ function assertFullRowShape(s: Sound): void {
 
 describe('core.search', () => {
   it('returns Sounds for a query, every row field populated', async () => {
-    const { core } = await makeTestCore({ signedIn: true })
+    const { core } = await signedInCore()
 
     const result = await core.search('rain')
 
@@ -46,7 +46,7 @@ describe('core.search', () => {
   })
 
   it('distinguishes an empty result set from a failure', async () => {
-    const { core } = await makeTestCore({ signedIn: true })
+    const { core } = await signedInCore()
 
     const result = await core.search('zzzznotarealquery')
 
@@ -58,7 +58,7 @@ describe('core.search', () => {
     const gateway = makeFakeGateway({
       failWith: new NetworkError('offline'),
     })
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     await expect(core.search('rain')).rejects.toBeInstanceOf(NetworkError)
   })
@@ -67,7 +67,7 @@ describe('core.search', () => {
     const gateway = makeFakeGateway({
       failWith: new GatewayError('rate limited', 429),
     })
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     await expect(core.search('rain')).rejects.toBeInstanceOf(GatewayError)
   })
@@ -76,7 +76,7 @@ describe('core.search', () => {
     const gateway = new FakeFreesoundGateway({
       pages: { rain: loadFixture('search-rain.json') },
     })
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     const result = await core.search('rain')
 
@@ -87,7 +87,7 @@ describe('core.search', () => {
 
   it('does not call the gateway for a blank query', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     const result = await core.search('   ')
 
@@ -98,7 +98,7 @@ describe('core.search', () => {
 
   it('passes page and pageSize through to the gateway', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway })
+    const { core } = await signedInCore({ gateway })
 
     await core.search('rain', { page: 3, pageSize: 42 })
 

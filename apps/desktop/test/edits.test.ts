@@ -1,126 +1,40 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import type { AudioRenderRunner, EditEvent, EditSpec } from '../src/core'
-import type { Sidecar } from '../src/core/staging/contentStore'
+import { describe, expect, it } from 'vitest'
+import type { EditEvent, EditSpec } from '../src/core'
 import { pickEditName } from '../src/core/edits/editName'
-import { makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
-
-const RAIN = { id: 321967, ext: 'wav' }
-const WHOLE_FILE_SPEC: EditSpec = { trim: null, format: 'wav' }
-
-const cleanups: Array<() => void> = []
-afterEach(() => {
-  for (const c of cleanups.splice(0)) {
-    try {
-      c()
-    } catch {
-      /* ignore */
-    }
-  }
-})
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((r) => setTimeout(r, ms))
-}
-
-async function waitUntil(pred: () => boolean, ms = 3000): Promise<void> {
-  const start = Date.now()
-  while (!pred()) {
-    if (Date.now() - start > ms) throw new Error('waitUntil timed out')
-    await sleep(5)
-  }
-}
-
-/** A fast, deterministic runner: copies fixed bytes to `outPath`. */
-function fakeRunner(opts: { bytes?: string; durationSec?: number } = {}): AudioRenderRunner {
-  const bytes = opts.bytes ?? 'FAKE-EDIT-BYTES'
-  return async ({ outPath }) => {
-    await writeFile(outPath, bytes)
-    return { byteSize: Buffer.byteLength(bytes), durationSec: opts.durationSec ?? 3 }
-  }
-}
-
-/** A runner that reports progress across a few ticks before finishing. */
-function slowFakeRunner(steps: number[]): AudioRenderRunner {
-  return async ({ outPath, onProgress }) => {
-    for (const p of steps) {
-      onProgress?.(p)
-      await sleep(5)
-    }
-    await writeFile(outPath, 'SLOW-BYTES')
-    return { byteSize: 10, durationSec: 5 }
-  }
-}
-
-/** A runner that always fails (unreadable source / encode error). */
-function failingRunner(message = 'encode error'): AudioRenderRunner {
-  return async () => {
-    throw new Error(message)
-  }
-}
-
-/** A runner that waits until `release()` is called, honouring abort in the meantime. */
-function controllableRunner(): { runner: AudioRenderRunner; release: () => void } {
-  let release!: () => void
-  const gate = new Promise<void>((res) => {
-    release = res
-  })
-  const runner: AudioRenderRunner = async ({ outPath, signal }) => {
-    await new Promise<void>((resolve, reject) => {
-      if (signal.aborted) {
-        reject(abortError())
-        return
-      }
-      const onAbort = () => reject(abortError())
-      signal.addEventListener('abort', onAbort, { once: true })
-      gate.then(() => {
-        signal.removeEventListener('abort', onAbort)
-        resolve()
-      })
-    })
-    await writeFile(outPath, 'RELEASED-BYTES')
-    return { byteSize: 14, durationSec: 2 }
-  }
-  return { runner, release }
-}
-
-function abortError(): Error {
-  const e = new Error('aborted')
-  e.name = 'AbortError'
-  return e
-}
-
-/** Bring the RAIN parent's Original onto disk via a real (fake-gateway) stage + save. */
-async function stageParent(core: Awaited<ReturnType<typeof makeTestCore>>['core']) {
-  await core.signIn()
-  await core.search('rain')
-  core.downloadToLibrary(RAIN.id)
-  await waitUntil(() => core.getStagingStatus([RAIN.id])[RAIN.id] === 'ready')
-}
+import {
+  controllableRenderRunner,
+  editPath,
+  editSidecarPath,
+  fakeRenderRunner,
+  failingRenderRunner,
+  listContent,
+  makeTestCore,
+  originalPath,
+  RAIN,
+  readSidecar,
+  signInAndDownload,
+  slowRenderRunner,
+  WHOLE_FILE_SPEC,
+} from './helpers'
 
 describe('core.createEdit — whole-file export (ticket 01)', () => {
   it('renders through the fake runner and writes the Edit file + sidecar to the content store', async () => {
     const { core, dataDir } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: fakeRunner({ bytes: 'HELLO-EDIT' }),
+      audioRenderRunner: fakeRenderRunner({ bytes: 'HELLO-EDIT' }),
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    await signInAndDownload(core)
 
     const result = await core.createEdit(RAIN.id, WHOLE_FILE_SPEC)
     expect(result).not.toBeNull()
     const editId = result!.editId
     expect(editId).toBeLessThan(0)
 
-    const original = join(dataDir, 'content', `${RAIN.id}-edited.${RAIN.ext}`)
-    const sidecarPath = join(dataDir, 'content', `${RAIN.id}-edited.json`)
-    expect(existsSync(original)).toBe(true)
-    expect(existsSync(sidecarPath)).toBe(true)
-    expect(readFileSync(original, 'utf8')).toBe('HELLO-EDIT')
+    const edited = editPath(dataDir, RAIN)
+    expect(existsSync(edited)).toBe(true)
+    expect(readFileSync(edited, 'utf8')).toBe('HELLO-EDIT')
 
-    const sidecar = JSON.parse(readFileSync(sidecarPath, 'utf8')) as Sidecar
+    const sidecar = readSidecar(editSidecarPath(dataDir, RAIN.id))
     expect(sidecar.derivedFrom).toBe(RAIN.id)
     expect(sidecar.editSpec).toEqual(WHOLE_FILE_SPEC)
     expect(sidecar.sound.id).toBe(editId)
@@ -128,11 +42,9 @@ describe('core.createEdit — whole-file export (ticket 01)', () => {
 
   it('writes a negative-id sounds row + library_entries row inheriting the parent License/author/URL', async () => {
     const { core } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: fakeRunner(),
+      audioRenderRunner: fakeRenderRunner(),
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    await signInAndDownload(core)
 
     const parent = core.listLibrary().find((s) => s.id === RAIN.id)!
     const { editId } = (await core.createEdit(RAIN.id, WHOLE_FILE_SPEC))!
@@ -150,11 +62,9 @@ describe('core.createEdit — whole-file export (ticket 01)', () => {
 
   it('a second Edit of the same parent is named "edited (2)"', async () => {
     const { core } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: fakeRunner(),
+      audioRenderRunner: fakeRenderRunner(),
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    await signInAndDownload(core)
 
     const first = (await core.createEdit(RAIN.id, WHOLE_FILE_SPEC))!
     const second = (await core.createEdit(RAIN.id, WHOLE_FILE_SPEC))!
@@ -162,16 +72,16 @@ describe('core.createEdit — whole-file export (ticket 01)', () => {
 
     const lib = core.listLibrary()
     expect(lib.find((s) => s.id === first.editId)!.effectiveName).toBe('edited')
-    expect(lib.find((s) => s.id === second.editId)!.effectiveName).toBe('edited (2)')
+    expect(lib.find((s) => s.id === second.editId)!.effectiveName).toBe(
+      'edited (2)',
+    )
   })
 
   it('the Edit shows in listLibrary/filterLibrary, and a format filter matches it', async () => {
     const { core } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: fakeRunner(),
+      audioRenderRunner: fakeRenderRunner(),
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    await signInAndDownload(core)
 
     const { editId } = (await core.createEdit(RAIN.id, WHOLE_FILE_SPEC))!
     expect(core.listLibrary().some((s) => s.id === editId)).toBe(true)
@@ -185,22 +95,20 @@ describe('core.createEdit — whole-file export (ticket 01)', () => {
 
   it('deleteFromLibrary removes the Edit row + file and leaves the parent Sound + Original untouched', async () => {
     const { core, dataDir } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: fakeRunner(),
+      audioRenderRunner: fakeRenderRunner(),
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    await signInAndDownload(core)
 
     const { editId } = (await core.createEdit(RAIN.id, WHOLE_FILE_SPEC))!
-    const editPath = join(dataDir, 'content', `${RAIN.id}-edited.${RAIN.ext}`)
-    const parentPath = join(dataDir, 'content', `${RAIN.id}.${RAIN.ext}`)
-    expect(existsSync(editPath)).toBe(true)
+    const edited = editPath(dataDir, RAIN)
+    const parentPath = originalPath(dataDir, RAIN)
+    expect(existsSync(edited)).toBe(true)
     expect(existsSync(parentPath)).toBe(true)
 
     await core.deleteFromLibrary(editId)
 
-    expect(existsSync(editPath)).toBe(false)
-    expect(existsSync(join(dataDir, 'content', `${RAIN.id}-edited.json`))).toBe(false)
+    expect(existsSync(edited)).toBe(false)
+    expect(existsSync(editSidecarPath(dataDir, RAIN.id))).toBe(false)
     expect(core.listLibrary().some((s) => s.id === editId)).toBe(false)
 
     expect(existsSync(parentPath)).toBe(true)
@@ -209,11 +117,9 @@ describe('core.createEdit — whole-file export (ticket 01)', () => {
 
   it('setCustomName / setLibraryTags / getContentPath / getFreesoundUrl accept a negative Edit id', async () => {
     const { core, dataDir } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: fakeRunner(),
+      audioRenderRunner: fakeRenderRunner(),
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    await signInAndDownload(core)
     const parentUrl = core.getFreesoundUrl(RAIN.id)
 
     const { editId } = (await core.createEdit(RAIN.id, WHOLE_FILE_SPEC))!
@@ -224,17 +130,15 @@ describe('core.createEdit — whole-file export (ticket 01)', () => {
     expect(edit.effectiveName).toBe('My Trim')
     expect(edit.customTags).toEqual(['a', 'b'])
 
-    expect(core.getContentPath(editId)).toBe(
-      join(dataDir, 'content', `${RAIN.id}-edited.${RAIN.ext}`),
-    )
+    expect(core.getContentPath(editId)).toBe(editPath(dataDir, RAIN))
     expect(core.getFreesoundUrl(editId)).toBe(parentUrl)
   })
 
   it('never calls the gateway and getDownloadsInLast24h is unchanged', async () => {
-    const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ gateway, audioRenderRunner: fakeRunner() })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    const { core, gateway } = await makeTestCore({
+      audioRenderRunner: fakeRenderRunner(),
+    })
+    await signInAndDownload(core)
 
     const before = core.getDownloadsInLast24h()
     const callsBefore = gateway.downloadCallCount
@@ -247,48 +151,48 @@ describe('core.createEdit — whole-file export (ticket 01)', () => {
 
   it('is a silent no-op for an unknown parent or one whose Original is not on disk', async () => {
     const { core } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: fakeRunner(),
+      audioRenderRunner: fakeRenderRunner(),
     })
-    cleanups.push(() => core.close())
     await core.signIn()
 
     expect(await core.createEdit(999999, WHOLE_FILE_SPEC)).toBeNull()
 
     const results = await core.search('thunder')
     if (results.sounds.length > 0) {
-      expect(await core.createEdit(results.sounds[0].id, WHOLE_FILE_SPEC)).toBeNull()
+      expect(
+        await core.createEdit(results.sounds[0].id, WHOLE_FILE_SPEC),
+      ).toBeNull()
     }
   })
 
   it('reports render progress and a final failure through subscribeEditProgress; a failure rejects and leaves nothing behind', async () => {
     const { core, dataDir } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: failingRunner('boom'),
+      audioRenderRunner: failingRenderRunner('boom'),
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    await signInAndDownload(core)
 
     const events: EditEvent[] = []
     const unsub = core.subscribeEditProgress((e) => events.push(e))
 
-    await expect(core.createEdit(RAIN.id, WHOLE_FILE_SPEC)).rejects.toThrow('boom')
+    await expect(core.createEdit(RAIN.id, WHOLE_FILE_SPEC)).rejects.toThrow(
+      'boom',
+    )
     expect(events.some((e) => e.status === 'failed')).toBe(true)
 
-    const { readdirSync } = await import('node:fs')
-    const files = readdirSync(join(dataDir, 'content'))
-    expect(files.filter((f) => f.includes('-edited'))).toHaveLength(0)
-    expect(core.listLibrary().some((s) => s.derivedFrom === RAIN.id)).toBe(false)
+    expect(listContent(dataDir).filter((f) => f.includes('-edited'))).toEqual(
+      [],
+    )
+    expect(core.listLibrary().some((s) => s.derivedFrom === RAIN.id)).toBe(
+      false,
+    )
     unsub()
   })
 
   it('emits increasing progress for a slow render and still lands a complete Edit', async () => {
     const { core } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: slowFakeRunner([0.25, 0.5, 0.75, 1]),
+      audioRenderRunner: slowRenderRunner([0.25, 0.5, 0.75, 1]),
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    await signInAndDownload(core)
 
     const progress: number[] = []
     const unsub = core.subscribeEditProgress((e) => {
@@ -302,13 +206,9 @@ describe('core.createEdit — whole-file export (ticket 01)', () => {
   })
 
   it('cancelEdit during a render leaves no row, no file and no sidecar behind', async () => {
-    const { runner, release } = controllableRunner()
-    const { core, dataDir } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: runner,
-    })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    const { runner, release } = controllableRenderRunner()
+    const { core, dataDir } = await makeTestCore({ audioRenderRunner: runner })
+    await signInAndDownload(core)
 
     const pending = core.createEdit(RAIN.id, WHOLE_FILE_SPEC)
     core.cancelEdit(RAIN.id)
@@ -317,28 +217,24 @@ describe('core.createEdit — whole-file export (ticket 01)', () => {
 
     release()
 
-    const { readdirSync } = await import('node:fs')
-    const files = readdirSync(join(dataDir, 'content'))
-    expect(files.filter((f) => f.includes('-edited'))).toHaveLength(0)
-    expect(core.listLibrary().some((s) => s.derivedFrom === RAIN.id)).toBe(false)
+    expect(listContent(dataDir).filter((f) => f.includes('-edited'))).toEqual(
+      [],
+    )
+    expect(core.listLibrary().some((s) => s.derivedFrom === RAIN.id)).toBe(
+      false,
+    )
   })
 })
 
 describe('core.createEdit — honouring the full EditSpec (ticket 02)', () => {
-  it('passes the caller\'s trim/format/rate/channels/normalise through to the runner, and a trimmed Edit reports the shorter duration', async () => {
-    const seen: EditSpec[] = []
-    const recordingRunner: AudioRenderRunner = async ({ spec, outPath }) => {
-      seen.push(spec)
-      await writeFile(outPath, 'TRIMMED-BYTES')
-      const [durationSec] = [spec.trim ? spec.trim.endSec - spec.trim.startSec : 34.7208]
-      return { byteSize: 13, durationSec }
-    }
-    const { core } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: recordingRunner,
+  it("passes the caller's trim/format/rate/channels/normalise through to the runner, and a trimmed Edit reports the shorter duration", async () => {
+    const runner = fakeRenderRunner({
+      bytes: 'TRIMMED-BYTES',
+      durationSec: (spec) =>
+        spec.trim ? spec.trim.endSec - spec.trim.startSec : RAIN.durationSec,
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    const { core } = await makeTestCore({ audioRenderRunner: runner })
+    await signInAndDownload(core)
 
     const spec: EditSpec = {
       trim: { startSec: 2, endSec: 7 },
@@ -350,8 +246,7 @@ describe('core.createEdit — honouring the full EditSpec (ticket 02)', () => {
     const result = await core.createEdit(RAIN.id, spec)
     expect(result).not.toBeNull()
 
-    expect(seen).toHaveLength(1)
-    expect(seen[0]).toEqual(spec)
+    expect(runner.specs).toEqual([spec])
 
     const edit = core.listLibrary().find((s) => s.id === result!.editId)!
     expect(edit.duration).toBe(5)
@@ -362,57 +257,51 @@ describe('core.createEdit — honouring the full EditSpec (ticket 02)', () => {
   })
 
   it('clamps a trim window that overruns the source and rejects a zero-or-negative-length region before any render starts', async () => {
-    const calls: EditSpec[] = []
-    const recordingRunner: AudioRenderRunner = async ({ spec, outPath }) => {
-      calls.push(spec)
-      await writeFile(outPath, 'X')
-      return { byteSize: 1, durationSec: 1 }
-    }
-    const { core } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: recordingRunner,
-    })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    const runner = fakeRenderRunner({ bytes: 'X', durationSec: 1 })
+    const { core } = await makeTestCore({ audioRenderRunner: runner })
+    await signInAndDownload(core)
 
-    const overrun: EditSpec = { trim: { startSec: 30, endSec: 1000 }, format: 'wav' }
+    const overrun: EditSpec = {
+      trim: { startSec: 30, endSec: 1000 },
+      format: 'wav',
+    }
     await core.createEdit(RAIN.id, overrun)
-    expect(calls).toHaveLength(1)
-    expect(calls[0].trim).toEqual({ startSec: 30, endSec: 34.7208 })
+    expect(runner.calls).toBe(1)
+    expect(runner.specs[0]!.trim).toEqual({
+      startSec: 30,
+      endSec: RAIN.durationSec,
+    })
 
     await expect(
-      core.createEdit(RAIN.id, { trim: { startSec: 40, endSec: 41 }, format: 'wav' }),
+      core.createEdit(RAIN.id, {
+        trim: { startSec: 40, endSec: 41 },
+        format: 'wav',
+      }),
     ).rejects.toThrow()
-    expect(calls).toHaveLength(1)
+    expect(runner.calls).toBe(1)
   })
 
   it('still permits exporting the whole file with no format change', async () => {
     const { core } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: fakeRunner(),
+      audioRenderRunner: fakeRenderRunner(),
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    await signInAndDownload(core)
 
-    const result = await core.createEdit(RAIN.id, { trim: null, format: 'wav' })
+    const result = await core.createEdit(RAIN.id, {
+      trim: null,
+      format: 'wav',
+    })
     expect(result).not.toBeNull()
   })
 })
 
 describe('core.createEdit — exporting an Edit of an Edit (ticket 08 regression)', () => {
   it("renders from the FIRST Edit's own file, not the `<id>.<ext>` content-store path a negative id has no file at", async () => {
-    const sourcePaths: string[] = []
-    const recordingRunner: AudioRenderRunner = async ({ sourcePath, outPath }) => {
-      sourcePaths.push(sourcePath)
-      await writeFile(outPath, `bytes-for-${sourcePaths.length}`)
-      return { byteSize: 1, durationSec: 3 }
-    }
-    const { core, dataDir } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: recordingRunner,
+    const runner = fakeRenderRunner({
+      bytes: (input) => `bytes-for-${input.spec.format}`,
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    const { core, dataDir } = await makeTestCore({ audioRenderRunner: runner })
+    await signInAndDownload(core)
 
     const first = await core.createEdit(RAIN.id, WHOLE_FILE_SPEC)
     expect(first).not.toBeNull()
@@ -421,10 +310,8 @@ describe('core.createEdit — exporting an Edit of an Edit (ticket 08 regression
     expect(second).not.toBeNull()
     expect(second!.editId).toBeLessThan(first!.editId)
 
-    expect(sourcePaths).toHaveLength(2)
-    expect(sourcePaths[1]).toBe(
-      join(dataDir, 'content', `${RAIN.id}-edited.${RAIN.ext}`),
-    )
+    expect(runner.sourcePaths).toHaveLength(2)
+    expect(runner.sourcePaths[1]).toBe(editPath(dataDir, RAIN))
 
     const edit = core.listLibrary().find((s) => s.id === second!.editId)
     expect(edit?.derivedFrom).toBe(first!.editId)
@@ -432,11 +319,9 @@ describe('core.createEdit — exporting an Edit of an Edit (ticket 08 regression
 
   it('resolves null (a silent no-op) when the Edit being re-exported has no file left on disk', async () => {
     const { core } = await makeTestCore({
-      gateway: makeFakeGateway(),
-      audioRenderRunner: fakeRunner(),
+      audioRenderRunner: fakeRenderRunner(),
     })
-    cleanups.push(() => core.close())
-    await stageParent(core)
+    await signInAndDownload(core)
 
     const first = await core.createEdit(RAIN.id, WHOLE_FILE_SPEC)
     await core.deleteFromLibrary(first!.editId)

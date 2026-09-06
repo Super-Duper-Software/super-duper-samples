@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { createSearchController } from '../src/core/search/searchController'
 import type { SearchResult } from '../src/core'
-import { makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
+import { makeFakeGateway, signedInCore } from './helpers'
 
 const tick = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 describe('debounce — core SearchController', () => {
   it('collapses rapid queries into a single gateway call for the trailing query', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway, debounceMs: 25 })
+    const { core } = await signedInCore({ gateway, debounceMs: 25 })
 
     const results = Promise.all([
       core.searchDebounced('t'),
@@ -28,7 +28,7 @@ describe('debounce — core SearchController', () => {
 
   it('a query issued after the window settles is a new gateway call', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway, debounceMs: 15 })
+    const { core } = await signedInCore({ gateway, debounceMs: 15 })
 
     await core.searchDebounced('thunder')
     await tick(30)
@@ -42,7 +42,7 @@ describe('debounce — core SearchController', () => {
 
   it('a debounced query already in the cache costs no gateway call', async () => {
     const gateway = makeFakeGateway()
-    const { core } = await makeTestCore({ signedIn: true, gateway, debounceMs: 10 })
+    const { core } = await signedInCore({ gateway, debounceMs: 10 })
 
     await core.searchDebounced('thunder')
     const after = gateway.searchCallCount

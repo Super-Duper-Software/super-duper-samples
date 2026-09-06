@@ -1,12 +1,8 @@
 import { existsSync, readdirSync, writeFileSync } from 'node:fs'
-import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { openDb, type DB } from '../src/core/db/index'
+import { describe, expect, it } from 'vitest'
 import { getPeaksRecord, putPeaksRecord } from '../src/core/db/peaks'
-import { upsertSound } from '../src/core/db/sounds'
-import { upsertStagedEntry } from '../src/core/db/staged'
 import { writeOriginal } from '../src/core/staging/contentStore'
 import { evictStagedOverBudget } from '../src/core/staging/eviction'
 import { createDragRegistry } from '../src/core/staging/dragRegistry'
@@ -17,163 +13,26 @@ import {
 import { computePeaks } from '../src/core/peaks/computePeaks'
 import { computePeaksFromFile } from '../src/core/peaks/computeFromFile'
 import { workerRunner } from '../src/core/peaks/peakService'
-import type { AudioRenderRunner, PeakRunner } from '../src/core'
-import type { Sound } from '../src/core/types'
-import { makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
-
-const cleanups: Array<() => void> = []
-afterEach(() => {
-  for (const c of cleanups.splice(0)) {
-    try {
-      c()
-    } catch {
-      /* ignore */
-    }
-  }
-})
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((r) => setTimeout(r, ms))
-async function waitUntil(pred: () => boolean, ms = 4000): Promise<void> {
-  const start = Date.now()
-  while (!pred()) {
-    if (Date.now() - start > ms) throw new Error('waitUntil timed out')
-    await sleep(5)
-  }
-}
-
-/** A 16-bit PCM WAV (mono) whose samples are `frames` long, with a peak at 0.5. */
-function makeWav(frames: number, sampleRate = 8000): Buffer {
-  const channels = 1
-  const bytesPerSample = 2
-  const dataLen = frames * channels * bytesPerSample
-  const buf = Buffer.alloc(44 + dataLen)
-  buf.write('RIFF', 0)
-  buf.writeUInt32LE(36 + dataLen, 4)
-  buf.write('WAVE', 8)
-  buf.write('fmt ', 12)
-  buf.writeUInt32LE(16, 16)
-  buf.writeUInt16LE(1, 20)
-  buf.writeUInt16LE(channels, 22)
-  buf.writeUInt32LE(sampleRate, 24)
-  buf.writeUInt32LE(sampleRate * channels * bytesPerSample, 28)
-  buf.writeUInt16LE(channels * bytesPerSample, 32)
-  buf.writeUInt16LE(16, 34)
-  buf.write('data', 36)
-  buf.writeUInt32LE(dataLen, 40)
-  for (let i = 0; i < frames; i++) {
-    const v = i % 2 === 0 ? 0.5 : -0.5
-    buf.writeInt16LE(Math.round(v * 32767), 44 + i * 2)
-  }
-  return buf
-}
-
-/** A 16-bit PCM AIFF (mono), samples ±0.25. */
-function makeAiff(frames: number, sampleRate = 8000): Buffer {
-  const channels = 1
-  const dataLen = frames * channels * 2
-  const ssndLen = 8 + dataLen
-  const buf = Buffer.alloc(12 + 8 + 18 + 8 + ssndLen)
-  let p = 0
-  buf.write('FORM', p)
-  p += 4
-  buf.writeUInt32LE(0, p)
-  p += 4
-  buf.writeUInt32BE(4 + 8 + 18 + 8 + ssndLen, 4)
-  buf.write('AIFF', p)
-  p += 4
-  buf.write('COMM', p)
-  p += 4
-  buf.writeUInt32BE(18, p)
-  p += 4
-  buf.writeUInt16BE(channels, p)
-  p += 2
-  buf.writeUInt32BE(frames, p)
-  p += 4
-  buf.writeUInt16BE(16, p)
-  p += 2
-  writeExtended(buf, p, sampleRate)
-  p += 10
-  buf.write('SSND', p)
-  p += 4
-  buf.writeUInt32BE(ssndLen, p)
-  p += 4
-  buf.writeUInt32BE(0, p)
-  p += 4
-  buf.writeUInt32BE(0, p)
-  p += 4
-  for (let i = 0; i < frames; i++) {
-    const v = i % 2 === 0 ? 0.25 : -0.25
-    buf.writeInt16BE(Math.round(v * 32767), p + i * 2)
-  }
-  return buf
-}
-
-function writeExtended(buf: Buffer, offset: number, value: number): void {
-  let mantissa = value
-  let exponent = 16383 + 63
-  while (mantissa < 2 ** 63 && exponent > 0) {
-    mantissa *= 2
-    exponent -= 1
-  }
-  while (mantissa >= 2 ** 64) {
-    mantissa /= 2
-    exponent += 1
-  }
-  buf.writeUInt16BE(exponent, offset)
-  const hi = Math.floor(mantissa / 2 ** 32)
-  const lo = mantissa >>> 0
-  buf.writeUInt32BE(hi >>> 0, offset + 2)
-  buf.writeUInt32BE(lo, offset + 6)
-}
-
-function fakeSound(id: number, over: Partial<Sound> = {}): Sound {
-  return {
-    id,
-    name: `sound ${id}`,
-    username: 'tester',
-    license: {
-      url: 'http://creativecommons.org/publicdomain/zero/1.0/',
-      name: 'CC0',
-    },
-    duration: 3,
-    tags: ['test'],
-    filesize: 1,
-    type: 'wav',
-    samplerate: 8000,
-    channels: 1,
-    bitdepth: 16,
-    previewUrls: { hqMp3: 'hq.mp3', lqMp3: 'lq.mp3', hqOgg: '', lqOgg: '' },
-    waveformUrls: { m: 'm.png', l: 'l.png' },
-    url: `https://freesound.org/s/${id}/`,
-    downloadCount: 0,
-    avgRating: 0,
-    created: '2020-01-01T00:00:00Z',
-    ...over,
-  }
-}
-
-/** An in-process runner backed by the real decode + sweep, counting its calls. */
-function countingRunner(): PeakRunner & { calls: number } {
-  const r = ((filePath, buckets) => {
-    r.calls += 1
-    return computePeaksFromFile(filePath, buckets)
-  }) as PeakRunner & { calls: number }
-  r.calls = 0
-  return r
-}
-
-function openTemp(dbPath: string): DB {
-  const db = openDb(dbPath)
-  cleanups.push(() => {
-    try {
-      db.close()
-    } catch {
-      /* already closed */
-    }
-  })
-  return db
-}
+import type { PeakRunner } from '../src/core'
+import {
+  countingPeakRunner,
+  countRows,
+  craftStaged,
+  failingRenderRunner,
+  fakeRenderRunner,
+  fakeSound,
+  makeAiff,
+  makeFakeGateway,
+  makeTempDir,
+  makeTestCore,
+  makeWav,
+  openTempDb,
+  originalPath,
+  signedInCore,
+  sleep,
+  stageReady,
+  waitUntil,
+} from './helpers'
 
 describe('decodeAudioBuffer + computePeaks', () => {
   it('decodes a 16-bit PCM WAV and reduces it to a correct min/max envelope', () => {
@@ -212,7 +71,7 @@ describe('decodeAudioBuffer + computePeaks', () => {
 
 describe('workerRunner — computation runs on a real worker_threads thread', () => {
   it('spawns a Worker, hands it the file, and returns the envelope from another thread', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'peaks-worker-'))
+    const dir = await makeTempDir('peaks-worker-')
     const workerJs = join(dir, 'worker.mjs')
     writeFileSync(
       workerJs,
@@ -255,22 +114,18 @@ describe('peaks are computed once per Sound and reused', () => {
   it('computes on stage, serves from the DB cache, and a fresh core never recomputes', async () => {
     const wav = makeWav(20000)
     const gateway = makeFakeGateway({ downloadBytes: () => wav })
-    const runner = countingRunner()
+    const runner = countingPeakRunner()
     const events: Array<{ soundId: number; status: string }> = []
-    const tc = await makeTestCore({
+    const tc = await signedInCore({
       gateway,
       computePeaksRunner: runner,
       onPeaksStatusChange: (c) => events.push(c),
     })
-    cleanups.push(() => tc.core.close())
-    await tc.core.signIn()
-    tc.core.grantStagingConsent()
 
     const page = await tc.core.search('rain')
     const id = page.sounds[0]!.id
 
-    tc.core.stageOnAudition(id)
-    await waitUntil(() => tc.core.getStagingStatus([id])[id] === 'ready')
+    await stageReady(tc.core, id)
     await waitUntil(() => tc.core.getPeaks(id) != null)
 
     const peaks = tc.core.getPeaks(id)!
@@ -291,7 +146,6 @@ describe('peaks are computed once per Sound and reused', () => {
       dbPath: tc.dbPath,
       computePeaksRunner: throwingRunner,
     })
-    cleanups.push(() => tc2.core.close())
     const again = tc2.core.getPeaks(id)
     expect(again).not.toBeNull()
     expect(again!.bucketCount).toBe(peaks.bucketCount)
@@ -314,10 +168,7 @@ describe('computing peaks for a long recording leaves the core responsive', () =
       return computePeaksFromFile(filePath, buckets)
     }
 
-    const tc = await makeTestCore({ gateway, computePeaksRunner: slowRunner })
-    cleanups.push(() => tc.core.close())
-    await tc.core.signIn()
-    tc.core.grantStagingConsent()
+    const tc = await signedInCore({ gateway, computePeaksRunner: slowRunner })
     const page = await tc.core.search('rain')
     const id = page.sounds[0]!.id
     await writeOriginal(tc.dataDir, page.sounds[0]!, wav, Date.now())
@@ -340,20 +191,16 @@ describe('computing peaks for a long recording leaves the core responsive', () =
 
 describe('an Original that cannot be decoded falls back gracefully', () => {
   it('records a sentinel, getPeaks returns null (no throw), and it is not retried', async () => {
-    const runner = countingRunner()
+    const runner = countingPeakRunner()
     const events: Array<{ soundId: number; status: string }> = []
-    const tc = await makeTestCore({
+    const tc = await signedInCore({
       computePeaksRunner: runner,
       onPeaksStatusChange: (c) => events.push(c),
     })
-    cleanups.push(() => tc.core.close())
-    await tc.core.signIn()
-    tc.core.grantStagingConsent()
     const page = await tc.core.search('rain')
     const id = page.sounds[0]!.id
 
-    tc.core.stageOnAudition(id)
-    await waitUntil(() => tc.core.getStagingStatus([id])[id] === 'ready')
+    await stageReady(tc.core, id)
     await waitUntil(() =>
       events.some((e) => e.soundId === id && e.status === 'unavailable'),
     )
@@ -361,7 +208,7 @@ describe('an Original that cannot be decoded falls back gracefully', () => {
     expect(() => tc.core.getPeaks(id)).not.toThrow()
     expect(tc.core.getPeaks(id)).toBeNull()
 
-    const db = openTemp(tc.dbPath)
+    const db = openTempDb(tc.dbPath)
     const row = db
       .prepare('SELECT bucket_count FROM peaks WHERE sound_id = ?')
       .get(id) as { bucket_count: number } | undefined
@@ -374,32 +221,6 @@ describe('an Original that cannot be decoded falls back gracefully', () => {
   })
 })
 
-/** A render runner that writes real WAV bytes to `outPath` and counts its calls. */
-function spyWavRenderRunner(
-  bytes: () => Buffer,
-): AudioRenderRunner & { calls: number } {
-  const r = (async ({ outPath }: { outPath: string }) => {
-    r.calls += 1
-    const b = bytes()
-    writeFileSync(outPath, b)
-    return { byteSize: b.byteLength, durationSec: 1 }
-  }) as unknown as AudioRenderRunner & { calls: number }
-  r.calls = 0
-  return r
-}
-
-/** A render runner that always rejects with `message`, counting its calls. */
-function failingRenderRunner(
-  message: string,
-): AudioRenderRunner & { calls: number } {
-  const r = (async () => {
-    r.calls += 1
-    throw new Error(message)
-  }) as unknown as AudioRenderRunner & { calls: number }
-  r.calls = 0
-  return r
-}
-
 /** Scratch PCM copies live in the OS temp dir, named `peaks-scratch-<hex>.wav`. */
 function scratchLeftoverCount(): number {
   return readdirSync(tmpdir()).filter((f) => f.startsWith('peaks-scratch-'))
@@ -409,15 +230,15 @@ function scratchLeftoverCount(): number {
 describe('a plain Sound whose Original is not WAV/AIFF still gets a computed waveform', () => {
   it('renders a scratch PCM copy for a FLAC Original, decodes peaks from it, and never renders a WAV', async () => {
     const before = scratchLeftoverCount()
-    const render = spyWavRenderRunner(() => makeWav(20000))
-    const tc = await makeTestCore({
+    const render = fakeRenderRunner({
+      bytes: () => makeWav(20000),
+      durationSec: 1,
+    })
+    const tc = await signedInCore({
       gateway: makeFakeGateway({ downloadBytes: () => makeWav(20000) }),
-      computePeaksRunner: countingRunner(),
+      computePeaksRunner: countingPeakRunner(),
       audioRenderRunner: render,
     })
-    cleanups.push(() => tc.core.close())
-    await tc.core.signIn()
-    tc.core.grantStagingConsent()
 
     const page = await tc.core.search('rain')
     const flac = page.sounds.find((s) => s.type === 'flac')!
@@ -434,7 +255,9 @@ describe('a plain Sound whose Original is not WAV/AIFF still gets a computed wav
     expect(scratchLeftoverCount()).toBe(before)
 
     tc.core.downloadToLibrary(wav.id)
-    await waitUntil(() => tc.core.getStagingStatus([wav.id])[wav.id] === 'ready')
+    await waitUntil(
+      () => tc.core.getStagingStatus([wav.id])[wav.id] === 'ready',
+    )
     await waitUntil(() => tc.core.getPeaks(wav.id) != null)
     expect(render.calls).toBe(1)
   })
@@ -445,15 +268,12 @@ describe('a plain Sound whose Original is not WAV/AIFF still gets a computed wav
       'ffmpeg exited with code 1: in.flac: Invalid data found when processing input',
     )
     const events: Array<{ soundId: number; status: string }> = []
-    const tc = await makeTestCore({
+    const tc = await signedInCore({
       gateway: makeFakeGateway({ downloadBytes: () => makeWav(4000) }),
-      computePeaksRunner: countingRunner(),
+      computePeaksRunner: countingPeakRunner(),
       audioRenderRunner: render,
       onPeaksStatusChange: (c) => events.push(c),
     })
-    cleanups.push(() => tc.core.close())
-    await tc.core.signIn()
-    tc.core.grantStagingConsent()
     const page = await tc.core.search('rain')
     const flac = page.sounds.find((s) => s.type === 'flac')!
 
@@ -465,7 +285,7 @@ describe('a plain Sound whose Original is not WAV/AIFF still gets a computed wav
       events.some((e) => e.soundId === flac.id && e.status === 'unavailable'),
     )
 
-    const db = openTemp(tc.dbPath)
+    const db = openTempDb(tc.dbPath)
     const row = db
       .prepare('SELECT bucket_count FROM peaks WHERE sound_id = ?')
       .get(flac.id) as { bucket_count: number } | undefined
@@ -483,15 +303,12 @@ describe('a plain Sound whose Original is not WAV/AIFF still gets a computed wav
       'ffmpeg exited with code 1: could not write to disk',
     )
     const events: Array<{ soundId: number; status: string }> = []
-    const tc = await makeTestCore({
+    const tc = await signedInCore({
       gateway: makeFakeGateway({ downloadBytes: () => makeWav(4000) }),
-      computePeaksRunner: countingRunner(),
+      computePeaksRunner: countingPeakRunner(),
       audioRenderRunner: render,
       onPeaksStatusChange: (c) => events.push(c),
     })
-    cleanups.push(() => tc.core.close())
-    await tc.core.signIn()
-    tc.core.grantStagingConsent()
     const page = await tc.core.search('rain')
     const flac = page.sounds.find((s) => s.type === 'flac')!
 
@@ -503,9 +320,11 @@ describe('a plain Sound whose Original is not WAV/AIFF still gets a computed wav
       events.some((e) => e.soundId === flac.id && e.status === 'unavailable'),
     )
 
-    const db = openTemp(tc.dbPath)
+    const db = openTempDb(tc.dbPath)
     expect(
-      db.prepare('SELECT COUNT(*) AS n FROM peaks WHERE sound_id = ?').get(flac.id),
+      db
+        .prepare('SELECT COUNT(*) AS n FROM peaks WHERE sound_id = ?')
+        .get(flac.id),
     ).toEqual({ n: 0 })
 
     const callsAfter = render.calls
@@ -518,64 +337,46 @@ describe('cached peaks are removed when the Sound is deleted or evicted', () => 
   it('deleteFromLibrary drops the peaks row with the Original', async () => {
     const wav = makeWav(4000)
     const gateway = makeFakeGateway({ downloadBytes: () => wav })
-    const tc = await makeTestCore({
+    const tc = await signedInCore({
       gateway,
-      computePeaksRunner: countingRunner(),
+      computePeaksRunner: countingPeakRunner(),
     })
-    cleanups.push(() => tc.core.close())
-    await tc.core.signIn()
-    tc.core.grantStagingConsent()
     const page = await tc.core.search('rain')
     const id = page.sounds[0]!.id
 
-    tc.core.stageOnAudition(id)
-    await waitUntil(() => tc.core.getStagingStatus([id])[id] === 'ready')
+    await stageReady(tc.core, id)
     await waitUntil(() => tc.core.getPeaks(id) != null)
     tc.core.saveToLibrary(id)
 
     await tc.core.deleteFromLibrary(id)
 
     expect(tc.core.getPeaks(id)).toBeNull()
-    const db = openTemp(tc.dbPath)
-    expect(
-      db.prepare('SELECT COUNT(*) AS n FROM peaks WHERE sound_id = ?').get(id),
-    ).toEqual({ n: 0 })
+    const db = openTempDb(tc.dbPath)
+    expect(countRows(db, 'peaks', 'sound_id = ?', id)).toBe(0)
   })
 
   it('staging eviction drops the peaks row along with the Original + sidecar', async () => {
-    const dataDir = await mkdtemp(join(tmpdir(), 'peaks-evict-'))
+    const dataDir = await makeTempDir('peaks-evict-')
     const dbPath = join(dataDir, 'db.sqlite')
-    const db = openTemp(dbPath)
+    const db = openTempDb(dbPath)
 
     const keep = fakeSound(1001)
     const drop = fakeSound(1002)
-    for (const s of [keep, drop]) {
-      upsertSound(db, s)
-      const { byteSize, paths } = await writeOriginal(
-        dataDir,
-        s,
-        makeWav(2000),
-        Date.now(),
-      )
-      upsertStagedEntry(db, {
-        soundId: s.id,
-        byteSize,
-        path: paths.original,
-        now: s.id, // older `last_access_at` for `drop`? both tiny; set explicitly below
+    for (const [sound, lastAccess] of [
+      [keep, 999],
+      [drop, 1],
+    ] as const) {
+      await craftStaged(db, dataDir, sound, {
+        bytes: makeWav(2000),
+        lastAccess,
       })
       putPeaksRecord(db, {
-        soundId: s.id,
+        soundId: sound.id,
         sampleRate: 8000,
         bucketCount: 2,
         data: Buffer.from(new Int16Array([-1, 1, -1, 1]).buffer),
       })
     }
-    db.prepare(
-      'UPDATE staged_entries SET last_access_at = ? WHERE sound_id = ?',
-    ).run(1, drop.id)
-    db.prepare(
-      'UPDATE staged_entries SET last_access_at = ? WHERE sound_id = ?',
-    ).run(999, keep.id)
 
     const outcome = await evictStagedOverBudget(
       db,
@@ -586,19 +387,17 @@ describe('cached peaks are removed when the Sound is deleted or evicted', () => 
     expect(outcome.evicted).toContain(drop.id)
 
     expect(getPeaksRecord(db, drop.id)).toBeUndefined()
-    expect(existsSync(join(dataDir, 'content', `${drop.id}.wav`))).toBe(false)
+    expect(existsSync(originalPath(dataDir, drop))).toBe(false)
   })
 })
 
 describe('a Sound with no downloaded Original has no computed peaks', () => {
   it('getPeaks is null and requestPeaks reports unavailable — the renderer keeps the Freesound image', async () => {
     const events: Array<{ soundId: number; status: string }> = []
-    const tc = await makeTestCore({
-      signedIn: true,
-      computePeaksRunner: countingRunner(),
+    const tc = await signedInCore({
+      computePeaksRunner: countingPeakRunner(),
       onPeaksStatusChange: (c) => events.push(c),
     })
-    cleanups.push(() => tc.core.close())
     const page = await tc.core.search('rain')
     const id = page.sounds[0]!.id
 

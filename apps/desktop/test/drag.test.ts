@@ -1,144 +1,42 @@
-import {
-  existsSync,
-  readFileSync,
-  rmSync,
-  statSync,
-} from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import {
-  createRecordingDragHost,
-  OriginalNotStagedError,
-  type AudioRenderRunner,
-  type EditSpec,
-  type RecordingDragHost,
-} from '../src/core'
-import { openDb, type DB } from '../src/core/db/index'
+import { describe, expect, it } from 'vitest'
+import { OriginalNotStagedError } from '../src/core'
 import { upsertSound } from '../src/core/db/sounds'
-import { writeOriginal } from '../src/core/staging/contentStore'
-import type { Sound } from '../src/core/types'
-import { makeFakeGateway, makeTestCore } from './helpers/makeTestCore'
+import {
+  controllableRenderRunner,
+  dragCore,
+  editPath,
+  fakeRenderRunner,
+  fakeSound,
+  openTempDb,
+  originalBytes,
+  originalPath,
+  RAIN,
+  seedSoundRow,
+  sidecarPath,
+  signedInCore,
+  stageReady,
+  WHOLE_FILE_SPEC,
+} from './helpers'
 
-const RAIN_ID = 321967
-
-const cleanups: Array<() => void> = []
-afterEach(() => {
-  for (const c of cleanups.splice(0)) {
-    try {
-      c()
-    } catch {
-      /* ignore */
-    }
-  }
-})
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((r) => setTimeout(r, ms))
-}
-
-async function waitUntil(pred: () => boolean, ms = 3000): Promise<void> {
-  const start = Date.now()
-  while (!pred()) {
-    if (Date.now() - start > ms) throw new Error('waitUntil timed out')
-    await sleep(5)
-  }
-}
-
-/**
- * A signed-in, consenting core wired to a recording `DragHost`. Returns the core
- * plus the host and a `base` Sound (321967) to clone for crafted fixtures.
- */
-async function dragCore(
-  opts: {
-    multiFileDragSupported?: boolean
-    audioRenderRunner?: AudioRenderRunner
-  } = {},
-) {
-  const host = createRecordingDragHost({
-    multiFileDragSupported: opts.multiFileDragSupported ?? false,
-  })
-  const tc = await makeTestCore({
-    gateway: makeFakeGateway(),
-    dragHost: host,
-    audioRenderRunner: opts.audioRenderRunner,
-  })
-  cleanups.push(() => tc.core.close())
-  await tc.core.signIn()
-  tc.core.grantStagingConsent()
-  const base = (await tc.core.search('rain')).sounds.find((s) => s.id === RAIN_ID)!
-  return { ...tc, host: host as RecordingDragHost, base }
-}
-
-const WHOLE_FILE_SPEC: EditSpec = { trim: null, format: 'wav' }
-
-/** A fast, deterministic Edit render: copies fixed bytes to `outPath` (ticket 01). */
-function fakeEditRunner(bytes = 'FAKE-EDIT-BYTES'): AudioRenderRunner {
-  return async ({ outPath }) => {
-    await writeFile(outPath, bytes)
-    return { byteSize: Buffer.byteLength(bytes), durationSec: 3 }
-  }
-}
-
-/** An Edit render that waits until `release()` is called (ticket 04's "still rendering"). */
-function controllableEditRunner(): { runner: AudioRenderRunner; release: () => void } {
-  let release!: () => void
-  const gate = new Promise<void>((res) => {
-    release = res
-  })
-  const runner: AudioRenderRunner = async ({ outPath }) => {
-    await gate
-    await writeFile(outPath, 'RELEASED-EDIT-BYTES')
-    return { byteSize: 18, durationSec: 2 }
-  }
-  return { runner, release }
-}
-
-function openTemp(dbPath: string): DB {
-  const db = openDb(dbPath)
-  cleanups.push(() => {
-    try {
-      db.close()
-    } catch {
-      /* already closed */
-    }
-  })
-  return db
-}
-
-/** Stage a crafted Sound: write a `sounds` row + its Original + sidecar. */
-async function stageCrafted(
-  db: DB,
-  dataDir: string,
-  base: Sound,
-  id: number,
-  name: string,
-): Promise<Sound> {
-  const sound: Sound = { ...base, id, name, type: 'wav' }
-  upsertSound(db, sound)
-  await writeOriginal(dataDir, sound, new TextEncoder().encode(`ORIG-${id}`), Date.now())
-  return sound
-}
-
-async function stageRain(core: Awaited<ReturnType<typeof dragCore>>['core']): Promise<void> {
-  core.stageOnAudition(RAIN_ID)
-  await waitUntil(() => core.getStagingStatus([RAIN_ID])[RAIN_ID] === 'ready')
-}
+/** A crafted Sound on disk, cloned from the RAIN fixture's shape. */
+const crafted = (id: number, name: string) => fakeSound(id, { name })
 
 describe('core.startDrag — the OS hand-off', () => {
   it('drags a hardlinked, human-named Original — not the store path, not a Preview', async () => {
     const { core, host, dataDir } = await dragCore()
-    await stageRain(core)
+    await stageReady(core, RAIN.id)
 
-    const res = core.startDrag(RAIN_ID)
+    const res = core.startDrag(RAIN.id)
 
     expect(host.drags).toHaveLength(1)
     expect(host.last!.filePath).toBe(res.filePath)
-    expect(res.soundIds).toEqual([RAIN_ID])
+    expect(res.soundIds).toEqual([RAIN.id])
     expect(res.extraFilePaths).toEqual([])
 
     const name = basename(res.filePath)
-    expect(name).not.toBe(`${RAIN_ID}.wav`)
+    expect(name).not.toBe(`${RAIN.id}.${RAIN.ext}`)
     expect(name).toMatch(/rain/i)
     expect(name.endsWith('.wav')).toBe(true)
 
@@ -146,11 +44,11 @@ describe('core.startDrag — the OS hand-off', () => {
     expect(res.filePath).not.toMatch(/^https?:/)
     expect(res.filePath.toLowerCase()).not.toContain('preview')
 
-    const storePath = join(dataDir, 'content', `${RAIN_ID}.wav`)
+    const storePath = originalPath(dataDir, RAIN)
     expect(statSync(res.filePath).ino).toBe(statSync(storePath).ino)
     expect(statSync(res.filePath).nlink).toBeGreaterThanOrEqual(2)
 
-    expect(readFileSync(res.filePath, 'utf8')).toBe(`FAKE-ORIGINAL:${RAIN_ID}`)
+    expect(readFileSync(res.filePath, 'utf8')).toBe(originalBytes(RAIN.id))
 
     expect(host.last!.iconPath).toBeTruthy()
     expect(existsSync(host.last!.iconPath)).toBe(true)
@@ -158,24 +56,26 @@ describe('core.startDrag — the OS hand-off', () => {
 
   it('the dropped file still resolves after the app quits and the staged Original is evicted', async () => {
     const { core, dataDir, dbPath } = await dragCore()
-    await stageRain(core)
-    const res = core.startDrag(RAIN_ID)
+    await stageReady(core, RAIN.id)
+    const res = core.startDrag(RAIN.id)
 
-    const storePath = join(dataDir, 'content', `${RAIN_ID}.wav`)
+    const storePath = originalPath(dataDir, RAIN)
     rmSync(storePath)
-    rmSync(join(dataDir, 'content', `${RAIN_ID}.json`))
-    openTemp(dbPath).prepare('DELETE FROM staged_entries WHERE sound_id = ?').run(RAIN_ID)
+    rmSync(sidecarPath(dataDir, RAIN.id))
+    openTempDb(dbPath)
+      .prepare('DELETE FROM staged_entries WHERE sound_id = ?')
+      .run(RAIN.id)
 
     expect(existsSync(storePath)).toBe(false)
-    expect(readFileSync(res.filePath, 'utf8')).toBe(`FAKE-ORIGINAL:${RAIN_ID}`)
+    expect(readFileSync(res.filePath, 'utf8')).toBe(originalBytes(RAIN.id))
   })
 
   it('re-dragging the same Sound reuses the same hardlink (idempotent)', async () => {
     const { core } = await dragCore()
-    await stageRain(core)
+    await stageReady(core, RAIN.id)
 
-    const a = core.startDrag(RAIN_ID)
-    const b = core.startDrag(RAIN_ID)
+    const a = core.startDrag(RAIN.id)
+    const b = core.startDrag(RAIN.id)
     expect(b.filePath).toBe(a.filePath)
   })
 })
@@ -183,13 +83,12 @@ describe('core.startDrag — the OS hand-off', () => {
 describe('core.startDrag — refusing an unstaged Sound', () => {
   it('refuses with a visible explanation — never a Preview, never a silent no-op', async () => {
     const { core, host, dataDir } = await dragCore()
-    await core.search('rain')
 
-    expect(() => core.startDrag(RAIN_ID)).toThrow(OriginalNotStagedError)
+    expect(() => core.startDrag(RAIN.id)).toThrow(OriginalNotStagedError)
 
     let msg = ''
     try {
-      core.startDrag(RAIN_ID)
+      core.startDrag(RAIN.id)
     } catch (err) {
       msg = (err as Error).message
     }
@@ -201,12 +100,12 @@ describe('core.startDrag — refusing an unstaged Sound', () => {
   })
 
   it('refuses the whole multi-Sound drag if any one Sound is not staged', async () => {
-    const { core, host, dataDir, dbPath, base } = await dragCore({
+    const { core, host, dataDir, dbPath } = await dragCore({
       multiFileDragSupported: true,
     })
-    const db = openTemp(dbPath)
-    await stageCrafted(db, dataDir, base, 8001, 'Thunder clap')
-    upsertSound(db, { ...base, id: 8002, name: 'Rain hiss', type: 'wav' })
+    const db = openTempDb(dbPath)
+    await seedSoundRow(db, dataDir, crafted(8001, 'Thunder clap'))
+    upsertSound(db, crafted(8002, 'Rain hiss'))
 
     expect(() => core.startDrag([8001, 8002])).toThrow(OriginalNotStagedError)
     expect(host.drags).toHaveLength(0)
@@ -215,10 +114,10 @@ describe('core.startDrag — refusing an unstaged Sound', () => {
 
 describe('core.startDrag — filename collisions', () => {
   it('two Sounds that sanitise to the same name arrive as distinct files', async () => {
-    const { core, dataDir, dbPath, base } = await dragCore()
-    const db = openTemp(dbPath)
-    await stageCrafted(db, dataDir, base, 9001, 'Ocean: waves')
-    await stageCrafted(db, dataDir, base, 9002, 'Ocean/waves')
+    const { core, dataDir, dbPath } = await dragCore()
+    const db = openTempDb(dbPath)
+    await seedSoundRow(db, dataDir, crafted(9001, 'Ocean: waves'))
+    await seedSoundRow(db, dataDir, crafted(9002, 'Ocean/waves'))
 
     const r1 = core.startDrag(9001)
     const r2 = core.startDrag(9002)
@@ -235,12 +134,12 @@ describe('core.startDrag — filename collisions', () => {
 
 describe('core.startDrag — multi-Sound gating (ticket 01)', () => {
   it('links every Sound where ticket 01 verified multi-file delivery', async () => {
-    const { core, host, dataDir, dbPath, base } = await dragCore({
+    const { core, host, dataDir, dbPath } = await dragCore({
       multiFileDragSupported: true,
     })
-    const db = openTemp(dbPath)
-    await stageCrafted(db, dataDir, base, 8001, 'Thunder clap')
-    await stageCrafted(db, dataDir, base, 8002, 'Rain hiss')
+    const db = openTempDb(dbPath)
+    await seedSoundRow(db, dataDir, crafted(8001, 'Thunder clap'))
+    await seedSoundRow(db, dataDir, crafted(8002, 'Rain hiss'))
 
     const res = core.startDrag([8001, 8002])
 
@@ -254,12 +153,12 @@ describe('core.startDrag — multi-Sound gating (ticket 01)', () => {
   })
 
   it('drags only the first Sound where ticket 01 did not verify it', async () => {
-    const { core, host, dataDir, dbPath, base } = await dragCore({
+    const { core, host, dataDir, dbPath } = await dragCore({
       multiFileDragSupported: false,
     })
-    const db = openTemp(dbPath)
-    await stageCrafted(db, dataDir, base, 8001, 'Thunder clap')
-    await stageCrafted(db, dataDir, base, 8002, 'Rain hiss')
+    const db = openTempDb(dbPath)
+    await seedSoundRow(db, dataDir, crafted(8001, 'Thunder clap'))
+    await seedSoundRow(db, dataDir, crafted(8002, 'Rain hiss'))
 
     const res = core.startDrag([8001, 8002])
 
@@ -272,28 +171,22 @@ describe('core.startDrag — multi-Sound gating (ticket 01)', () => {
 
 describe('core.startDrag — not configured', () => {
   it('throws a clear error when the core has no DragHost', async () => {
-    const tc = await makeTestCore({ gateway: makeFakeGateway() })
-    cleanups.push(() => tc.core.close())
-    await tc.core.signIn()
-    tc.core.grantStagingConsent()
+    const tc = await signedInCore()
     await tc.core.search('rain')
-    tc.core.stageOnAudition(RAIN_ID)
-    await waitUntil(
-      () => tc.core.getStagingStatus([RAIN_ID])[RAIN_ID] === 'ready',
-    )
+    await stageReady(tc.core, RAIN.id)
 
     expect(tc.core.getDragCapabilities().multiSound).toBe(false)
-    expect(() => tc.core.startDrag(RAIN_ID)).toThrow(/not configured/i)
+    expect(() => tc.core.startDrag(RAIN.id)).toThrow(/not configured/i)
   })
 })
 
 describe('core.startDrag — dragging an Edit out (ticket 04)', () => {
   it('drags an Edit as a hardlink to its OWN file under its effective name — not the content-store path', async () => {
     const { core, dataDir } = await dragCore({
-      audioRenderRunner: fakeEditRunner('EDIT-BYTES'),
+      audioRenderRunner: fakeRenderRunner({ bytes: 'EDIT-BYTES' }),
     })
-    await stageRain(core)
-    const { editId } = (await core.createEdit(RAIN_ID, WHOLE_FILE_SPEC))!
+    await stageReady(core, RAIN.id)
+    const { editId } = (await core.createEdit(RAIN.id, WHOLE_FILE_SPEC))!
     expect(editId).toBeLessThan(0)
 
     const res = core.startDrag(editId)
@@ -303,18 +196,20 @@ describe('core.startDrag — dragging an Edit out (ticket 04)', () => {
     expect(name.endsWith('.wav')).toBe(true)
     expect(res.filePath.startsWith(join(dataDir, 'drag'))).toBe(true)
 
-    const editLocalPath = join(dataDir, 'content', `${RAIN_ID}-edited.wav`)
+    const editLocalPath = editPath(dataDir, RAIN)
     expect(res.filePath).not.toBe(editLocalPath)
     expect(statSync(res.filePath).ino).toBe(statSync(editLocalPath).ino)
     expect(readFileSync(res.filePath, 'utf8')).toBe('EDIT-BYTES')
   })
 
   it('refuses a drag for an Edit whose render has not finished — never a fallback', async () => {
-    const { runner, release } = controllableEditRunner()
-    const { core, host, dataDir } = await dragCore({ audioRenderRunner: runner })
-    await stageRain(core)
+    const { runner, release } = controllableRenderRunner()
+    const { core, host, dataDir } = await dragCore({
+      audioRenderRunner: runner,
+    })
+    await stageReady(core, RAIN.id)
 
-    const pending = core.createEdit(RAIN_ID, WHOLE_FILE_SPEC)
+    const pending = core.createEdit(RAIN.id, WHOLE_FILE_SPEC)
     expect(() => core.startDrag(-1)).toThrow(OriginalNotStagedError)
     expect(host.drags).toHaveLength(0)
     expect(existsSync(join(dataDir, 'drag'))).toBe(false)
@@ -330,16 +225,20 @@ describe('core.startDrag — dragging an Edit out (ticket 04)', () => {
   it('a mixed drag of a Sound and an Edit hands over both', async () => {
     const { core, host } = await dragCore({
       multiFileDragSupported: true,
-      audioRenderRunner: fakeEditRunner('EDIT-BYTES'),
+      audioRenderRunner: fakeRenderRunner({ bytes: 'EDIT-BYTES' }),
     })
-    await stageRain(core)
-    const { editId } = (await core.createEdit(RAIN_ID, WHOLE_FILE_SPEC))!
+    await stageReady(core, RAIN.id)
+    const { editId } = (await core.createEdit(RAIN.id, WHOLE_FILE_SPEC))!
 
-    const res = core.startDrag([RAIN_ID, editId])
+    const res = core.startDrag([RAIN.id, editId])
 
-    expect(res.soundIds).toEqual([RAIN_ID, editId])
+    expect(res.soundIds).toEqual([RAIN.id, editId])
     expect(res.extraFilePaths).toHaveLength(1)
-    expect(readFileSync(host.last!.filePath, 'utf8')).toBe(`FAKE-ORIGINAL:${RAIN_ID}`)
-    expect(readFileSync(host.last!.extraFilePaths[0]!, 'utf8')).toBe('EDIT-BYTES')
+    expect(readFileSync(host.last!.filePath, 'utf8')).toBe(
+      originalBytes(RAIN.id),
+    )
+    expect(readFileSync(host.last!.extraFilePaths[0]!, 'utf8')).toBe(
+      'EDIT-BYTES',
+    )
   })
 })

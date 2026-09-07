@@ -5,6 +5,13 @@ import { join } from 'node:path'
 export default async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') return
 
+  // A Developer ID cert is present: electron-builder will sign (and notarize)
+  // the bundle itself. Skip the ad-hoc fallback so it does not fight that.
+  if (process.env.CSC_LINK || process.env.CSC_NAME) {
+    console.log('afterPack: Developer ID cert present, skipping ad-hoc sign')
+    return
+  }
+
   const appName = `${context.packager.appInfo.productFilename}.app`
   const appPath = join(context.appOutDir, appName)
 

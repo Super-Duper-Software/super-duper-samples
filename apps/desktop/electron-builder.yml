@@ -1,10 +1,14 @@
 # electron-builder — packaging config for ticket 19.
 #
-# Scope (docs/adr/0007): produce UNSIGNED-for-distribution installers for macOS
-# and Windows. No Developer ID, no notarization, no Authenticate signing, no
-# auto-update. macOS gets an ad-hoc signature (scripts/electron-builder-after-pack.mjs)
-# because Apple Silicon refuses to launch a bundle with no signature at all;
-# first launch still shows the Gatekeeper prompt (see INSTALL.md).
+# macOS: when a Developer ID cert is present in the environment (CSC_LINK, set by
+# the CI "Import signing certificate" step) electron-builder signs with the
+# hardened runtime and notarizes via the App Store Connect API key (APPLE_API_KEY
+# / APPLE_API_KEY_ID / APPLE_API_ISSUER). With no cert — local builds — the
+# afterPack hook falls back to an ad-hoc signature so the bundle launches on
+# Apple Silicon.
+#
+# Windows: still UNSIGNED for distribution. No Authenticode cert, first launch
+# shows the SmartScreen prompt (see INSTALL.md).
 #
 # electron-vite writes the app bundles to out/ (main, preload, renderer). This
 # file packages that plus the production node_modules electron-builder resolves
@@ -48,9 +52,13 @@ mac:
   category: public.app-category.music
   icon: resources/icon.icns
   darkModeSupport: true
-  # Skip electron-builder's own signing (no cert to find); the afterPack hook
-  # applies an ad-hoc signature instead.
-  identity: null
+  # Sign only when a Developer ID cert was imported (CI sets CSC_LINK). Without
+  # it electron-builder skips signing and the afterPack hook ad-hoc signs.
+  # Notarization runs automatically when APPLE_API_KEY / APPLE_API_KEY_ID /
+  # APPLE_API_ISSUER are set in the environment and the app was signed.
+  hardenedRuntime: true
+  entitlements: resources/entitlements.mac.plist
+  entitlementsInherit: resources/entitlements.mac.plist
   gatekeeperAssess: false
   target:
     - target: dmg

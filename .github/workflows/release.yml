@@ -39,7 +39,30 @@ jobs:
             echo "FREESOUND_TOKEN_WORKER_URL=${{ vars.FREESOUND_TOKEN_WORKER_URL }}"
           } > apps/desktop/.env
 
+      # macOS signing: imports the Developer ID Application cert into a temporary
+      # keychain and exports CSC_LINK / CSC_KEYCHAIN for electron-builder.
+      - name: Import signing certificate
+        if: runner.os == 'macOS'
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.MAC_CERT_P12 }}
+          p12-password: ${{ secrets.MAC_CERT_PASSWORD }}
+          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+      # Notarization credentials: decode the App Store Connect API key and point
+      # electron-builder at it. Auto-notarize triggers when these three are set.
+      - name: Write notarization API key
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p "$HOME/private_keys"
+          echo "${{ secrets.APPLE_API_KEY }}" | base64 --decode > "$HOME/private_keys/AuthKey.p8"
+          echo "APPLE_API_KEY=$HOME/private_keys/AuthKey.p8" >> "$GITHUB_ENV"
+
       - name: Package
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: pnpm --filter @superduper/desktop ${{ matrix.script }}
 
       - uses: actions/upload-artifact@v4
@@ -70,9 +93,9 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', github.run_number) }}
           name: ${{ github.ref_type == 'tag' && github.ref_name || 'manual build' }}
           body: |
-            Unsigned builds - macOS and Windows will both warn on first launch.
-            See [INSTALL.md](https://github.com/${{ github.repository }}/blob/main/INSTALL.md)
-            for how to get past the Gatekeeper / SmartScreen prompt.
+            The macOS DMGs are signed with a Developer ID and notarized by Apple.
+            The Windows installer is still unsigned and will show a SmartScreen
+            prompt on first launch - see [INSTALL.md](https://github.com/${{ github.repository }}/blob/main/INSTALL.md).
 
             Verify your download against `SHA256SUMS.txt`.
           files: artifacts/*

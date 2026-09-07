@@ -1,45 +1,45 @@
 {
-  "name": "@superduper/desktop",
-  "productName": "Super Duper Samples",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Super Duper Samples desktop client — Electron app (electron-vite).",
-  "author": "Super Duper Software",
-  "license": "MIT",
-  "main": "./out/main/index.js",
-  "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "start": "electron-vite preview",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "icon": "node scripts/make-app-icon.mjs",
-    "pack:dir": "electron-vite build && electron-builder --dir",
-    "pack:mac": "electron-vite build && electron-builder --mac",
-    "pack:win": "electron-vite build && electron-builder --win"
-  },
-  "dependencies": {
-    "@tanstack/react-virtual": "^3.11.2",
-    "better-sqlite3": "^12.11.1",
-    "ffmpeg-static": "^5.3.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "zustand": "^5.0.2"
-  },
-  "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^22.10.2",
-    "@types/react": "^19.0.2",
-    "@types/react-dom": "^19.0.2",
-    "@vitejs/plugin-react": "^4.3.4",
-    "autoprefixer": "^10.4.20",
-    "electron": "^32.2.0",
-    "electron-builder": "^25.1.8",
-    "electron-vite": "^2.3.0",
-    "postcss": "^8.4.49",
-    "tailwindcss": "^3.4.17",
-    "typescript": "^5.7.2",
-    "vite": "^5.4.11",
-    "vitest": "^2.1.8"
-  }
+	"name": "@superduper/desktop",
+	"productName": "Super Duper Samples",
+	"version": "0.2.0",
+	"private": true,
+	"description": "Super Duper Samples desktop client — Electron app (electron-vite).",
+	"author": "Super Duper Software",
+	"license": "MIT",
+	"main": "./out/main/index.js",
+	"scripts": {
+		"dev": "electron-vite dev",
+		"build": "electron-vite build",
+		"start": "electron-vite preview",
+		"test": "vitest run",
+		"typecheck": "tsc --noEmit",
+		"icon": "node scripts/make-app-icon.mjs",
+		"pack:dir": "electron-vite build && electron-builder --dir",
+		"pack:mac": "electron-vite build && electron-builder --mac",
+		"pack:win": "electron-vite build && electron-builder --win"
+	},
+	"dependencies": {
+		"@tanstack/react-virtual": "^3.11.2",
+		"better-sqlite3": "^12.11.1",
+		"ffmpeg-static": "^5.3.0",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0",
+		"zustand": "^5.0.2"
+	},
+	"devDependencies": {
+		"@types/better-sqlite3": "^7.6.12",
+		"@types/node": "^22.10.2",
+		"@types/react": "^19.0.2",
+		"@types/react-dom": "^19.0.2",
+		"@vitejs/plugin-react": "^4.3.4",
+		"autoprefixer": "^10.4.20",
+		"electron": "^32.2.0",
+		"electron-builder": "^25.1.8",
+		"electron-vite": "^2.3.0",
+		"postcss": "^8.4.49",
+		"tailwindcss": "^3.4.17",
+		"typescript": "^5.7.2",
+		"vite": "^5.4.11",
+		"vitest": "^2.1.8"
+	}
 }

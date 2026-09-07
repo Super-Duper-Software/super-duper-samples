@@ -7,8 +7,6 @@ on:
 
 jobs:
   pack-dir:
-    # disable for now before public to save on private build minutes
-    if: false
     strategy:
       fail-fast: false
       matrix:

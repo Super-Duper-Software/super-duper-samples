@@ -1,5 +1,7 @@
 # Super Duper Samples
 
+[Download the pre-built application here](https://superdupersoftware.net/samples).
+
 A desktop client for [Freesound](https://freesound.org) built for people scoring to
 picture or producing music: search the library, audition previews, download originals
 against your own Freesound account, keep a local library, and **drag sounds straight

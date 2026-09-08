@@ -37,8 +37,8 @@ jobs:
         shell: bash
         run: |
           {
-            echo "FREESOUND_CLIENT_ID=${{ vars.FREESOUND_CLIENT_ID }}"
-            echo "FREESOUND_TOKEN_WORKER_URL=${{ vars.FREESOUND_TOKEN_WORKER_URL }}"
+            echo "FREESOUND_CLIENT_ID=${{ secrets.FREESOUND_CLIENT_ID }}"
+            echo "FREESOUND_TOKEN_WORKER_URL=${{ secrets.FREESOUND_TOKEN_WORKER_URL }}"
           } > apps/desktop/.env
 
       # macOS signing: imports the Developer ID Application cert into a temporary

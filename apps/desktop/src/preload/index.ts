@@ -64,6 +64,7 @@ const api: CoreApi = {
 
   getUiState: cmd('getUiState'),
   setUiState: cmd('setUiState'),
+  getLaunchCount: cmd('getLaunchCount'),
   getLogPath: cmd('getLogPath'),
   readLog: cmd('readLog'),
   log: cmd('log'),

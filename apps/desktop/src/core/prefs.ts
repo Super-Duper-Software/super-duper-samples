@@ -1,5 +1,5 @@
 import type { DB } from './db/index'
-import { getMeta, setMeta, UI_STATE_KEY } from './db/appMeta'
+import { getMeta, LAUNCH_COUNT_KEY, setMeta, UI_STATE_KEY } from './db/appMeta'
 import type { LibraryFilter, SearchPrefs } from './types'
 import { normaliseLibraryFilter } from './library/libraryFilter'
 import { normalizeFilter } from './search/normalise'
@@ -70,5 +70,19 @@ export function readUiState(db: DB): UiState {
 
 export function writeUiState(db: DB, next: UiState): UiState {
   setMeta(db, UI_STATE_KEY, JSON.stringify(next))
+  return next
+}
+
+/** The stored launch count, or 0 when the app has never recorded one. */
+export function readLaunchCount(db: DB): number {
+  const raw = getMeta(db, LAUNCH_COUNT_KEY)
+  const n = raw === null ? 0 : Number.parseInt(raw, 10)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+/** Increment and persist the launch count, returning the new value (>= 1). */
+export function bumpLaunchCount(db: DB): number {
+  const next = readLaunchCount(db) + 1
+  setMeta(db, LAUNCH_COUNT_KEY, String(next))
   return next
 }

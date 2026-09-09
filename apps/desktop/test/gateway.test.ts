@@ -233,6 +233,53 @@ describe('HttpFreesoundGateway — token Worker (ticket 07)', () => {
     })
   })
 
+  it('omits install_id from the body when no installId is configured', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, { access_token: 'AT', refresh_token: 'RT' }),
+    )
+    const gateway = new HttpFreesoundGateway({
+      tokenWorkerUrl: 'https://worker.example.dev',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+
+    await gateway.refreshToken('RT')
+
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toEqual({ refresh_token: 'RT' })
+  })
+
+  it('adds install_id to both /exchange and /refresh bodies when configured', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, { access_token: 'AT', refresh_token: 'RT' }),
+    )
+    const gateway = new HttpFreesoundGateway({
+      tokenWorkerUrl: 'https://worker.example.dev',
+      installId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    })
+
+    await gateway.exchangeToken('the-code', 'http://localhost:8910/callback')
+    await gateway.refreshToken('RT')
+
+    const [, exchangeInit] = fetchImpl.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ]
+    const [, refreshInit] = fetchImpl.mock.calls[1] as unknown as [
+      string,
+      RequestInit,
+    ]
+    expect(JSON.parse(exchangeInit.body as string)).toEqual({
+      code: 'the-code',
+      redirect_uri: 'http://localhost:8910/callback',
+      install_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    })
+    expect(JSON.parse(refreshInit.body as string)).toEqual({
+      refresh_token: 'RT',
+      install_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    })
+  })
+
   it('maps the Worker’s {error:"reauthorize"} to ReauthRequiredError', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(401, {

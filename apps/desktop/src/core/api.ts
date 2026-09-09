@@ -107,6 +107,13 @@ export interface Core {
   /** Persist a patch of shell state. `undefined` keys keep their stored value. */
   setUiState(patch: Partial<UiState>): UiState
 
+  /**
+   * How many times the app has launched, this launch included (>= 1). Bumped
+   * once per `createCore`. The renderer uses it to hold the Ko-fi splash back
+   * until the second launch.
+   */
+  getLaunchCount(): number
+
   /** The app's log file path, or `null` when logging is not wired. */
   getLogPath(): string | null
 

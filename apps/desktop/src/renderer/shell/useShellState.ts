@@ -83,13 +83,15 @@ export function useShellState(): ShellState {
 
   useEffect(() => {
     let cancelled = false
-    void window.core
-      .getUiState()
-      .then((s) => {
+    void Promise.all([
+      window.core.getUiState(),
+      window.core.getLaunchCount().catch(() => 0),
+    ])
+      .then(([s, launchCount]) => {
         if (cancelled) return
         if (s.view && s.view !== 'edit') setView(s.view as View)
         if (typeof s.query === 'string') setQuery(s.query)
-        if (!s.supportPromptDismissed) setShowSupport(true)
+        if (!s.supportPromptDismissed && launchCount >= 2) setShowSupport(true)
         setPendingSelectedSoundId(s.selectedSoundId ?? null)
         restore.current = {
           openCollectionId: s.openCollectionId ?? null,

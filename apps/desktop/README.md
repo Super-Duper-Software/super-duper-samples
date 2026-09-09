@@ -128,6 +128,12 @@ Flow, all driven by the **core** (`src/core/auth/`), tested with no Electron:
 (search/preview still work without them). **`FREESOUND_CLIENT_SECRET` is never in
 this app** — only in the Worker (`wrangler secret put`).
 
+`/exchange` and `/refresh` also carry a random per-install id (`src/main/installId.ts`,
+stored at `<userData>/install-id`) so the Worker can keep an anonymous
+monthly-active-user count — the Worker only ever stores a salted hash of it, and it
+never reaches Freesound. `SDS_TELEMETRY=0` (or `false`/`off`/`no`) in `.env` disables
+it; see `worker/README.md` § "Monthly active users".
+
 ### Manual verification (needs a real browser + real Freesound + a deployed Worker)
 
 Automated tests cannot exercise the real browser round-trip. To check it by hand:

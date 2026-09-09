@@ -40,6 +40,13 @@ export interface HttpFreesoundGatewayConfig {
   tokenWorkerUrl?: string
   /** Override the API base. Must end with a slash. Defaults to the real API. */
   baseUrl?: string
+  /**
+   * Random per-install id. When set, it is sent as `install_id` in the token
+   * Worker `/exchange` and `/refresh` bodies so the Worker can keep an anonymous
+   * monthly-active-user count (see `worker/README.md`). Omitted means nothing
+   * extra is sent. Never reaches Freesound.
+   */
+  installId?: string
   /** Injectable for tests. Defaults to the global `fetch`. */
   fetchImpl?: typeof fetch
 }
@@ -70,11 +77,13 @@ interface WorkerErrorBody {
 export class HttpFreesoundGateway implements FreesoundGateway {
   readonly #baseUrl: string
   readonly #tokenWorkerUrl: string | undefined
+  readonly #installId: string | undefined
   readonly #fetch: typeof fetch
 
   constructor(config: HttpFreesoundGatewayConfig = {}) {
     this.#baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
     this.#tokenWorkerUrl = config.tokenWorkerUrl?.replace(/\/+$/, '')
+    this.#installId = config.installId || undefined
     this.#fetch = config.fetchImpl ?? globalThis.fetch
   }
 
@@ -233,12 +242,16 @@ export class HttpFreesoundGateway implements FreesoundGateway {
       )
     }
 
+    const payload = this.#installId
+      ? { ...body, install_id: this.#installId }
+      : body
+
     let res: Response
     try {
       res = await this.#fetch(`${this.#tokenWorkerUrl}${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
       })
     } catch (err) {
       throw new RetryableTokenError(

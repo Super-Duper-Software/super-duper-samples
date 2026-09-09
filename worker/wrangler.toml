@@ -21,5 +21,19 @@ ALLOWED_ORIGINS = ""
 ALLOWED_USER_AGENTS = ""
 RATE_LIMIT_PER_MINUTE = "30"
 
-# Intentionally NO storage bindings of any kind (KV, D1, Durable Objects, R2,
-# Queues, Hyperdrive). The Worker is stateless and must stay that way.
+# --- Anonymous monthly-active-user count ------------------------------------
+# Write-only telemetry, not request-serving state: one data point per token
+# exchange/refresh, keyed by a salted SHA-256 of the client's random install id.
+# No id, no row. See README.md "Monthly active users". Comment the block out to
+# disable recording entirely.
+[[analytics_engine_datasets]]
+binding = "MAU_ANALYTICS"
+dataset = "freesound_token_worker_mau"
+
+# MAU_HASH_SALT is a Worker secret, not a [vars] entry:
+#   wrangler secret put MAU_HASH_SALT
+# Any non-empty random string. Rotating it resets the distinct-id count.
+
+# Intentionally NO request-serving storage bindings of any kind (KV, D1, Durable
+# Objects, R2, Queues, Hyperdrive). The token path stays stateless; the Analytics
+# Engine binding above is fire-and-forget and never read back by the Worker.

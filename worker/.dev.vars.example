@@ -4,6 +4,10 @@
 
 FREESOUND_CLIENT_SECRET=your-freesound-client-secret
 
+# Salt for the anonymous monthly-active-user hash (see README "Monthly active
+# users"). Any non-empty random string. Unset => nothing is recorded.
+MAU_HASH_SALT=dev-only-mau-salt
+
 # Optional local overrides of the wrangler.toml [vars] values:
 # FREESOUND_CLIENT_ID=your-freesound-client-id
 # ALLOWED_ORIGINS=

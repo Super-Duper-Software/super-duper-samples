@@ -140,6 +140,21 @@ describe('core.getUiState / setUiState', () => {
   })
 })
 
+describe('core.getLaunchCount', () => {
+  it('is 1 on a fresh database and rises by one on each reopen', async () => {
+    const { core, dbPath, dataDir } = await makeTestCore()
+    expect(core.getLaunchCount()).toBe(1)
+    core.close()
+
+    const second = await makeTestCore({ dbPath, dataDir })
+    expect(second.core.getLaunchCount()).toBe(2)
+    second.core.close()
+
+    const third = await makeTestCore({ dbPath, dataDir })
+    expect(third.core.getLaunchCount()).toBe(3)
+  })
+})
+
 describe('the app log', () => {
   it('with no sink wired, getLogPath is null and readLog is empty', async () => {
     const { core } = await makeTestCore()

@@ -6,15 +6,17 @@ performs the two token exchanges a public desktop client cannot do for itself
 
 The desktop app talks to Freesound directly for everything else — search,
 previews, downloads. This Worker only ever sees an authorization code or a
-refresh token, exchanges it, and returns the token JSON. It **persists nothing**:
-no KV, no D1, no Durable Objects, no R2, no cache writes.
+refresh token, exchanges it, and returns the token JSON. The token path
+**persists nothing**: no KV, no D1, no Durable Objects, no R2, no cache writes.
+The one exception is a write-only [Analytics Engine](#monthly-active-users)
+data point for the anonymous monthly-active-user count — never read back here.
 
 ## Endpoints
 
 | Method + path   | Request body                        | Success response                                                      |
 | --------------- | ----------------------------------- | -------------------------------------------------------------------- |
-| `POST /exchange`| `{ "code": string, "redirect_uri"?: string }` | Freesound token JSON: `{ access_token, refresh_token, expires_in, scope, token_type }` |
-| `POST /refresh` | `{ "refresh_token": string }`       | new token JSON (same shape)                                          |
+| `POST /exchange`| `{ "code": string, "redirect_uri"?: string, "install_id"?: string }` | Freesound token JSON: `{ access_token, refresh_token, expires_in, scope, token_type }` |
+| `POST /refresh` | `{ "refresh_token": string, "install_id"?: string }`       | new token JSON (same shape)                                          |
 | `OPTIONS *`     | —                                   | `204` + permissive CORS headers                                     |
 | anything else   | —                                   | `404` / `405` with `{ error, hint }`                                |
 
@@ -44,6 +46,52 @@ can branch:
 `detail` is upstream text with any `client_secret` occurrence stripped and the
 length capped. The secret never appears in any response body, header, or error,
 and is never logged.
+
+## Monthly active users
+
+Because every running client refreshes its access token through `/refresh` about
+once a day (and signs in through `/exchange`), this Worker is the one place that
+sees every active install without the desktop app phoning home separately.
+
+When **both** an Analytics Engine binding and the `MAU_HASH_SALT` secret are
+configured, each `/exchange` and `/refresh` writes a single data point:
+
+| field       | value                                                    |
+| ----------- | -------------------------------------------------------- |
+| `indexes[0]`| `SHA-256(MAU_HASH_SALT + ":" + install_id)` (hex)        |
+| `blobs[0]`  | `"/exchange"` or `"/refresh"`                            |
+
+The raw `install_id` (a random UUID the desktop app generates once per install)
+is **never** stored, logged, or forwarded to Freesound — only the salted hash.
+No `install_id` in the request, no binding, or no salt ⇒ nothing is written, and
+the token exchange is unaffected either way. Writes are best-effort: a failure is
+swallowed.
+
+**Setup.** The `[[analytics_engine_datasets]]` block is already in
+`wrangler.toml` (`binding = "MAU_ANALYTICS"`). Add the salt and deploy:
+
+```sh
+pnpm --filter @superduper/token-worker exec wrangler secret put MAU_HASH_SALT
+pnpm --filter @superduper/token-worker exec wrangler deploy
+```
+
+To turn recording **off**, comment out the `[[analytics_engine_datasets]]` block
+(or just never set `MAU_HASH_SALT`) and redeploy.
+
+**Reading MAU.** Query the dataset over the last 30 days and count distinct
+hashes ([Analytics Engine SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/)):
+
+```sh
+curl "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_engine/sql" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -d "SELECT count(DISTINCT index1) AS mau
+      FROM freesound_token_worker_mau
+      WHERE timestamp > now() - INTERVAL '30' DAY"
+```
+
+`blob1` splits it by endpoint if you want new sign-ins vs. returning refreshes.
+Analytics Engine samples at high volume; treat the number as a trend, not a
+ledger. Rotating `MAU_HASH_SALT` restarts the distinct count from zero.
 
 ## Local development
 
@@ -94,6 +142,9 @@ Prerequisites: a Cloudflare account, `wrangler` v4 (available globally), and
    ```sh
    pnpm --filter @superduper/token-worker exec wrangler secret put FREESOUND_CLIENT_SECRET
    ```
+
+   Optionally also set `MAU_HASH_SALT` here to enable the anonymous
+   [monthly-active-user count](#monthly-active-users).
 
 3. **Deploy:**
 

@@ -154,6 +154,120 @@ describe("/refresh", () => {
   });
 });
 
+describe("anonymous MAU recording", () => {
+  const SALT = "test-mau-salt";
+  const INSTALL_ID = "11111111-2222-3333-4444-555555555555";
+
+  /** Own IP so these calls don't spend the shared "unknown" rate-limit bucket. */
+  const mauPost = (path: string, body: unknown): Request =>
+    post(path, body, { headers: { "cf-connecting-ip": "198.51.100.42" } });
+
+  /** A stand-in Analytics Engine dataset that captures every writeDataPoint. */
+  function fakeAnalytics(): {
+    binding: NonNullable<Env["MAU_ANALYTICS"]>;
+    points: Array<{ indexes?: unknown[]; blobs?: unknown[] }>;
+  } {
+    const points: Array<{ indexes?: unknown[]; blobs?: unknown[] }> = [];
+    return {
+      points,
+      binding: {
+        writeDataPoint(event) {
+          points.push({ indexes: event?.indexes, blobs: event?.blobs });
+        },
+      } as NonNullable<Env["MAU_ANALYTICS"]>,
+    };
+  }
+
+  /** SHA-256 hex of `${salt}:${id}`, the exact value the Worker should write. */
+  async function expectedHash(id: string): Promise<string> {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(`${SALT}:${id}`),
+    );
+    return [...new Uint8Array(digest)]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  it("writes one salted-hash data point per /exchange, tagged with the endpoint", async () => {
+    const mau = fakeAnalytics();
+    const res = await worker.fetch(
+      mauPost("/exchange", { code: "c", install_id: INSTALL_ID }),
+      makeEnv({ MAU_ANALYTICS: mau.binding, MAU_HASH_SALT: SALT }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mau.points).toHaveLength(1);
+    expect(mau.points[0]!.indexes).toEqual([await expectedHash(INSTALL_ID)]);
+    expect(mau.points[0]!.blobs).toEqual(["/exchange"]);
+  });
+
+  it("writes for /refresh too", async () => {
+    const mau = fakeAnalytics();
+    await worker.fetch(
+      mauPost("/refresh", { refresh_token: "rt", install_id: INSTALL_ID }),
+      makeEnv({ MAU_ANALYTICS: mau.binding, MAU_HASH_SALT: SALT }),
+    );
+    expect(mau.points[0]!.blobs).toEqual(["/refresh"]);
+  });
+
+  it("never writes or forwards the raw install id", async () => {
+    const mau = fakeAnalytics();
+    await worker.fetch(
+      mauPost("/exchange", { code: "c", install_id: INSTALL_ID }),
+      makeEnv({ MAU_ANALYTICS: mau.binding, MAU_HASH_SALT: SALT }),
+    );
+    expect(JSON.stringify(mau.points)).not.toContain(INSTALL_ID);
+    expect(lastUpstream!.body).not.toContain(INSTALL_ID);
+    expect(lastUpstream!.body).not.toContain("install_id");
+  });
+
+  it("records nothing when the client sends no install id", async () => {
+    const mau = fakeAnalytics();
+    await worker.fetch(
+      mauPost("/exchange", { code: "c" }),
+      makeEnv({ MAU_ANALYTICS: mau.binding, MAU_HASH_SALT: SALT }),
+    );
+    expect(mau.points).toHaveLength(0);
+  });
+
+  it("records nothing for a malformed install id", async () => {
+    const mau = fakeAnalytics();
+    await worker.fetch(
+      mauPost("/exchange", { code: "c", install_id: "nope!" }),
+      makeEnv({ MAU_ANALYTICS: mau.binding, MAU_HASH_SALT: SALT }),
+    );
+    expect(mau.points).toHaveLength(0);
+  });
+
+  it("records nothing when MAU_HASH_SALT is unset", async () => {
+    const mau = fakeAnalytics();
+    await worker.fetch(
+      mauPost("/exchange", { code: "c", install_id: INSTALL_ID }),
+      makeEnv({ MAU_ANALYTICS: mau.binding }),
+    );
+    expect(mau.points).toHaveLength(0);
+  });
+
+  it("a failing writeDataPoint never breaks the token exchange", async () => {
+    const res = await worker.fetch(
+      mauPost("/exchange", { code: "c", install_id: INSTALL_ID }),
+      makeEnv({
+        MAU_HASH_SALT: SALT,
+        MAU_ANALYTICS: {
+          writeDataPoint() {
+            throw new Error("analytics down");
+          },
+        } as NonNullable<Env["MAU_ANALYTICS"]>,
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Record<string, unknown>).access_token).toBe(
+      "access-abc",
+    );
+  });
+});
+
 describe("client_secret never leaks — success and every error path", () => {
   it("success path", async () => {
     const res = await worker.fetch(

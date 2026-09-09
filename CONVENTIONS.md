@@ -42,8 +42,10 @@ Each package has `.env.example` (committed) and `.env` (git-ignored). Known keys
 |---|---|---|
 | `FREESOUND_CLIENT_ID` | apps/desktop | OAuth authorization-code grant (public part). Required — no API key is bundled, so search runs on the user OAuth token (ADR-0004) |
 | `FREESOUND_TOKEN_WORKER_URL` | apps/desktop | Deployed ticket-06 Worker base URL. Required (see above) |
+| `SDS_TELEMETRY` | apps/desktop | Optional. `0`/`false`/`off`/`no` stops the app sending its random install id to the Worker for the anonymous MAU count. Default: on |
 | `FREESOUND_CLIENT_ID` | worker | OAuth client id |
 | `FREESOUND_CLIENT_SECRET` | worker | **Worker secret only** (`wrangler secret put`). Never in code, response, or log. |
+| `MAU_HASH_SALT` | worker | **Worker secret only.** Optional. Salt for the anonymous monthly-active-user hash. Unset ⇒ nothing is recorded |
 
 ## Fixed constants
 

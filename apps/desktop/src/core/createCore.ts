@@ -28,6 +28,7 @@ import { DEFAULT_STAGING_BYTE_BUDGET } from './staging/eviction'
 import { createLibraryCommands } from './library/libraryCommands'
 import { createCollectionCommands } from './collections/collectionCommands'
 import {
+  bumpLaunchCount,
   readLibraryFilter,
   readSearchPrefs,
   readUiState,
@@ -43,6 +44,7 @@ export function createCore(deps: CoreDeps): Core {
 
   const startupAssessment = assessStartup({ dbPath, dataDir })
   const db: DB = openDb(dbPath)
+  const launchCount = bumpLaunchCount(db)
   const logger: Logger = createLogger(deps.logSink ?? NULL_LOG_SINK)
 
   sweepDragDir(dataDir, logger)
@@ -137,6 +139,7 @@ export function createCore(deps: CoreDeps): Core {
     getUiState: () => readUiState(db),
     setUiState: (patch) =>
       writeUiState(db, mergeUiState(readUiState(db), patch ?? {})),
+    getLaunchCount: () => launchCount,
     getLogPath: () => logger.path(),
     readLog: (opts) => logger.read(opts?.maxLines ?? 500),
     log: (level, message, meta) => logger[level]?.(message, meta),

@@ -25,6 +25,16 @@ Full instructions are in [SETUP.md](SETUP.md). Prebuilt installers exist
 sign in unless a Worker is deployed and its URL baked into the build — see
 [INSTALL.md](INSTALL.md) and [ADR-0007](docs/adr/0007-ship-unsigned-no-auto-update.md).
 
+## Telemetry
+
+The only thing the app reports is an **anonymous monthly-active-user count**, and only
+if the operator of your token Worker turns it on. On sign-in and on each token refresh
+the app sends a random per-install UUID (stored in `<userData>/install-id` — nothing
+personal, no account or usage data); the Worker stores only a salted hash of it and
+never forwards it to Freesound. Set `SDS_TELEMETRY=0` in `apps/desktop/.env` to send
+nothing, or just don't set `MAU_HASH_SALT` on the Worker. Details in
+[`worker/README.md`](worker/README.md#monthly-active-users).
+
 ## Develop
 
 ```sh

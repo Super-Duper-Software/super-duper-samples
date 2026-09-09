@@ -12,6 +12,17 @@ export interface Env {
 	ALLOWED_USER_AGENTS?: string;
 	/** Optional. Per-IP requests per minute for the in-memory limiter. Default 30. */
 	RATE_LIMIT_PER_MINUTE?: string;
+	/**
+	 * Optional. Analytics Engine dataset for the anonymous monthly-active-user
+	 * count. Bound in wrangler.toml; absent in tests that don't exercise it.
+	 */
+	MAU_ANALYTICS?: AnalyticsEngineDataset;
+	/**
+	 * Optional. Secret salt mixed into the install-id hash before it is written
+	 * to `MAU_ANALYTICS`. Without it, nothing is recorded (a raw install id is
+	 * never written). `wrangler secret put MAU_HASH_SALT`.
+	 */
+	MAU_HASH_SALT?: string;
 }
 
 /** Fields we pass through from Freesound's token response. Nothing else is echoed. */
@@ -221,6 +232,42 @@ async function readJsonObject(request: Request): Promise<JsonBodyResult> {
 	return { ok: true, body: body as Record<string, unknown> };
 }
 
+const INSTALL_ID_RE = /^[A-Za-z0-9._~-]{8,200}$/;
+
+async function sha256Hex(input: string): Promise<string> {
+	const digest = await crypto.subtle.digest(
+		"SHA-256",
+		new TextEncoder().encode(input),
+	);
+	return [...new Uint8Array(digest)]
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+}
+
+/**
+ * Record one anonymous monthly-active-user hit: a salted SHA-256 of the client's
+ * random install id (never the id itself) plus which endpoint it came through.
+ * Best-effort — a missing binding/salt, a malformed id, or a write failure is
+ * swallowed so telemetry can never affect the token exchange.
+ */
+async function recordActiveUser(
+	installId: unknown,
+	endpoint: "/exchange" | "/refresh",
+	env: Env,
+): Promise<void> {
+	if (!env.MAU_ANALYTICS || !env.MAU_HASH_SALT) return;
+	if (typeof installId !== "string" || !INSTALL_ID_RE.test(installId)) return;
+	try {
+		const hashed = await sha256Hex(`${env.MAU_HASH_SALT}:${installId}`);
+		env.MAU_ANALYTICS.writeDataPoint({
+			indexes: [hashed],
+			blobs: [endpoint],
+		});
+	} catch {
+		// swallow — see doc comment
+	}
+}
+
 const worker = {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		if (request.method === "OPTIONS") {
@@ -253,6 +300,8 @@ const worker = {
 		const parsed = await readJsonObject(request);
 		if (!parsed.ok) return parsed.response;
 		const body = parsed.body;
+
+		await recordActiveUser(body.install_id, path, env);
 
 		const form = new URLSearchParams();
 		form.set("client_id", env.FREESOUND_CLIENT_ID);

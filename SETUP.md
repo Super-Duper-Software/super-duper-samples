@@ -46,6 +46,10 @@ Copy the printed `https://…workers.dev` URL. Operational hardening, rotation a
 local dev (`.dev.vars` + `wrangler dev`) are in `worker/README.md` and
 `worker/SECURITY.md`.
 
+Optional: to record an anonymous monthly-active-user count, also
+`wrangler secret put MAU_HASH_SALT` (any random string) and redeploy — see
+`worker/README.md` § "Monthly active users". Skip it and nothing is recorded.
+
 ## 4. Fill in `apps/desktop/.env`
 
 `cp apps/desktop/.env.example apps/desktop/.env`, then:
@@ -54,6 +58,7 @@ local dev (`.dev.vars` + `wrangler dev`) are in `worker/README.md` and
 FREESOUND_CLIENT_ID=<client id from step 1>
 FREESOUND_TOKEN_WORKER_URL=<deployed Worker URL from step 3>
 # no FREESOUND_CLIENT_SECRET here — it lives only in the Worker
+# SDS_TELEMETRY=0   # optional: opt out of the anonymous MAU install-id ping
 ```
 
 ## 5. Native module note

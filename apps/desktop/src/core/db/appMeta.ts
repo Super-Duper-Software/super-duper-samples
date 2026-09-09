@@ -19,5 +19,8 @@ export function setMeta(db: DB, key: string, value: string): void {
 /** Epoch ms at which the user acknowledged the staging notice. */
 export const STAGING_CONSENT_KEY = 'staging_consent_at'
 
+/** Count of app launches so far, incremented once per `createCore`. */
+export const LAUNCH_COUNT_KEY = 'launch_count'
+
 /** The persisted shell state blob (window bounds, last view/search/selection). */
 export const UI_STATE_KEY = 'ui_state'

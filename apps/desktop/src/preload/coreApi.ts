@@ -53,6 +53,7 @@ export interface CoreApi {
 
   getUiState(): Promise<UiState>
   setUiState(patch: Partial<UiState>): Promise<UiState>
+  getLaunchCount(): Promise<number>
   getLogPath(): Promise<string | null>
   readLog(opts?: { maxLines?: number }): Promise<string[]>
   log(

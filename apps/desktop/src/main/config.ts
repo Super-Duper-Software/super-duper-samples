@@ -1,11 +1,19 @@
 export interface DesktopConfig {
   freesoundClientId: string
   tokenWorkerUrl: string
+  /**
+   * Whether to send this install's random id to the token Worker for its
+   * anonymous monthly-active-user count. On unless `SDS_TELEMETRY` is set to
+   * `0` / `false` / `off` / `no`.
+   */
+  telemetryEnabled: boolean
 }
 
 function read(key: keyof ImportMetaEnv): string {
   return import.meta.env[key] ?? process.env[key] ?? ''
 }
+
+const TELEMETRY_OFF = new Set(['0', 'false', 'off', 'no'])
 
 export function loadConfig(): DesktopConfig {
   const freesoundClientId = read('FREESOUND_CLIENT_ID')
@@ -23,5 +31,6 @@ export function loadConfig(): DesktopConfig {
   return {
     freesoundClientId,
     tokenWorkerUrl,
+    telemetryEnabled: !TELEMETRY_OFF.has(read('SDS_TELEMETRY').trim().toLowerCase()),
   }
 }

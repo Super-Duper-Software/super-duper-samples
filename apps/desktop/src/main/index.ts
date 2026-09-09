@@ -16,6 +16,7 @@ import { HttpFreesoundGateway } from '../core/gateway/http'
 import { CHANNELS } from '../shared/channels'
 import { createElectronAuthPlatform } from './authPlatform'
 import { createElectronDragHost } from './dragHost'
+import { getOrCreateInstallId } from './installId'
 import { createFfmpegAudioRenderRunner } from './ffmpegRunner'
 import { broadcaster } from './broadcast'
 import { loadConfig } from './config'
@@ -41,9 +42,14 @@ void app.whenReady().then(() => {
   const dragIconFallbackPath = resolveDragIconPath()
   const ffmpegPath = resolveFfmpegPath()
 
+  const installId = config.telemetryEnabled
+    ? getOrCreateInstallId(dataDir)
+    : undefined
+
   const core = createCore({
     gateway: new HttpFreesoundGateway({
       tokenWorkerUrl: config.tokenWorkerUrl,
+      installId,
     }),
     dataDir,
     dbPath,

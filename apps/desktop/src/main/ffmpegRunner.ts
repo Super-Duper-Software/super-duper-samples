@@ -114,7 +114,9 @@ export function createFfmpegAudioRenderRunner(ffmpegPath: string): AudioRenderRu
       child.stderr?.on('data', (chunk: string) => {
         stderrTail = (stderrTail + chunk).slice(-4000)
         if (inputDurationSec === null) {
-          const d = parseInputDuration(chunk)
+          // Parse the accumulated tail, not the raw chunk: ffmpeg's `Duration:`
+          // banner line can be split across stderr chunks (seen on Windows).
+          const d = parseInputDuration(stderrTail)
           if (d !== null) inputDurationSec = d
         }
       })

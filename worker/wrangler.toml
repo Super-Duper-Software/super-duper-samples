@@ -3,7 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 workers_dev = true
 
-# --- Public config -----------------------------------------------------------
+
+[vars]
 # Optional, soft abuse controls. Leave empty to disable.
 #   ALLOWED_ORIGINS      comma-separated Origin header values to allow
 #   ALLOWED_USER_AGENTS  comma-separated User-Agent substrings to allow

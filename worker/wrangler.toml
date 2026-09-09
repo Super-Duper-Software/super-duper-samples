@@ -3,8 +3,17 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 workers_dev = true
 
-
+keep_vars=true
+# --- Public config -----------------------------------------------------------
+# FREESOUND_CLIENT_ID is the public half of the OAuth2 credential. Replace with
+# your Freesound application's client id, or override it locally in .dev.vars /
+# in CI without editing this file.
+#
+# FREESOUND_CLIENT_SECRET is NOT here on purpose. It is a Worker secret:
+#   wrangler secret put FREESOUND_CLIENT_SECRET
 [vars]
+FREESOUND_CLIENT_ID = ""
+
 # Optional, soft abuse controls. Leave empty to disable.
 #   ALLOWED_ORIGINS      comma-separated Origin header values to allow
 #   ALLOWED_USER_AGENTS  comma-separated User-Agent substrings to allow

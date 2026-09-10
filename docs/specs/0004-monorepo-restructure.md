@@ -179,6 +179,12 @@ against the extracted packages instead of by copying Samples.
 - `apps/` members: `samples` (was the repo root's `apps/desktop`), `token-worker` (was
   `worker/`), `landing` (from `super-duper-landing-page`), `download-worker` (from that
   repo's `worker/`). `apps/model-browser` is added later, not in this spec.
+- `worker/` (→ `apps/token-worker`) now carries a write-only Analytics Engine binding
+  (`MAU_ANALYTICS`) plus a `MAU_HASH_SALT` Worker secret for the anonymous
+  monthly-active-user count, and Samples has a matching `src/main/installId.ts` that
+  generates the random install id. Both are domain/app-specific and move unchanged with
+  their member; the binding and secret must survive the directory move, exactly as for
+  `download-worker` below.
 - `packages/` members: `config`, `logging`, `ui`, `electron-shell`, `electron-drag-out`.
 - `tools/` members: `branch-cli` (Rust), `super-duper-teacher` (Markdown skill). Cargo
   workspace root is `tools/Cargo.toml`.
@@ -210,8 +216,8 @@ against the extracted packages instead of by copying Samples.
 
 - `packages/logging` — the current `apps/samples/src/core/logging/logger.ts` module and
   its types, moved verbatim. `apps/samples` imports it as `@superduper/logging`. The file
-  log sink (`createFileLogSink`) moves with it if it carries no Freesound knowledge;
-  otherwise it stays in `apps/samples`.
+  log sink (`createFileLogSink(dir)`) lives in the same file and takes only a directory —
+  no Freesound knowledge — so it moves into the package with the rest of the module.
 - `packages/electron-drag-out` — the `DragHost` interface plus its Electron implementation
   (currently `apps/samples/src/main/dragHost.ts` and `src/core/staging/dragHost.ts`), the
   `DragRegistry` ref-count map (`src/core/staging/dragRegistry.ts`), and a generic helper
@@ -260,7 +266,9 @@ against the extracted packages instead of by copying Samples.
 
 ### Environment and secrets
 
-- Each app/Worker keeps its own `.env` and committed `.env.example`. No root `.env`.
+- Each app/Worker keeps its own env scoped to that member, with a committed example file:
+  `.env` / `.env.example` for the Electron apps, `.dev.vars` / `.dev.vars.example` plus
+  `wrangler secret put` for the Workers. No root `.env`.
 - `turbo.json` declares, per task, the env keys that task reads (e.g. `FREESOUND_*` for
   Samples build tasks) via `env` / `globalEnv`, so cache keys track env changes.
 

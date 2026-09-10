@@ -1,10 +1,34 @@
+/** Which point in the load / playback path raised the failure. */
+export type PreviewFailureTrigger =
+  | 'element-error'
+  | 'play-rejected'
+  | 'stall-timeout'
+
+/** Diagnostic context for a failed Preview load, logged by the store. */
+export interface AudioErrorDetail {
+  trigger: PreviewFailureTrigger
+  /** The source that was loading when it failed. */
+  url: string | null
+  /** `HTMLMediaElement.error.code`, when the element carries one. */
+  mediaErrorCode?: number
+  /** Readable name for `mediaErrorCode` (e.g. `MEDIA_ERR_NETWORK`). */
+  mediaError?: string
+  /** `HTMLMediaElement.networkState` / `.readyState` at the point of failure. */
+  networkState?: number
+  readyState?: number
+  /** `MediaError.message`, or a rejected `play()`'s `name: message`. */
+  reason?: string
+  /** `navigator.onLine` at the point of failure. */
+  online?: boolean
+}
+
 /** Coarse transport events pushed back into the Zustand store. */
 export interface AudioCallbacks {
   onLoading: () => void
   onPlaying: () => void
   onPaused: () => void
   onEnded: () => void
-  onError: (soundId: number) => void
+  onError: (soundId: number, detail: AudioErrorDetail) => void
 }
 
 const NOOP: AudioCallbacks = {
@@ -18,6 +42,13 @@ const NOOP: AudioCallbacks = {
 /** A `stalled` event that does not clear within this window is treated as a load failure. */
 const STALL_TIMEOUT_MS = 8000
 
+const MEDIA_ERR_NAMES: Record<number, string> = {
+  1: 'MEDIA_ERR_ABORTED',
+  2: 'MEDIA_ERR_NETWORK',
+  3: 'MEDIA_ERR_DECODE',
+  4: 'MEDIA_ERR_SRC_NOT_SUPPORTED',
+}
+
 let el: HTMLAudioElement | null = null
 let callbacks: AudioCallbacks = NOOP
 let rafId = 0
@@ -25,6 +56,34 @@ let stallTimer: ReturnType<typeof setTimeout> | null = null
 
 /** The sound id currently loaded into the element (source of truth for `error` attribution). */
 let currentId: number | null = null
+
+/** The source URL last handed to `load()`, for failure diagnostics. */
+let currentUrl: string | null = null
+
+function errString(err: unknown): string | undefined {
+  if (err instanceof Error) return `${err.name}: ${err.message}`
+  return err != null ? String(err) : undefined
+}
+
+/** Snapshot the element's failure state into an `AudioErrorDetail`. */
+function errorDetail(
+  a: HTMLAudioElement,
+  trigger: PreviewFailureTrigger,
+  reason?: string,
+): AudioErrorDetail {
+  const code = a.error?.code
+  return {
+    trigger,
+    url: currentUrl,
+    mediaErrorCode: code,
+    mediaError:
+      code != null ? (MEDIA_ERR_NAMES[code] ?? `code ${code}`) : undefined,
+    networkState: a.networkState,
+    readyState: a.readyState,
+    reason: reason || a.error?.message || undefined,
+    online: typeof navigator !== 'undefined' ? navigator.onLine : undefined,
+  }
+}
 
 /**
  * True between `load()` and the first `playing` for that source. Swapping `.src`
@@ -58,7 +117,7 @@ function armStallTimer(): void {
   stallTimer = setTimeout(() => {
     stallTimer = null
     if (currentId != null && el != null && el.paused)
-      callbacks.onError(currentId)
+      callbacks.onError(currentId, errorDetail(el, 'stall-timeout'))
   }, STALL_TIMEOUT_MS)
 }
 
@@ -125,7 +184,8 @@ function ensureEl(): HTMLAudioElement | null {
     switching = false
     stopRaf()
     clearStallTimer()
-    if (currentId != null) callbacks.onError(currentId)
+    if (currentId != null)
+      callbacks.onError(currentId, errorDetail(a, 'element-error'))
   })
   a.addEventListener('stalled', armStallTimer)
   a.addEventListener('waiting', armStallTimer)
@@ -145,6 +205,7 @@ export function load(
 ): void {
   const a = ensureEl()
   currentId = soundId
+  currentUrl = url
   switching = true
   resetPlayhead()
   callbacks.onLoading()
@@ -153,16 +214,18 @@ export function load(
   a.volume = opts.volume
   a.src = url
   a.load()
-  void a.play().catch(() => {
-    if (currentId === soundId) callbacks.onError(soundId)
+  void a.play().catch((err) => {
+    if (currentId === soundId)
+      callbacks.onError(soundId, errorDetail(a, 'play-rejected', errString(err)))
   })
 }
 
 export function resume(): void {
   const a = ensureEl()
   if (!a || !a.src) return
-  void a.play().catch(() => {
-    if (currentId != null) callbacks.onError(currentId)
+  void a.play().catch((err) => {
+    if (currentId != null)
+      callbacks.onError(currentId, errorDetail(a, 'play-rejected', errString(err)))
   })
 }
 
@@ -181,6 +244,7 @@ export function stop(): void {
     el.load()
   }
   currentId = null
+  currentUrl = null
 }
 
 export function seekFraction(fraction: number): void {

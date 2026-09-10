@@ -104,4 +104,25 @@ describe('transport store — an Edit with no Preview falls back to its local Or
 
     expect(selectRowTransport(9)(useTransport.getState()).failed).toBe(true)
   })
+
+  it('logs the failure with its trigger when window.core.log is available', async () => {
+    const calls: Array<{ level: string; message: string; meta?: unknown }> = []
+    ;(globalThis as { window?: unknown }).window = {
+      core: {
+        getContentPath: async () => null,
+        log: async (level: string, message: string, meta?: unknown) => {
+          calls.push({ level, message, meta })
+        },
+      },
+    }
+    useTransport.getState().playSound(soundWithPreview(9, false))
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({
+      level: 'warn',
+      message: 'preview failed',
+      meta: { soundId: 9, trigger: 'no-content-path' },
+    })
+  })
 })

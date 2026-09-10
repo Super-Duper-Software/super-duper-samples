@@ -34,6 +34,8 @@ export interface DownloadQueueDeps {
   onComplete: (soundId: number, result: DownloadResult) => Promise<void> | void
   /** Called on every status transition (queued → downloading → ready/failed). */
   onStatusChange?: (soundId: number, status: StagingStatus) => void
+  /** Called once when a job gives up for good (retries exhausted), with the last error. */
+  onFailed?: (soundId: number, err: unknown) => void
 }
 
 interface Job {
@@ -161,6 +163,11 @@ export function createDownloadQueue(deps: DownloadQueueDeps): DownloadQueue {
       }
       job.status = 'failed'
       emit(job.soundId, 'failed')
+      try {
+        deps.onFailed?.(job.soundId, err)
+      } catch {
+        /* failure reporting is best-effort */
+      }
     } finally {
       releaseSlot()
       pump()

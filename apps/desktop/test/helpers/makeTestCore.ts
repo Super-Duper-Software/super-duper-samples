@@ -7,6 +7,7 @@ import {
   type Core,
   type DragHost,
   type EditEvent,
+  type ErrorTelemetrySink,
   type LogSink,
   type PeakRunner,
   type PeaksStatusChange,
@@ -91,6 +92,8 @@ export interface MakeTestCoreOptions<G extends FreesoundGateway> {
   onRebuildProgress?: (progress: RebuildProgress) => void
   /** Ticket 18 — capture the app log in memory so tests can assert on it. */
   logSink?: LogSink
+  /** Capture anonymous error-category events so tests can assert on telemetry. */
+  telemetry?: ErrorTelemetrySink
   /** Ticket 01 — in-process Edit render runner so tests never spawn ffmpeg. */
   audioRenderRunner?: AudioRenderRunner
   onEditProgress?: (event: EditEvent) => void
@@ -149,6 +152,7 @@ export async function makeTestCore<
     rebuildWorkerPath: opts.rebuildWorkerPath,
     onRebuildProgress: opts.onRebuildProgress,
     logSink: opts.logSink,
+    telemetry: opts.telemetry,
     audioRenderRunner: opts.audioRenderRunner,
     onEditProgress: opts.onEditProgress,
   })

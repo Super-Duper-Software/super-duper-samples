@@ -23,7 +23,7 @@ import type {
   SearchResult,
   Sound,
 } from '../core/types'
-import type { LogLevel, SortDir, UiState } from '../core'
+import type { ClientErrorEvent, LogLevel, SortDir, UiState } from '../core'
 
 /**
  * Payload the main process pushes on `core:event:rebuildOffer` when the database
@@ -61,6 +61,8 @@ export interface CoreApi {
     message: string,
     meta?: Record<string, unknown>,
   ): Promise<void>
+  /** Fire-and-forget: record an anonymous error-category event (e.g. a failed Preview). */
+  reportError(event: ClientErrorEvent): Promise<void>
   /** Reveal the log file in Finder / Explorer. */
   showLogs(): Promise<void>
   /** Open the Ko-fi support page in the user's default browser. */

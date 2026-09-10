@@ -10,8 +10,18 @@ export interface Env {
 	ALLOWED_ORIGINS?: string;
 	/** Optional, soft. Comma-separated list of `User-Agent` substrings to allow. */
 	ALLOWED_USER_AGENTS?: string;
-	/** Optional. Per-IP requests per minute for the in-memory limiter. Default 30. */
+	/**
+	 * Optional. Per-IP-per-endpoint cap for the in-memory fallback limiter, used
+	 * only when `SAMPLES_RATE_LIMITER` is unbound (local dev / tests). Default 30.
+	 */
 	RATE_LIMIT_PER_MINUTE?: string;
+	/**
+	 * Optional. Platform rate-limiting binding (wrangler.toml `[[ratelimits]]`).
+	 * When present it is authoritative; when absent the in-memory bucket is used.
+	 */
+	SAMPLES_RATE_LIMITER?: {
+		limit(options: { key: string }): Promise<{ success: boolean }>;
+	};
 	/**
 	 * Optional. Analytics Engine dataset for the anonymous monthly-active-user
 	 * count. Bound in wrangler.toml; absent in tests that don't exercise it.
@@ -23,6 +33,12 @@ export interface Env {
 	 * never written). `wrangler secret put MAU_HASH_SALT`.
 	 */
 	MAU_HASH_SALT?: string;
+	/**
+	 * Optional. Analytics Engine dataset for the anonymous error-category counts
+	 * written by `POST /report`. Commented out in wrangler.toml by default; when
+	 * absent, `/report` accepts the request and records nothing.
+	 */
+	ERROR_ANALYTICS?: AnalyticsEngineDataset;
 }
 
 /** Fields we pass through from Freesound's token response. Nothing else is echoed. */
@@ -114,14 +130,12 @@ function checkAbuse(request: Request, env: Env): Response | null {
 const RATE_BUCKET = new Map<string, { count: number; resetAt: number }>();
 const RATE_WINDOW_MS = 60_000;
 
-function rateLimit(request: Request, env: Env): Response | null {
-	const limit = Number(env.RATE_LIMIT_PER_MINUTE ?? "30") || 30;
-	const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+/** In-memory per-key minute bucket. Fallback only — see `rateLimit`. */
+function inMemoryRateLimit(key: string, limit: number): Response | null {
 	const now = Date.now();
-
-	const entry = RATE_BUCKET.get(ip);
+	const entry = RATE_BUCKET.get(key);
 	if (!entry || now >= entry.resetAt) {
-		RATE_BUCKET.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+		RATE_BUCKET.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
 		return null;
 	}
 
@@ -135,6 +149,37 @@ function rateLimit(request: Request, env: Env): Response | null {
 		);
 	}
 	return null;
+}
+
+/**
+ * Per-IP, per-endpoint rate limit. Uses the platform `SAMPLES_RATE_LIMITER`
+ * binding when bound (authoritative and global across isolates); otherwise the
+ * in-memory bucket, which only blunts a burst from a single isolate.
+ */
+async function rateLimit(
+	request: Request,
+	env: Env,
+	path: string,
+): Promise<Response | null> {
+	const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+	const key = `${ip}:${path}`;
+
+	if (env.SAMPLES_RATE_LIMITER) {
+		try {
+			const { success } = await env.SAMPLES_RATE_LIMITER.limit({ key });
+			if (success) return null;
+			return json(
+				429,
+				{ error: "rate_limited", hint: "retry after 60s" },
+				{ "Retry-After": "60" },
+			);
+		} catch {
+			// Limiter unavailable — fall through to the in-memory bucket.
+		}
+	}
+
+	const limit = Number(env.RATE_LIMIT_PER_MINUTE ?? "30") || 30;
+	return inMemoryRateLimit(key, limit);
 }
 
 /**
@@ -268,6 +313,146 @@ async function recordActiveUser(
 	}
 }
 
+const REPORT_EVENT_CODES = new Set([
+	"preview_failed",
+	"search_failed",
+	"download_failed",
+]);
+const REPORT_MAX_EVENTS = 50;
+const REPORT_MAX_COUNT = 10_000;
+/** Reason slugs: a short lower/dash slug or a `MEDIA_ERR_*`-style name. */
+const REPORT_SLUG_RE = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
+/** Context strings: an app version, platform, arch, or OS release. */
+const REPORT_CONTEXT_RE = /^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,39}$/;
+
+interface ReportEvent {
+	code: string;
+	subReason: string;
+	secondary: string;
+	online: number;
+	count: number;
+}
+
+/**
+ * Validate and record a batch of anonymous error-category counts from
+ * `POST /report`. Every field is a closed-set enum, a short slug, or an integer
+ * count — never a message, path, query, URL, or identifier. Returns a `400` on
+ * any validation failure; on success writes one Analytics Engine data point per
+ * bucket (best-effort, swallowed on failure) and returns `204`. With no
+ * `ERROR_ANALYTICS` binding the request still validates and returns `204`.
+ */
+async function handleReport(request: Request, env: Env): Promise<Response> {
+	const parsed = await readJsonObject(request);
+	if (!parsed.ok) return parsed.response;
+	const body = parsed.body;
+
+	const ctxStr = (v: unknown): string | null => {
+		if (v === undefined || v === null) return "unknown";
+		if (typeof v !== "string" || !REPORT_CONTEXT_RE.test(v)) return null;
+		return v;
+	};
+	const rawCtx = (body.context ?? {}) as Record<string, unknown>;
+	const version = ctxStr(rawCtx.version);
+	const platform = ctxStr(rawCtx.platform);
+	const arch = ctxStr(rawCtx.arch);
+	const osRelease = ctxStr(rawCtx.osRelease);
+	if (!version || !platform || !arch || !osRelease) {
+		return json(400, {
+			error: "invalid_context",
+			hint: "context fields must be short alphanumeric strings",
+		});
+	}
+
+	const rawEvents = body.events;
+	if (!Array.isArray(rawEvents) || rawEvents.length === 0) {
+		return json(400, {
+			error: "missing_parameter",
+			hint: "'events' must be a non-empty array",
+		});
+	}
+	if (rawEvents.length > REPORT_MAX_EVENTS) {
+		return json(400, {
+			error: "too_many_events",
+			hint: `at most ${REPORT_MAX_EVENTS} events per request`,
+		});
+	}
+
+	const slug = (v: unknown): string | null => {
+		if (v === undefined || v === null) return "none";
+		if (typeof v !== "string" || !REPORT_SLUG_RE.test(v)) return null;
+		return v;
+	};
+
+	const events: ReportEvent[] = [];
+	for (const raw of rawEvents) {
+		if (!raw || typeof raw !== "object") {
+			return json(400, {
+				error: "invalid_event",
+				hint: "each event must be an object",
+			});
+		}
+		const e = raw as Record<string, unknown>;
+		if (typeof e.code !== "string" || !REPORT_EVENT_CODES.has(e.code)) {
+			return json(400, { error: "invalid_event", hint: "unknown event code" });
+		}
+		const subReason = slug(e.subReason);
+		const secondary = slug(e.secondary);
+		if (subReason === null || secondary === null) {
+			return json(400, {
+				error: "invalid_event",
+				hint: "reason fields must be short slugs",
+			});
+		}
+		let online = -1;
+		if (e.online === 0 || e.online === false) online = 0;
+		else if (e.online === 1 || e.online === true) online = 1;
+		else if (e.online !== undefined && e.online !== null) {
+			return json(400, {
+				error: "invalid_event",
+				hint: "'online' must be 0 or 1",
+			});
+		}
+		const n = typeof e.count === "number" ? Math.floor(e.count) : NaN;
+		if (!Number.isFinite(n) || n < 1) {
+			return json(400, {
+				error: "invalid_event",
+				hint: "'count' must be a positive integer",
+			});
+		}
+		events.push({
+			code: e.code,
+			subReason,
+			secondary,
+			online,
+			count: Math.min(n, REPORT_MAX_COUNT),
+		});
+	}
+
+	if (env.ERROR_ANALYTICS) {
+		try {
+			for (const e of events) {
+				env.ERROR_ANALYTICS.writeDataPoint({
+					indexes: [e.code],
+					blobs: [
+						e.code,
+						version,
+						platform,
+						arch,
+						osRelease,
+						e.subReason,
+						e.secondary,
+					],
+					doubles: [e.online, e.count],
+				});
+			}
+		} catch {
+			// swallow — best-effort, same contract as recordActiveUser
+		}
+	}
+
+	return new Response(null, { status: 204, headers: corsHeaders() });
+}
+
 const worker = {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		if (request.method === "OPTIONS") {
@@ -280,13 +465,20 @@ const worker = {
 		const abuse = checkAbuse(request, env);
 		if (abuse) return abuse;
 
-		const limited = rateLimit(request, env);
+		const limited = await rateLimit(request, env, path);
 		if (limited) return limited;
+
+		if (path === "/report") {
+			if (request.method !== "POST") {
+				return json(405, { error: "method_not_allowed", hint: "use POST" });
+			}
+			return handleReport(request, env);
+		}
 
 		if (path !== "/exchange" && path !== "/refresh") {
 			return json(404, {
 				error: "not_found",
-				hint: "POST /exchange or POST /refresh",
+				hint: "POST /exchange, POST /refresh, or POST /report",
 			});
 		}
 

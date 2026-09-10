@@ -131,8 +131,15 @@ this app** — only in the Worker (`wrangler secret put`).
 `/exchange` and `/refresh` also carry a random per-install id (`src/main/installId.ts`,
 stored at `<userData>/install-id`) so the Worker can keep an anonymous
 monthly-active-user count — the Worker only ever stores a salted hash of it, and it
-never reaches Freesound. `SDS_TELEMETRY=0` (or `false`/`off`/`no`) in `.env` disables
-it; see `worker/README.md` § "Monthly active users".
+never reaches Freesound.
+
+The main process also keeps an in-memory tally of failed Previews / searches /
+downloads (`src/main/errorTelemetry.ts`) and POSTs the counts to the Worker's
+`/report` every few minutes: app version, OS, a fixed error kind, and a count —
+never a message, path, query, URL, or id, and never linked to an install.
+
+`SDS_TELEMETRY=0` (or `false`/`off`/`no`) in `.env` disables both; see
+`worker/README.md` § "Monthly active users" and § "Error reports".
 
 ### Manual verification (needs a real browser + real Freesound + a deployed Worker)
 

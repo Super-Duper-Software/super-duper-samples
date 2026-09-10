@@ -13,6 +13,8 @@ import {
   ThrottledError,
 } from '../errors'
 import type { Logger } from '../logging/logger'
+import { classifyError } from '../classifyError'
+import type { ErrorTelemetrySink } from '../telemetry'
 import type { DB } from '../db/index'
 import { getSoundsByIds, upsertSounds } from '../db/sounds'
 import {
@@ -33,6 +35,8 @@ export interface SearchServiceDeps {
   auth: AuthController
   logger: Logger
   debounceMs: number
+  /** Optional. Records an anonymous `search_failed` category count on a gateway failure. */
+  telemetry?: ErrorTelemetrySink
 }
 
 export interface SearchService {
@@ -49,6 +53,7 @@ export function createSearchService({
   auth,
   logger,
   debounceMs,
+  telemetry,
 }: SearchServiceDeps): SearchService {
   const inFlight = new Map<string, Promise<SearchResult>>()
 
@@ -98,6 +103,10 @@ export function createSearchService({
         page,
         error: typed instanceof Error ? typed.name : String(typed),
         message: typed instanceof Error ? typed.message : undefined,
+      })
+      telemetry?.report({
+        code: 'search_failed',
+        subReason: classifyError(typed).kind,
       })
       throw typed
     }

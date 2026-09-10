@@ -8,8 +8,9 @@ The desktop app talks to Freesound directly for everything else — search,
 previews, downloads. This Worker only ever sees an authorization code or a
 refresh token, exchanges it, and returns the token JSON. The token path
 **persists nothing**: no KV, no D1, no Durable Objects, no R2, no cache writes.
-The one exception is a write-only [Analytics Engine](#monthly-active-users)
-data point for the anonymous monthly-active-user count — never read back here.
+The two exceptions are write-only [Analytics Engine](#monthly-active-users) data
+points — the anonymous monthly-active-user count and the anonymous
+[error-category counts](#error-reports) — neither read back here.
 
 ## Endpoints
 
@@ -17,6 +18,7 @@ data point for the anonymous monthly-active-user count — never read back here.
 | --------------- | ----------------------------------- | -------------------------------------------------------------------- |
 | `POST /exchange`| `{ "code": string, "redirect_uri"?: string, "install_id"?: string }` | Freesound token JSON: `{ access_token, refresh_token, expires_in, scope, token_type }` |
 | `POST /refresh` | `{ "refresh_token": string, "install_id"?: string }`       | new token JSON (same shape)                                          |
+| `POST /report`  | `{ "context": {...}, "events": [...] }` — see [Error reports](#error-reports) | `204` (validated + recorded, or validated + no-op when unbound) |
 | `OPTIONS *`     | —                                   | `204` + permissive CORS headers                                     |
 | anything else   | —                                   | `404` / `405` with `{ error, hint }`                                |
 
@@ -92,6 +94,72 @@ curl "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_eng
 `blob1` splits it by endpoint if you want new sign-ins vs. returning refreshes.
 Analytics Engine samples at high volume; treat the number as a trend, not a
 ledger. Rotating `MAU_HASH_SALT` restarts the distinct count from zero.
+
+## Error reports
+
+`POST /report` is how the desktop app answers "is something broadly broken right
+now?" — nothing more. The main process keeps an in-memory tally of failed
+Previews / searches / downloads and, every few minutes, POSTs the tallies here.
+
+**Request.**
+
+```jsonc
+{
+  "context": {
+    "version": "0.3.1",       // app version
+    "platform": "win32",      // process.platform
+    "arch": "x64",            // process.arch
+    "osRelease": "10.0.19045" // os.release()
+  },
+  "events": [                 // 1..50 buckets
+    {
+      "code": "preview_failed",      // preview_failed | search_failed | download_failed
+      "subReason": "element-error",  // a short closed-set slug (optional)
+      "secondary": "MEDIA_ERR_NETWORK", // a second closed-set slug (optional)
+      "online": 0,                   // navigator.onLine as 0 / 1 (optional)
+      "count": 12                    // >= 1, clamped to 10000
+    }
+  ]
+}
+```
+
+Every field is a closed-set enum, a short slug (`^[A-Za-z][A-Za-z0-9_-]{0,39}$`),
+or an integer. Anything outside that shape — an unknown `code`, a free-text
+`subReason`, a 51-entry array, a non-conforming context string — is a `400`
+`{ error, hint }` and **nothing is written**. The Worker never stores a message,
+stack trace, path, query, URL, or identifier, and there is no per-install index —
+`code` is the only Analytics Engine index, so rows are counts, not a trail.
+
+**Recording.** When the `ERROR_ANALYTICS` dataset is bound (its
+`[[analytics_engine_datasets]]` block in `wrangler.toml` is **commented out by
+default** — uncomment and redeploy to enable), each bucket becomes one data
+point:
+
+| field        | value                                                              |
+| ------------ | ----------------------------------------------------------------- |
+| `indexes[0]` | `code`                                                            |
+| `blobs`      | `[code, version, platform, arch, osRelease, subReason, secondary]` |
+| `doubles`    | `[online, count]` (`online` is `-1` when unknown)                  |
+
+With no binding, `/report` still validates the body and returns `204`. Writes are
+best-effort: a `writeDataPoint` failure is swallowed.
+
+**Reading.** Sum `double2` (the count) — not `count()`, since one row already
+stands for many occurrences:
+
+```sh
+curl "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_engine/sql" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -d "SELECT blob1 AS code, blob6 AS reason, blob2 AS version, blob3 AS os,
+             SUM(double2) AS n
+      FROM freesound_token_worker_errors
+      WHERE timestamp > now() - INTERVAL '7' DAY
+      GROUP BY code, reason, version, os
+      ORDER BY n DESC"
+```
+
+A kind running well above its usual level against a fresh release or a single OS
+is the signal. Compare it to the MAU number for rough affected-user scale.
 
 ## Local development
 
@@ -179,11 +247,14 @@ The `client_id` is public; changing it is just a `wrangler.toml` edit plus
   `ALLOWED_USER_AGENTS` (comma-separated) in `wrangler.toml` `[vars]`. Unset =
   not enforced. Mismatches are logged and answered with `403`. The Electron main
   process sends no `Origin`, so an origin allowlist only affects browser callers.
-- **Best-effort per-IP rate limit.** In-memory token bucket keyed by
-  `cf-connecting-ip`, `RATE_LIMIT_PER_MINUTE` (default 30). This is **not**
-  durable or global across isolates — it only blunts a burst from one isolate. A
-  production deploy should use a Durable Object or Cloudflare rate-limiting
-  rules. It holds nothing user-specific, so the Worker stays stateless.
+- **Per-IP, per-endpoint rate limit.** When the `SAMPLES_RATE_LIMITER` binding
+  (`wrangler.toml` `[[ratelimits]]`) is present it is authoritative — global
+  across isolates, keyed by `` `${cf-connecting-ip}:${path}` `` so a `/report`
+  flood cannot spend an office's shared `/exchange` budget. Default 120 req/60s
+  per key; over it → `429` with `Retry-After: 60`. When the binding is absent
+  (`wrangler dev`, the test suite) the Worker falls back to a best-effort
+  in-memory token bucket (`RATE_LIMIT_PER_MINUTE`, default 30) that only blunts a
+  burst from a single isolate. Neither holds anything user-specific.
 
 See [SECURITY.md](SECURITY.md) for what a public deployment must harden before
 you rely on it.

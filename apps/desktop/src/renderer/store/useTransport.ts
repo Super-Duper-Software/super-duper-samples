@@ -62,8 +62,10 @@ export type PreviewFailureDetail =
     }
 
 /**
- * Record a Preview failure to the app log (Help ▸ View Logs). Never throws:
- * diagnostics must not disturb playback, and `window` is absent in unit tests.
+ * Record a Preview failure: a line in the app log (Help ▸ View Logs, carries the
+ * URL) plus an anonymous `preview_failed` telemetry event (closed-set slugs
+ * only). Never throws — diagnostics must not disturb playback, and `window` is
+ * absent in unit tests.
  */
 function logPreviewFailure(
   soundId: number,
@@ -72,6 +74,13 @@ function logPreviewFailure(
   try {
     if (typeof window === 'undefined') return
     void window.core?.log?.('warn', 'preview failed', { soundId, ...detail })
+    void window.core?.reportError?.({
+      code: 'preview_failed',
+      subReason: detail?.trigger,
+      secondary:
+        detail && 'mediaError' in detail ? detail.mediaError : undefined,
+      online: detail && 'online' in detail ? detail.online : undefined,
+    })
   } catch {
     /* ignore */
   }

@@ -95,6 +95,8 @@ export interface StagingControllerDeps {
   auth: Pick<AuthController, 'getState' | 'authorized'>
   scheduler: Scheduler
   onStatusChange?: (change: StagingStatusChange) => void
+  /** A download gave up for good (retries exhausted). The core classifies `err` for telemetry. */
+  onDownloadFailed?: (soundId: number, err: unknown) => void
   /** A Sound's Original has just landed on disk; the core wires this to peak computation. */
   onOriginalReady?: (soundId: number) => void
   /** Exceeding it after a stage triggers an LRU eviction. See `DEFAULT_STAGING_BYTE_BUDGET`. */
@@ -164,6 +166,7 @@ export function createStagingController(
       }
     },
     onStatusChange: (soundId, status) => emit({ soundId, status }),
+    onFailed: (soundId, err) => deps.onDownloadFailed?.(soundId, err),
   })
 
   let evictionScheduled = false

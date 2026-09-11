@@ -92,16 +92,16 @@ export function createErrorTelemetry(opts: {
 	async function flush(): Promise<void> {
 		if (buckets.size === 0) return;
 		const events = [...buckets.values()].slice(0, MAX_EVENTS_PER_FLUSH);
-		buckets.clear();
+		for (const event of events) buckets.delete(bucketKey(event));
 		try {
 			const res = await doFetch(url, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ context: opts.context, events }),
 			});
-			// 4xx means the batch is malformed and will never succeed — drop it.
-			// 5xx / network error is transient — re-queue for the next flush.
-			if (!res.ok && res.status >= 500)
+			// 4xx except 429 means the batch is malformed and will never succeed — drop it.
+			// 429 / 5xx / network error is transient — re-queue for the next flush.
+			if (!res.ok && (res.status === 429 || res.status >= 500))
 				throw new Error(`report HTTP ${res.status}`);
 		} catch {
 			for (const b of events) {

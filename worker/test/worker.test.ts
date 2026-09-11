@@ -663,6 +663,22 @@ describe("error reports (/report)", () => {
     expect(res.status).toBe(400);
   });
 
+  it.each([
+    { code: "search_failed", subReason: "element-error" },
+    { code: "preview_failed", secondary: "network" },
+  ])("rejects format-valid reasons outside the $code allowlist", async (event) => {
+    const ae = fakeErrorAnalytics();
+    const res = await worker.fetch(
+      reportPost({
+        context: CONTEXT,
+        events: [{ ...event, count: 1 }],
+      }),
+      makeEnv({ ERROR_ANALYTICS: ae.binding }),
+    );
+    expect(res.status).toBe(400);
+    expect(ae.points).toHaveLength(0);
+  });
+
   it("rejects an over-long events array", async () => {
     const events = Array.from({ length: 51 }, () => ({
       code: "preview_failed",
@@ -704,6 +720,19 @@ describe("error reports (/report)", () => {
       makeEnv({ ERROR_ANALYTICS: ae.binding }),
     );
     expect(ae.points[0]!.doubles).toEqual([-1, 10000]);
+  });
+
+  it("rejects a fractional count", async () => {
+    const ae = fakeErrorAnalytics();
+    const res = await worker.fetch(
+      reportPost({
+        context: CONTEXT,
+        events: [{ code: "download_failed", count: 1.5 }],
+      }),
+      makeEnv({ ERROR_ANALYTICS: ae.binding }),
+    );
+    expect(res.status).toBe(400);
+    expect(ae.points).toHaveLength(0);
   });
 
   it("a failing writeDataPoint still returns 204", async () => {

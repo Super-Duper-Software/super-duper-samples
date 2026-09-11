@@ -27,8 +27,9 @@ sign in unless a Worker is deployed and its URL baked into the build — see
 
 ## Telemetry
 
-The app reports two things, both anonymous, and both only if the operator of your token
-Worker turns them on:
+The app can send two anonymous telemetry payloads. `SDS_TELEMETRY` controls whether
+the app transmits them; Worker configuration independently controls whether received
+telemetry is recorded:
 
 1. **A monthly-active-user count.** On sign-in and on each token refresh the app sends a
    random per-install UUID (stored in `<userData>/install-id` — not an account, not usage
@@ -40,9 +41,10 @@ Worker turns them on:
    message, stack trace, file path, search query, URL, or any identifier — the counts are
    not linked to an install or to each other.
 
-`SDS_TELEMETRY=0` (or `false` / `off` / `no`) in `apps/desktop/.env` disables **both**.
-So does not configuring the Worker: leave `MAU_HASH_SALT` unset for (1), and leave the
-`ERROR_ANALYTICS` block in `worker/wrangler.toml` commented out for (2). Details in
+`SDS_TELEMETRY=0` (or `false` / `off` / `no`) in `apps/desktop/.env` disables
+transmission of **both**. On the Worker, leave `MAU_HASH_SALT` unset to avoid recording
+(1), and leave the `ERROR_ANALYTICS` block in `worker/wrangler.toml` commented out to
+avoid recording (2). Details in
 [`worker/README.md`](worker/README.md#monthly-active-users).
 
 ## Develop

@@ -113,6 +113,51 @@ describe('error telemetry aggregator', () => {
     t.stop()
   })
 
+  it('preserves buckets beyond the current 50-event flush', async () => {
+    const { fetchImpl, sent } = stubFetch()
+    const t = createErrorTelemetry({
+      reportUrl: 'https://w.example',
+      enabled: true,
+      context: CONTEXT,
+      fetchImpl,
+    })
+    const subReasons = [
+      'none',
+      'element-error',
+      'play-rejected',
+      'stall-timeout',
+      'no-content-path',
+      'content-path-error',
+    ]
+    const secondaries = [
+      'none',
+      'MEDIA_ERR_ABORTED',
+      'MEDIA_ERR_NETWORK',
+      'MEDIA_ERR_DECODE',
+      'MEDIA_ERR_SRC_NOT_SUPPORTED',
+    ]
+    const online = [undefined, false, true] as const
+    for (let i = 0; i < 51; i += 1) {
+      t.report({
+        code: 'preview_failed',
+        subReason: subReasons[i % subReasons.length],
+        secondary:
+          secondaries[Math.floor(i / subReasons.length) % secondaries.length],
+        online:
+          online[
+            Math.floor(i / (subReasons.length * secondaries.length)) %
+              online.length
+          ],
+      })
+    }
+
+    await t.flush()
+    await t.flush()
+
+    expect(sent.map((batch) => batch.body.events.length)).toEqual([50, 1])
+    t.stop()
+  })
+
   it('coerces a non-slug subReason (e.g. a path) to "none"', async () => {
     const { fetchImpl, sent } = stubFetch()
     const t = createErrorTelemetry({
@@ -146,6 +191,27 @@ describe('error telemetry aggregator', () => {
     await t.flush() // 400 → drop
     await t.flush() // nothing left to send
     expect(sent).toHaveLength(3)
+    t.stop()
+  })
+
+  it('re-queues a batch after a rate-limited /report response', async () => {
+    let code = 429
+    const { fetchImpl, sent } = stubFetch(() => code)
+    const t = createErrorTelemetry({
+      reportUrl: 'https://w.example',
+      enabled: true,
+      context: CONTEXT,
+      fetchImpl,
+    })
+    t.report({ code: 'search_failed', subReason: 'network' })
+
+    await t.flush()
+    code = 204
+    await t.flush()
+    await t.flush()
+
+    expect(sent).toHaveLength(2)
+    expect(sent[1]!.body.events).toEqual(sent[0]!.body.events)
     t.stop()
   })
 })

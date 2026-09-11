@@ -24,6 +24,7 @@ import { broadcaster } from './broadcast'
 import { loadConfig } from './config'
 import { registerIpc } from './ipc'
 import { resolveDragIconPath, resolveFfmpegPath } from './paths'
+import { registerWillQuitHandler } from './quit'
 import { createWindow } from './window'
 
 void app.whenReady().then(() => {
@@ -111,11 +112,7 @@ void app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(core)
   })
 
-  app.on('will-quit', () => {
-    void errorTelemetry.flush()
-    errorTelemetry.stop()
-    core.close()
-  })
+  registerWillQuitHandler(app, errorTelemetry, core)
 })
 
 app.on('window-all-closed', () => {

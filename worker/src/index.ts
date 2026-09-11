@@ -313,17 +313,58 @@ async function recordActiveUser(
 	}
 }
 
-const REPORT_EVENT_CODES = new Set([
-	"preview_failed",
-	"search_failed",
-	"download_failed",
-]);
 const REPORT_MAX_EVENTS = 50;
 const REPORT_MAX_COUNT = 10_000;
 /** Reason slugs: a short lower/dash slug or a `MEDIA_ERR_*`-style name. */
 const REPORT_SLUG_RE = /^[A-Za-z][A-Za-z0-9_-]{0,39}$/;
 /** Context strings: an app version, platform, arch, or OS release. */
 const REPORT_CONTEXT_RE = /^[A-Za-z0-9][A-Za-z0-9 ._+-]{0,39}$/;
+const CLASSIFIED_ERROR_REASONS = new Set([
+	"none",
+	"network",
+	"throttled",
+	"auth",
+	"download",
+	"disk",
+	"unknown",
+]);
+const NO_SECONDARY_REASON = new Set(["none"]);
+const REPORT_REASON_ALLOWLISTS = new Map([
+	[
+		"preview_failed",
+		{
+			subReason: new Set([
+				"none",
+				"element-error",
+				"play-rejected",
+				"stall-timeout",
+				"no-content-path",
+				"content-path-error",
+			]),
+			secondary: new Set([
+				"none",
+				"MEDIA_ERR_ABORTED",
+				"MEDIA_ERR_NETWORK",
+				"MEDIA_ERR_DECODE",
+				"MEDIA_ERR_SRC_NOT_SUPPORTED",
+			]),
+		},
+	],
+	[
+		"search_failed",
+		{
+			subReason: CLASSIFIED_ERROR_REASONS,
+			secondary: NO_SECONDARY_REASON,
+		},
+	],
+	[
+		"download_failed",
+		{
+			subReason: CLASSIFIED_ERROR_REASONS,
+			secondary: NO_SECONDARY_REASON,
+		},
+	],
+]);
 
 interface ReportEvent {
 	code: string;
@@ -392,7 +433,11 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
 			});
 		}
 		const e = raw as Record<string, unknown>;
-		if (typeof e.code !== "string" || !REPORT_EVENT_CODES.has(e.code)) {
+		const reasonAllowlists =
+			typeof e.code === "string"
+				? REPORT_REASON_ALLOWLISTS.get(e.code)
+				: undefined;
+		if (typeof e.code !== "string" || !reasonAllowlists) {
 			return json(400, { error: "invalid_event", hint: "unknown event code" });
 		}
 		const subReason = slug(e.subReason);
@@ -401,6 +446,15 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
 			return json(400, {
 				error: "invalid_event",
 				hint: "reason fields must be short slugs",
+			});
+		}
+		if (
+			!reasonAllowlists.subReason.has(subReason) ||
+			!reasonAllowlists.secondary.has(secondary)
+		) {
+			return json(400, {
+				error: "invalid_event",
+				hint: "reason fields are not allowed for this event code",
 			});
 		}
 		let online = -1;
@@ -412,8 +466,13 @@ async function handleReport(request: Request, env: Env): Promise<Response> {
 				hint: "'online' must be 0 or 1",
 			});
 		}
-		const n = typeof e.count === "number" ? Math.floor(e.count) : NaN;
-		if (!Number.isFinite(n) || n < 1) {
+		const n = e.count;
+		if (
+			typeof n !== "number" ||
+			!Number.isFinite(n) ||
+			!Number.isInteger(n) ||
+			n < 1
+		) {
 			return json(400, {
 				error: "invalid_event",
 				hint: "'count' must be a positive integer",

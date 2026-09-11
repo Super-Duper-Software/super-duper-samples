@@ -123,9 +123,18 @@ Previews / searches / downloads and, every few minutes, POSTs the tallies here.
 }
 ```
 
-Every field is a closed-set enum, a short slug (`^[A-Za-z][A-Za-z0-9_-]{0,39}$`),
-or an integer. Anything outside that shape — an unknown `code`, a free-text
-`subReason`, a 51-entry array, a non-conforming context string — is a `400`
+Reason values are closed sets selected by `code`:
+
+| `code` | allowed `subReason` | allowed `secondary` |
+| --- | --- | --- |
+| `preview_failed` | `none`, `element-error`, `play-rejected`, `stall-timeout`, `no-content-path`, `content-path-error` | `none`, `MEDIA_ERR_ABORTED`, `MEDIA_ERR_NETWORK`, `MEDIA_ERR_DECODE`, `MEDIA_ERR_SRC_NOT_SUPPORTED` |
+| `search_failed` | `none`, `network`, `throttled`, `auth`, `download`, `disk`, `unknown` | `none` |
+| `download_failed` | `none`, `network`, `throttled`, `auth`, `download`, `disk`, `unknown` | `none` |
+
+Every field must also have the documented format; reason values must be short slugs
+(`^[A-Za-z][A-Za-z0-9_-]{0,39}$`) and counts must be integers. Anything outside
+those rules — an unknown `code`, an unlisted or free-text `subReason`, a 51-entry
+array, a fractional count, or a non-conforming context string — is a `400`
 `{ error, hint }` and **nothing is written**. The Worker never stores a message,
 stack trace, path, query, URL, or identifier, and there is no per-install index —
 `code` is the only Analytics Engine index, so rows are counts, not a trail.

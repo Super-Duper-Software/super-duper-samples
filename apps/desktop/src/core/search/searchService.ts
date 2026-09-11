@@ -106,10 +106,12 @@ export function createSearchService({
         error: typed instanceof Error ? typed.name : String(typed),
         message: typed instanceof Error ? typed.message : undefined,
       })
-      telemetry?.report({
-        code: 'search_failed',
-        subReason: classifyError(typed).kind,
-      })
+      if (allowPrefetch) {
+        telemetry?.report({
+          code: 'search_failed',
+          subReason: classifyError(typed).kind,
+        })
+      }
       throw typed
     }
 

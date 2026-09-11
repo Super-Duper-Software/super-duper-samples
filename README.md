@@ -26,12 +26,24 @@ sign in unless a Worker is deployed and its URL baked into the build — see
 
 ## Telemetry
 
-The only thing the app reports is an **anonymous monthly-active-user count**, and only
-if the operator of your token Worker turns it on. On sign-in and on each token refresh
-the app sends a random per-install UUID (stored in `<userData>/install-id` — nothing
-personal, no account or usage data); the Worker stores only a salted hash of it and
-never forwards it to Freesound. Set `SDS_TELEMETRY=0` in `apps/desktop/.env` to send
-nothing, or just don't set `MAU_HASH_SALT` on the Worker. Details in
+The app can send two anonymous telemetry payloads. `SDS_TELEMETRY` controls whether
+the app transmits them; Worker configuration independently controls whether received
+telemetry is recorded:
+
+1. **A monthly-active-user count.** On sign-in and on each token refresh the app sends a
+   random per-install UUID (stored in `<userData>/install-id` — not an account, not usage
+   data); the Worker stores only a salted hash of it and never forwards it to Freesound.
+2. **Error-category counts.** When a Preview, a search, or a download fails, the app adds
+   one to an in-memory tally and, every few minutes, POSTs the tallies to the Worker's
+   `/report` endpoint. Each row is: the app version, OS / architecture / OS release, a
+   fixed error kind (e.g. `preview_failed` + `MEDIA_ERR_NETWORK`), and a count. **Never** a
+   message, stack trace, file path, search query, URL, or any identifier — the counts are
+   not linked to an install or to each other.
+
+`SDS_TELEMETRY=0` (or `false` / `off` / `no`) in `apps/desktop/.env` disables
+transmission of **both**. On the Worker, leave `MAU_HASH_SALT` unset to avoid recording
+(1), and leave the `ERROR_ANALYTICS` block in `worker/wrangler.toml` commented out to
+avoid recording (2). Details in
 [`worker/README.md`](worker/README.md#monthly-active-users).
 
 ## Develop

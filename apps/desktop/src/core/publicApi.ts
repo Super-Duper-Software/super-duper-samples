@@ -1,4 +1,9 @@
 export type { Core, CoreDeps } from './api'
+export type {
+  ClientErrorEvent,
+  ErrorEventCode,
+  ErrorTelemetrySink,
+} from './telemetry'
 export type { FreesoundGateway } from './gateway/index'
 export * from './types'
 

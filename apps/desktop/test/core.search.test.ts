@@ -72,6 +72,19 @@ describe('core.search', () => {
     await expect(core.search('rain')).rejects.toBeInstanceOf(GatewayError)
   })
 
+  it('records an anonymous search_failed event on a gateway failure', async () => {
+    const events: Array<{ code: string; subReason?: string }> = []
+    const gateway = makeFakeGateway({ failWith: new NetworkError('offline') })
+    const { core } = await signedInCore({
+      gateway,
+      telemetry: { report: (e) => events.push(e) },
+    })
+
+    await expect(core.search('rain')).rejects.toBeInstanceOf(NetworkError)
+
+    expect(events).toEqual([{ code: 'search_failed', subReason: 'network' }])
+  })
+
   it('one search call yields a full page with no per-Sound follow-up gateway calls', async () => {
     const gateway = new FakeFreesoundGateway({
       pages: { rain: loadFixture('search-rain.json') },

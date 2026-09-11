@@ -34,6 +34,8 @@ export interface DownloadQueueDeps {
   onComplete: (soundId: number, result: DownloadResult) => Promise<void> | void
   /** Called on every status transition (queued → downloading → ready/failed). */
   onStatusChange?: (soundId: number, status: StagingStatus) => void
+  /** Called once when a job gives up for good (retries exhausted), with the last error. */
+  onFailed?: (soundId: number, err: unknown) => void
 }
 
 interface Job {
@@ -61,6 +63,7 @@ export interface DownloadQueue {
   clear(): void
 }
 
+/** Create a bounded-concurrency Original download queue with retry support. */
 export function createDownloadQueue(deps: DownloadQueueDeps): DownloadQueue {
   const concurrency = deps.concurrency ?? DOWNLOAD_CONCURRENCY
   const maxRetries = deps.maxRetries ?? DOWNLOAD_MAX_RETRIES
@@ -125,6 +128,7 @@ export function createDownloadQueue(deps: DownloadQueueDeps): DownloadQueue {
     }
   }
 
+  /** Run one job attempt, scheduling a retry or reporting its terminal failure. */
   async function runAttempt(job: Job): Promise<void> {
     let releasedSlot = false
     const releaseSlot = (): void => {
@@ -161,6 +165,11 @@ export function createDownloadQueue(deps: DownloadQueueDeps): DownloadQueue {
       }
       job.status = 'failed'
       emit(job.soundId, 'failed')
+      try {
+        deps.onFailed?.(job.soundId, err)
+      } catch {
+        /* failure reporting is best-effort */
+      }
     } finally {
       releaseSlot()
       pump()

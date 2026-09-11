@@ -522,6 +522,246 @@ describe("rate limiting", () => {
     expect(statuses.filter((s) => s === 200).length).toBe(3);
     expect(statuses.filter((s) => s === 429).length).toBe(2);
   });
+
+  it("uses the SAMPLES_RATE_LIMITER binding when bound", async () => {
+    const res = await worker.fetch(
+      post("/exchange", { code: "ok" }, { headers: { "cf-connecting-ip": "203.0.113.9" } }),
+      makeEnv({ SAMPLES_RATE_LIMITER: { limit: async () => ({ success: false }) } }),
+    );
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("60");
+  });
+
+  it("falls back to the in-memory bucket when the binding throws", async () => {
+    const res = await worker.fetch(
+      post("/exchange", { code: "ok" }, { headers: { "cf-connecting-ip": "203.0.113.10" } }),
+      makeEnv({
+        RATE_LIMIT_PER_MINUTE: "1000",
+        SAMPLES_RATE_LIMITER: {
+          limit: async () => {
+            throw new Error("limiter unavailable");
+          },
+        },
+      }),
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("error reports (/report)", () => {
+  const reportPost = (body: unknown): Request =>
+    post("/report", body, { headers: { "cf-connecting-ip": "198.51.100.77" } });
+
+  const CONTEXT = {
+    version: "0.3.1",
+    platform: "win32",
+    arch: "x64",
+    osRelease: "10.0.19045",
+  };
+
+  /** Create an Analytics Engine test double that records submitted data points. */
+  function fakeErrorAnalytics(): {
+    binding: NonNullable<Env["ERROR_ANALYTICS"]>;
+    points: Array<{ indexes?: unknown[]; blobs?: unknown[]; doubles?: unknown[] }>;
+  } {
+    const points: Array<{
+      indexes?: unknown[];
+      blobs?: unknown[];
+      doubles?: unknown[];
+    }> = [];
+    return {
+      points,
+      binding: {
+        writeDataPoint(event) {
+          points.push({
+            indexes: event?.indexes,
+            blobs: event?.blobs,
+            doubles: event?.doubles,
+          });
+        },
+      } as NonNullable<Env["ERROR_ANALYTICS"]>,
+    };
+  }
+
+  it("writes one data point per bucket and returns 204", async () => {
+    const ae = fakeErrorAnalytics();
+    const res = await worker.fetch(
+      reportPost({
+        context: CONTEXT,
+        events: [
+          {
+            code: "preview_failed",
+            subReason: "element-error",
+            secondary: "MEDIA_ERR_NETWORK",
+            online: 1,
+            count: 4,
+          },
+          { code: "search_failed", subReason: "network", count: 2 },
+        ],
+      }),
+      makeEnv({ ERROR_ANALYTICS: ae.binding }),
+    );
+    expect(res.status).toBe(204);
+    expect(ae.points).toHaveLength(2);
+    expect(ae.points[0]!.indexes).toEqual(["preview_failed"]);
+    expect(ae.points[0]!.blobs).toEqual([
+      "preview_failed",
+      "0.3.1",
+      "win32",
+      "x64",
+      "10.0.19045",
+      "element-error",
+      "MEDIA_ERR_NETWORK",
+    ]);
+    expect(ae.points[0]!.doubles).toEqual([1, 4]);
+    expect(ae.points[1]!.blobs).toEqual([
+      "search_failed",
+      "0.3.1",
+      "win32",
+      "x64",
+      "10.0.19045",
+      "network",
+      "none",
+    ]);
+    expect(ae.points[1]!.doubles).toEqual([-1, 2]);
+  });
+
+  it("accepts the batch and records nothing when ERROR_ANALYTICS is unbound", async () => {
+    const res = await worker.fetch(
+      reportPost({
+        context: CONTEXT,
+        events: [{ code: "preview_failed", count: 1 }],
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(204);
+  });
+
+  it("rejects an unknown event code", async () => {
+    const ae = fakeErrorAnalytics();
+    const res = await worker.fetch(
+      reportPost({
+        context: CONTEXT,
+        events: [{ code: "keystroke_logged", count: 1 }],
+      }),
+      makeEnv({ ERROR_ANALYTICS: ae.binding }),
+    );
+    expect(res.status).toBe(400);
+    expect(ae.points).toHaveLength(0);
+  });
+
+  it("rejects a free-text reason slug (e.g. a path)", async () => {
+    const res = await worker.fetch(
+      reportPost({
+        context: CONTEXT,
+        events: [
+          { code: "preview_failed", subReason: "C:\\Users\\alice\\clip.wav", count: 1 },
+        ],
+      }),
+      makeEnv({ ERROR_ANALYTICS: fakeErrorAnalytics().binding }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it.each([
+    { code: "search_failed", subReason: "element-error" },
+    { code: "preview_failed", secondary: "network" },
+  ])("rejects format-valid reasons outside the $code allowlist", async (event) => {
+    const ae = fakeErrorAnalytics();
+    const res = await worker.fetch(
+      reportPost({
+        context: CONTEXT,
+        events: [{ ...event, count: 1 }],
+      }),
+      makeEnv({ ERROR_ANALYTICS: ae.binding }),
+    );
+    expect(res.status).toBe(400);
+    expect(ae.points).toHaveLength(0);
+  });
+
+  it("rejects an over-long events array", async () => {
+    const events = Array.from({ length: 51 }, () => ({
+      code: "preview_failed",
+      count: 1,
+    }));
+    const res = await worker.fetch(
+      reportPost({ context: CONTEXT, events }),
+      makeEnv({ ERROR_ANALYTICS: fakeErrorAnalytics().binding }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects an empty events array", async () => {
+    const res = await worker.fetch(
+      reportPost({ context: CONTEXT, events: [] }),
+      makeEnv({ ERROR_ANALYTICS: fakeErrorAnalytics().binding }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects an invalid context field", async () => {
+    const res = await worker.fetch(
+      reportPost({
+        context: { ...CONTEXT, osRelease: "not a version; rm -rf /" },
+        events: [{ code: "preview_failed", count: 1 }],
+      }),
+      makeEnv({ ERROR_ANALYTICS: fakeErrorAnalytics().binding }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("clamps count to 10000", async () => {
+    const ae = fakeErrorAnalytics();
+    await worker.fetch(
+      reportPost({
+        context: CONTEXT,
+        events: [{ code: "download_failed", count: 999999 }],
+      }),
+      makeEnv({ ERROR_ANALYTICS: ae.binding }),
+    );
+    expect(ae.points[0]!.doubles).toEqual([-1, 10000]);
+  });
+
+  it("rejects a fractional count", async () => {
+    const ae = fakeErrorAnalytics();
+    const res = await worker.fetch(
+      reportPost({
+        context: CONTEXT,
+        events: [{ code: "download_failed", count: 1.5 }],
+      }),
+      makeEnv({ ERROR_ANALYTICS: ae.binding }),
+    );
+    expect(res.status).toBe(400);
+    expect(ae.points).toHaveLength(0);
+  });
+
+  it("a failing writeDataPoint still returns 204", async () => {
+    const res = await worker.fetch(
+      reportPost({
+        context: CONTEXT,
+        events: [{ code: "preview_failed", count: 1 }],
+      }),
+      makeEnv({
+        ERROR_ANALYTICS: {
+          writeDataPoint() {
+            throw new Error("analytics down");
+          },
+        } as NonNullable<Env["ERROR_ANALYTICS"]>,
+      }),
+    );
+    expect(res.status).toBe(204);
+  });
+
+  it("GET /report is 405", async () => {
+    const res = await worker.fetch(
+      new Request("https://worker.example.com/report", {
+        method: "GET",
+        headers: { "cf-connecting-ip": "198.51.100.78" },
+      }),
+      makeEnv(),
+    );
+    expect(res.status).toBe(405);
+  });
 });
 
 describe("statelessness", () => {

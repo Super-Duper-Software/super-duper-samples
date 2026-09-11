@@ -1,4 +1,5 @@
 import type { Core, CoreDeps } from './api'
+import { classifyError } from './classifyError'
 import { createLogger, NULL_LOG_SINK, type Logger } from './logging/logger'
 import { mergeUiState } from './uiState'
 import { openDb, type DB } from './db/index'
@@ -39,6 +40,10 @@ import {
 
 const DEBOUNCE_MS = 320
 
+/**
+ * Assemble the application core and wire its persistence, auth, staging,
+ * search, telemetry, and media services to the supplied platform dependencies.
+ */
 export function createCore(deps: CoreDeps): Core {
   const { gateway, dbPath, dataDir, debounceMs = DEBOUNCE_MS } = deps
 
@@ -101,6 +106,12 @@ export function createCore(deps: CoreDeps): Core {
       }
       deps.onStagingStatusChange?.(change)
     },
+    onDownloadFailed: (_soundId, err) => {
+      deps.telemetry?.report({
+        code: 'download_failed',
+        subReason: classifyError(err).kind,
+      })
+    },
     onOriginalReady: (soundId) => peakService.requestPeaks(soundId),
     byteBudget: deps.stagingByteBudget ?? DEFAULT_STAGING_BYTE_BUDGET,
     inFlightDrags: dragRegistry,
@@ -126,7 +137,14 @@ export function createCore(deps: CoreDeps): Core {
     return drag
   }
 
-  const search = createSearchService({ db, gateway, auth, logger, debounceMs })
+  const search = createSearchService({
+    db,
+    gateway,
+    auth,
+    logger,
+    debounceMs,
+    telemetry: deps.telemetry,
+  })
   const library = createLibraryCommands({ db, dataDir, logger })
   const collections = createCollectionCommands(db)
 
@@ -143,6 +161,7 @@ export function createCore(deps: CoreDeps): Core {
     getLogPath: () => logger.path(),
     readLog: (opts) => logger.read(opts?.maxLines ?? 500),
     log: (level, message, meta) => logger[level]?.(message, meta),
+    reportError: (event) => deps.telemetry?.report(event),
 
     signIn: () => auth.signIn(),
     signOut: () => auth.signOut(),

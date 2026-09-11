@@ -1,4 +1,5 @@
 import { renameSync } from 'node:fs'
+import { release } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow } from 'electron'
 import {
@@ -17,11 +18,13 @@ import { CHANNELS } from '../shared/channels'
 import { createElectronAuthPlatform } from './authPlatform'
 import { createElectronDragHost } from './dragHost'
 import { getOrCreateInstallId } from './installId'
+import { createErrorTelemetry } from './errorTelemetry'
 import { createFfmpegAudioRenderRunner } from './ffmpegRunner'
 import { broadcaster } from './broadcast'
 import { loadConfig } from './config'
 import { registerIpc } from './ipc'
 import { resolveDragIconPath, resolveFfmpegPath } from './paths'
+import { registerWillQuitHandler } from './quit'
 import { createWindow } from './window'
 
 void app.whenReady().then(() => {
@@ -46,6 +49,17 @@ void app.whenReady().then(() => {
     ? getOrCreateInstallId(dataDir)
     : undefined
 
+  const errorTelemetry = createErrorTelemetry({
+    reportUrl: config.tokenWorkerUrl,
+    enabled: config.telemetryEnabled,
+    context: {
+      version: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      osRelease: release(),
+    },
+  })
+
   const core = createCore({
     gateway: new HttpFreesoundGateway({
       tokenWorkerUrl: config.tokenWorkerUrl,
@@ -54,6 +68,7 @@ void app.whenReady().then(() => {
     dataDir,
     dbPath,
     logSink: createFileLogSink(join(dataDir, 'logs')),
+    telemetry: errorTelemetry,
     authPlatform: createElectronAuthPlatform(),
     scheduler: createRealScheduler(),
     clientId: config.freesoundClientId,
@@ -97,7 +112,7 @@ void app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(core)
   })
 
-  app.on('will-quit', () => core.close())
+  registerWillQuitHandler(app, errorTelemetry, core)
 })
 
 app.on('window-all-closed', () => {

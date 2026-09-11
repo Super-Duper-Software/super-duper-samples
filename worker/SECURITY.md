@@ -11,16 +11,27 @@ Worker that other people's builds point at, you own the following:
 
 ## Rate limiting
 
-`src/index.ts` has a best-effort in-memory per-IP token bucket
-(`RATE_LIMIT_PER_MINUTE`, default 30). A Worker runs across many isolates in many
-locations, so that map is neither global nor durable — it only blunts a burst
-from a single isolate.
+`wrangler.toml` binds the platform rate limiter as `SAMPLES_RATE_LIMITER`
+(`[[ratelimits]]`, 120 req/60s per `` `${cf-connecting-ip}:${path}` ``). It is
+global across isolates and authoritative when present. `src/index.ts` falls back
+to a best-effort in-memory per-IP-per-endpoint bucket (`RATE_LIMIT_PER_MINUTE`,
+default 30) only when the binding is absent — `wrangler dev` and the test suite.
 
-Before relying on it, put real rate limiting in front of the Worker:
+Pick a `namespace_id` unique within your Cloudflare account and tune `limit` for
+your user base (shared-NAT offices count as one IP). If you want a hard edge
+before the Worker even runs, add a
+[Cloudflare rate-limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/)
+on the route as well.
 
-- a [Cloudflare rate-limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/)
-  on the route (simplest), or
-- a Durable Object counter if you need exact per-key limits.
+## Error reports endpoint
+
+`POST /report` is unauthenticated (like `/exchange`). It accepts only a closed
+schema — known event codes, short slugs, capped array length, integer counts —
+and returns `400` on anything else without writing. It stores no message, path,
+query, URL, or identifier, and `ERROR_ANALYTICS` is commented out in
+`wrangler.toml` by default, so a fresh deploy records nothing until you opt in.
+It is still an ingest surface: keep the rate limiter bound so it cannot be used
+to flood Analytics Engine or bury a real signal with fake counts.
 
 ## Caller allowlist
 

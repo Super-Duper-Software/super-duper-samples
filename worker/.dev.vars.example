@@ -8,6 +8,10 @@ FREESOUND_CLIENT_SECRET=your-freesound-client-secret
 # users"). Any non-empty random string. Unset => nothing is recorded.
 MAU_HASH_SALT=dev-only-mau-salt
 
+# Anonymous error-category counts (POST /report, see README "Error reports") are
+# recorded only when the [[analytics_engine_datasets]] block for ERROR_ANALYTICS
+# in wrangler.toml is uncommented. There is no secret for it.
+
 # Optional local overrides of the wrangler.toml [vars] values:
 # FREESOUND_CLIENT_ID=your-freesound-client-id
 # ALLOWED_ORIGINS=

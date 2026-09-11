@@ -2,25 +2,28 @@ name = "freesound-token-worker"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 workers_dev = true
-
 keep_vars=true
+
 # --- Public config -----------------------------------------------------------
-# FREESOUND_CLIENT_ID is the public half of the OAuth2 credential. Replace with
-# your Freesound application's client id, or override it locally in .dev.vars /
-# in CI without editing this file.
-#
-# FREESOUND_CLIENT_SECRET is NOT here on purpose. It is a Worker secret:
-#   wrangler secret put FREESOUND_CLIENT_SECRET
 [vars]
-FREESOUND_CLIENT_ID = ""
 
 # Optional, soft abuse controls. Leave empty to disable.
 #   ALLOWED_ORIGINS      comma-separated Origin header values to allow
 #   ALLOWED_USER_AGENTS  comma-separated User-Agent substrings to allow
-#   RATE_LIMIT_PER_MINUTE per-IP request cap for the best-effort limiter (default 30)
+#   RATE_LIMIT_PER_MINUTE per-IP fallback cap, used only when SAMPLES_RATE_LIMITER
+#                         is unbound (local dev / tests). Default 30.
 ALLOWED_ORIGINS = ""
 ALLOWED_USER_AGENTS = ""
 RATE_LIMIT_PER_MINUTE = "30"
+
+# --- Rate limiting ---------------------------------------------------------
+# Platform per-IP-per-endpoint limiter. When bound it is authoritative; the
+# in-memory bucket in src/index.ts is the fallback for `wrangler dev` and the
+# test suite, which run without this binding. `period` must be 10 or 60.
+[[ratelimits]]
+name = "SAMPLES_RATE_LIMITER"
+namespace_id = "1002"
+simple = { limit = 120, period = 60 }
 
 # --- Anonymous monthly-active-user count ------------------------------------
 # Write-only telemetry, not request-serving state: one data point per token
@@ -35,6 +38,15 @@ dataset = "freesound_token_worker_mau"
 #   wrangler secret put MAU_HASH_SALT
 # Any non-empty random string. Rotating it resets the distinct-id count.
 
+# --- Anonymous error-category counts --------------------------------------
+# Write-only telemetry for POST /report: one data point per (event, version,
+# OS, reason) bucket, carrying only closed-set enums and counts — never a
+# message, path, query, URL, or identifier. See README.md "Error reports".
+# Commented out by default: uncomment to start recording.
+# [[analytics_engine_datasets]]
+# binding = "ERROR_ANALYTICS"
+# dataset = "freesound_token_worker_errors"
+
 # Intentionally NO request-serving storage bindings of any kind (KV, D1, Durable
 # Objects, R2, Queues, Hyperdrive). The token path stays stateless; the Analytics
-# Engine binding above is fire-and-forget and never read back by the Worker.
+# Engine bindings above are fire-and-forget and never read back by the Worker.

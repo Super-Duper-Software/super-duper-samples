@@ -21,6 +21,8 @@ export type {
 export type {
   AuthState,
   ClassifiedError,
+  ClientErrorEvent,
+  ErrorEventCode,
   DiskUsage,
   EditEvent,
   ErrorKind,
@@ -68,6 +70,7 @@ const api: CoreApi = {
   getLogPath: cmd('getLogPath'),
   readLog: cmd('readLog'),
   log: cmd('log'),
+  reportError: cmd('reportError'),
   showLogs: () => ipcRenderer.invoke('core:showLogs'),
   openSupportPage: () => ipcRenderer.invoke('core:openSupportPage'),
   openSupportEmail: (opts) => ipcRenderer.invoke('core:openSupportEmail', opts),

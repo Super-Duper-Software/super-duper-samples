@@ -11,6 +11,7 @@ import type {
   Sound,
 } from './types'
 import type { LogLevel, LogSink } from './logging/logger'
+import type { ClientErrorEvent, ErrorTelemetrySink } from './telemetry'
 import type { UiState } from './uiState'
 import type { StartupAssessment } from './startup/assessStartup'
 import type {
@@ -43,6 +44,12 @@ export interface CoreDeps {
   debounceMs?: number
   /** Omitted → `NULL_LOG_SINK`, nothing is written. */
   logSink?: LogSink
+  /**
+   * Omitted → error events are dropped. The main process passes a sink that
+   * aggregates allowlisted failures into anonymous counts and POSTs them to the
+   * token Worker's `/report` endpoint (see `main/errorTelemetry.ts`).
+   */
+  telemetry?: ErrorTelemetrySink
 
   /** Omitted → the auth commands throw and `getAuthState()` reports `signedOut`. */
   authPlatform?: AuthPlatform
@@ -121,6 +128,12 @@ export interface Core {
   readLog(opts?: { maxLines?: number }): string[]
 
   log(level: LogLevel, message: string, meta?: Record<string, unknown>): void
+
+  /**
+   * Record an anonymous error-category event from the renderer (e.g. a failed
+   * Preview). No-op unless a `telemetry` sink was provided. Fire-and-forget.
+   */
+  reportError(event: ClientErrorEvent): void
 
   /**
    * Sign in through the system browser. Rejects (leaving state `signedOut`) on

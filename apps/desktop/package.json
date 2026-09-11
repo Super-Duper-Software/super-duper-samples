@@ -1,7 +1,7 @@
 {
 	"name": "@superduper/desktop",
 	"productName": "Super Duper Samples",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"private": true,
 	"description": "Super Duper Samples desktop client — Electron app (electron-vite).",
 	"author": "Super Duper Software",

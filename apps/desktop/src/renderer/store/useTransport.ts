@@ -43,7 +43,7 @@ function persist(key: string, value: string): void {
  *
  * This is a PREVIEW (CONTEXT.md § Preview): lossy, public, no auth, not a
  * download. It is auditioned only and is never persisted or made draggable —
- * see the audio-source boundary comment in `audioController.ts` and ADR-0003.
+ * see the audio-source boundary comment in `audioController.ts`.
  */
 function previewUrl(sound: Sound): string | null {
   return sound.previewUrls.hqMp3 || sound.previewUrls.lqMp3 || null

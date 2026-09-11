@@ -11,7 +11,7 @@ interface PeaksState {
   _set: (soundId: number, entry: PeaksPayload | null) => void
   /**
    * Forget a cached entry. Negative (Edit) ids are locally minted and get
-   * REUSED once a deleted Edit's id frees up (`nextEditId` — ADR-0005): without
+   * REUSED once a deleted Edit's id frees up (`nextEditId`): without
    * this, `ensure()`'s "already have an entry" bail would keep serving a
    * long-gone Edit's waveform for a brand new one that happens to land on the
    * same id. Called on delete (`useLibrary.remove`) and defensively again when

@@ -21,7 +21,7 @@ export function loadConfig(): DesktopConfig {
   if (!freesoundClientId || !tokenWorkerUrl) {
     console.warn(
       '[config] FREESOUND_CLIENT_ID and/or FREESOUND_TOKEN_WORKER_URL are not set — ' +
-        'sign-in is disabled, and with it search (ADR-0004: the app bundles no API key, ' +
+        'sign-in is disabled, and with it search (the app bundles no API key, ' +
         'so every Freesound call needs the user OAuth token). Copy ' +
         'apps/desktop/.env.example to apps/desktop/.env and fill both in. ' +
         'FREESOUND_CLIENT_SECRET is NEVER read here — it lives only in the token Worker.',

@@ -29,8 +29,7 @@ search returns HTTP 401.
 ## Building a release (ticket 19)
 
 Packaging is **`electron-builder`** driven by `electron-builder.yml`. The release
-is **unsigned for distribution** and has **no auto-update** — the decision and its
-consequences are in [`docs/adr/0007`](../../docs/adr/0007-ship-unsigned-no-auto-update.md).
+is **unsigned for distribution** and has **no auto-update**.
 The end-user side of the same story is [`INSTALL.md`](../../INSTALL.md).
 
 ```sh
@@ -82,8 +81,8 @@ reinstalling.
 ## Authentication (ticket 07)
 
 Sign-in is an **OAuth2 authorization-code grant** against Freesound, with **no
-PKCE** (Freesound does not support it) and **no `client_secret` in the app**
-(ADR-0004). The secret lives only in the ticket-06 Cloudflare Worker.
+PKCE** (Freesound does not support it) and **no `client_secret` in the app**.
+The secret lives only in the ticket-06 Cloudflare Worker.
 
 Flow, all driven by the **core** (`src/core/auth/`), tested with no Electron:
 
@@ -93,7 +92,7 @@ Flow, all driven by the **core** (`src/core/auth/`), tested with no Electron:
    — never an in-app login form.
 2. A **one-shot loopback listener** binds the fixed port **8910** and serves
    `GET /callback`. Freesound registers exactly one redirect URI,
-   `http://localhost:8910/callback` (ADR-0004, `CONVENTIONS.md`). It captures
+   `http://localhost:8910/callback` (`CONVENTIONS.md`). It captures
    `?code=&state=`, the core verifies `state`, the listener replies with a tiny
    "you can close this tab" page and **shuts down**. Port already in use →
    `LoopbackPortInUseError` ("port 8910 is already in use …"). Timeout / user
@@ -240,7 +239,7 @@ Pressing play streams the [Preview](../../CONTEXT.md) (ticket 04, 100% in the
 renderer) **and** tells the core to speculatively download the
 [Original](../../CONTEXT.md) so the Sound is on disk and draggable a moment
 later. The downloaded file is [Staged](../../CONTEXT.md): a complete Original on
-disk with **no `library_entries` row** (ADR-0003).
+disk with **no `library_entries` row**.
 
 ### Commands & events (what the renderer calls)
 
@@ -299,7 +298,7 @@ network call: `GET /apiv2/sounds/<id>/download/` with a Bearer token, run throug
 
 Originals are written to `<dataDir>/content/`, flat, named by Freesound sound id
 with the Sound's own extension: `321967.wav`. Next to each sits its **mandatory**
-sidecar `321967.json` (ADR-0002). Both files are written to a `*.part` temp name
+sidecar `321967.json`. Both files are written to a `*.part` temp name
 and atomically renamed — the sidecar first, the Original last — so an
 `<id>.<ext>` file always implies its sidecar is present.
 

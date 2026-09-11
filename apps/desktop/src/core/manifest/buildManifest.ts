@@ -3,7 +3,7 @@ import { requiresAttribution, restrictsCommercialUse } from './obligations'
 
 /**
  * The per-Sound fields a Manifest is built from — `LibrarySound` satisfies this.
- * `derivedFrom` is non-null exactly when the Sound is an Edit (ADR-0005); its
+ * `derivedFrom` is non-null exactly when the Sound is an Edit; its
  * author / License / URL are already the parent's own (`createEdit` copies
  * them at render time), so this is only consulted for the "edited" marker.
  * Optional (defaults to "not an Edit") so a plain `Sound` still satisfies this.
@@ -31,7 +31,7 @@ export interface ManifestEntry {
   requiresAttribution: boolean
   /** True for the CC NonCommercial family (and anything unrecognised). */
   restrictsCommercialUse: boolean
-  /** True when this entry is an Edit (ADR-0005) — credited to its parent. */
+  /** True when this entry is an Edit — credited to its parent. */
   isEdit: boolean
 }
 
@@ -67,7 +67,7 @@ const EMPTY_MESSAGE = 'This collection is empty — nothing to attribute yet.'
 
 /**
  * The parenthetical note appended to a credit line: the NC warning and/or the
- * "edited" marker (ADR-0005 — an Edit is credited to its parent but must read
+ * "edited" marker (an Edit is credited to its parent but must read
  * as unambiguously modified), comma-joined when both apply.
  */
 function marker(e: ManifestEntry): string {

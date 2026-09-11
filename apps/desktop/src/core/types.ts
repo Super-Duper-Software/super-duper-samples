@@ -112,7 +112,7 @@ export interface SearchPrefs {
 }
 
 /**
- * The trim + encode instructions for an Edit (ADR-0005). Persisted verbatim as
+ * The trim + encode instructions for an Edit. Persisted verbatim as
  * `sounds.edit_spec` JSON and passed to `createEdit`.
  */
 export interface EditSpec {
@@ -131,8 +131,8 @@ export interface EditSpec {
  * A Library Sound plus the user's local overlay. The inherited Freesound `name`
  * / `tags` are still present and unchanged.
  *
- * `derivedFrom` / `editSpec` are non-null exactly when this row is an **Edit**
- * (ADR-0005) — a derived local Sound with a negative `id`.
+ * `derivedFrom` / `editSpec` are non-null exactly when this row is an **Edit**:
+ * a derived local Sound with a negative `id`.
  */
 export interface LibrarySound extends Sound {
   /** The user's own name, or `null` when they have not renamed it. */
@@ -167,8 +167,7 @@ export interface LibraryFilter {
 
 /**
  * A Collection with its current member count. A Collection is a user-named,
- * unordered set of Library Sounds; it does not nest and has no existence on disk
- * (ADR-0002).
+ * unordered set of Library Sounds; it does not nest and has no existence on disk.
  */
 export interface CollectionSummary {
   id: number

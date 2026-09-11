@@ -18,7 +18,7 @@ export const SIDECAR_SCHEMA_VERSION = 3
  * The sidecar document. Everything a rebuild needs to reconstruct a `sounds` row
  * (+ a `library_entries` row for files that were saved) from the directory alone.
  *
- * `derivedFrom` / `editSpec` are set only for an Edit's sidecar (ADR-0005) —
+ * `derivedFrom` / `editSpec` are set only for an Edit's sidecar —
  * the parent Sound's id and the spec the Edit was rendered from.
  */
 export interface Sidecar {
@@ -39,7 +39,7 @@ export interface Sidecar {
   editSpec?: EditSpec
   /**
    * The user's own name for this item (`library_entries.custom_name`), mirrored
-   * here so a rebuild can restore it. For an Edit this IS its name (ADR-0005):
+   * here so a rebuild can restore it. For an Edit this IS its name:
    * `sound.name` is only the bare `edited` / `edited (N)` placeholder the core
    * mints, so without this a rebuilt Edit comes back called "edited". Absent /
    * `null` means the user has not named it.
@@ -217,7 +217,7 @@ function editSidecarPath(localPath: string): string {
 
 /**
  * Rewrite the `customName` field of an Edit's sidecar so its user-chosen name
- * survives a Library rebuild (ADR-0005). Called synchronously from
+ * survives a Library rebuild. Called synchronously from
  * `Core.setCustomName` for a negative id, right after the DB write. Atomic
  * (temp file + rename). A missing sidecar is a silent no-op — the Edit's files
  * may have been removed out from under us; an unreadable/unparseable one throws,

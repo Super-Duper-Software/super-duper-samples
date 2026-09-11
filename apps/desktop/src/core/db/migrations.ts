@@ -158,7 +158,7 @@ const m003: Migration = {
 }
 
 /**
- * Migration 004 — Edits (ADR-0005).
+ * Migration 004 — Edits.
  *
  * An Edit is an ordinary `sounds` row with a negative `id` (Freesound ids are
  * always positive, so the id spaces never collide), plus three nullable columns:

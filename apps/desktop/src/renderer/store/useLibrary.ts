@@ -21,8 +21,8 @@ export interface LibraryState {
   ensure: (ids: number[]) => void
   /**
    * Download a Sound's Original and save it to the Library (CONTEXT.md § Library:
-   * a Sound enters the Library only by an explicit user act, and — post
-   * ADR-0003-revision — that act is the download itself; auditioning no longer
+   * a Sound enters the Library only by an explicit user act, and that act is
+   * the download itself; auditioning no longer
    * fetches anything). Fire-and-forget: membership flips to `true` when the
    * `ready` staging push arrives (see `useStaging`). Idempotent — a no-op on a
    * Sound already saved / on disk. Requires being signed in.
@@ -46,8 +46,8 @@ function withMember(set: Set<number>, id: number, present: boolean): Set<number>
 
 /**
  * Stop the row-list transport if it is sitting on `soundId` — an Edit's
- * negative id gets REUSED once a deleted Edit's id frees up (ADR-0005's
- * `nextEditId`). Without this, `currentSoundId` stays pointed at the id from
+ * negative id gets REUSED once a deleted Edit's id frees up
+ * (`nextEditId`). Without this, `currentSoundId` stays pointed at the id from
  * BEFORE the delete, so `selectRowTransport` reports the brand new Edit at
  * that same id as already "current" the instant it appears — a click on its
  * row then calls `toggle()` (resume the stale loaded element) instead of

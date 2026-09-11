@@ -8,7 +8,7 @@ export interface LoopbackResult {
 }
 
 export interface AwaitLoopbackCodeOptions {
-  /** Always 8910 in production (ADR-0004). */
+  /** Always 8910 in production. */
   port: number
   /** Redirect path, `"/callback"`. */
   path: string

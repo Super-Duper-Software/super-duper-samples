@@ -112,7 +112,7 @@ export interface TestCore<G extends FreesoundGateway = FakeFreesoundGateway> {
  * fake gateway, fake `AuthPlatform` + `Scheduler`. This is the primary test seam
  * (spec 0001 § Testing Decisions), and the core is closed after the test.
  *
- * The core comes back SIGNED OUT. Search is OAuth-only (ADR-0004), so a test
+ * The core comes back SIGNED OUT. Search is OAuth-only, so a test
  * that searches wants `signedInCore` instead.
  *
  * `dbPath` is returned so a test can spin up a SECOND `makeTestCore` on the same

@@ -35,7 +35,7 @@ export class RetryableTokenError extends Error {
 
 /**
  * Another process holds the fixed OAuth redirect port. Exactly one redirect URI
- * is registered with Freesound (ADR-0004), so the port cannot be varied — the
+ * is registered with Freesound, so the port cannot be varied — the
  * user has to free it.
  */
 export class LoopbackPortInUseError extends Error {

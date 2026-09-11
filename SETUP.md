@@ -4,7 +4,7 @@ Nothing here is needed to run the test suites (`pnpm -r test`). It is what you d
 to point the app at a live Freesound account.
 
 The app bundles **no** API key. Every Freesound call, search included, is made with
-the signed-in user's OAuth2 token (ADR-0004), so nothing works until sign-in works,
+the signed-in user's OAuth2 token, so nothing works until sign-in works,
 and sign-in needs your own token-exchange Worker deployed.
 
 ## 1. Register a Freesound API application
@@ -13,7 +13,7 @@ Go to <https://freesound.org/apiv2/apply/> and create an application.
 
 | Field | Value |
 |---|---|
-| **Redirect URI** | `http://localhost:8910/callback` — exactly this, one only. Freesound allows a single redirect URI per credential (ADR-0004); the app's loopback listener is hard-coded to port 8910. |
+| **Redirect URI** | `http://localhost:8910/callback` — exactly this, one only. Freesound allows a single redirect URI per credential; the app's loopback listener is hard-coded to port 8910. |
 | Grant | Authorization Code (Freesound does **not** support PKCE) |
 
 You get two values:
@@ -29,7 +29,7 @@ now spends against this budget too, confirm with the Freesound admins before rel
 it at any scale:
 
 - Per user token → fine.
-- Per `client_id` → every user of your build shares one 2000/day budget (ADR-0004).
+- Per `client_id` → every user of your build shares one 2000/day budget.
 
 ## 3. Deploy the token Worker
 
@@ -81,14 +81,14 @@ hand against the running app.
 
 ## 7. Building a release (unsigned)
 
-Full detail is in `apps/desktop/README.md` § "Building a release" and `docs/adr/0007`.
+Full detail is in `apps/desktop/README.md` § "Building a release".
 The essentials:
 
 - **Deploy the Worker** (step 3). A released build with no Worker URL cannot sign in,
   so Search is dead.
 - **Bake the client config into the build.** `pack:mac` / `pack:win` read
   `apps/desktop/.env` at build time, so `FREESOUND_CLIENT_ID` and
-  `FREESOUND_TOKEN_WORKER_URL` must be set (the client id is safe to ship — ADR-0004).
+  `FREESOUND_TOKEN_WORKER_URL` must be set (the client id is safe to ship).
   In CI they come from GitHub Actions repository **variables** of the same names, not
   secrets.
 - **Cut a release** by pushing a `v*` tag; `.github/workflows/release.yml` builds the

@@ -1,8 +1,7 @@
 # @superduper/token-worker
 
 A stateless Cloudflare Worker that holds the Freesound OAuth2 `client_secret` and
-performs the two token exchanges a public desktop client cannot do for itself
-(see [ADR-0004](../docs/adr/0004-server-side-token-exchange.md)).
+performs the two token exchanges a public desktop client cannot do for itself.
 
 The desktop app talks to Freesound directly for everything else — search,
 previews, downloads. This Worker only ever sees an authorization code or a
@@ -188,7 +187,7 @@ The `client_id` is public; changing it is just a `wrangler.toml` edit plus
 See [SECURITY.md](SECURITY.md) for what a public deployment must harden before
 you rely on it.
 
-## Open question (from ADR-0004 / spec 0001)
+## Open question (from spec 0001)
 
 Confirm with the Freesound administrators whether the 60/min and 2000/day rate
 limits are counted per `client_id` or per user access token. If per `client_id`,

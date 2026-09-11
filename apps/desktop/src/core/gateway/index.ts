@@ -94,7 +94,7 @@ export interface DownloadOriginalResult {
  */
 export interface FreesoundGateway {
   /**
-   * `GET /apiv2/search/text/`. The app bundles no API key (ADR-0004), so search
+   * `GET /apiv2/search/text/`. The app bundles no API key, so search
    * is an authenticated call like any other and MUST go through the core's
    * `authorized()` wrapper. There is no signed-out search path.
    */

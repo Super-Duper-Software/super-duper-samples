@@ -13,8 +13,7 @@ and does light trim-and-export edits.
 ## Status
 
 This is source you build and run yourself. There is **no bundled API key**: every
-Freesound call — search included — uses the signed-in user's OAuth2 token (see
-[ADR-0004](docs/adr/0004-server-side-token-exchange.md)), which means you must
+Freesound call — search included — uses the signed-in user's OAuth2 token, which means you must
 
 1. register your own Freesound API application, and
 2. deploy your own token-exchange Cloudflare Worker (it holds the OAuth
@@ -23,7 +22,7 @@ Freesound call — search included — uses the signed-in user's OAuth2 token (s
 Full instructions are in [SETUP.md](SETUP.md). Prebuilt installers exist
 ([release workflow](.github/workflows/release.yml)) but are **unsigned** and will not
 sign in unless a Worker is deployed and its URL baked into the build — see
-[INSTALL.md](INSTALL.md) and [ADR-0007](docs/adr/0007-ship-unsigned-no-auto-update.md).
+[INSTALL.md](INSTALL.md).
 
 ## Telemetry
 
@@ -63,7 +62,7 @@ launching Electron, it's in the wrong place.*
 | Renderer | `apps/desktop/src/renderer/` | React + Tailwind. Presentation only. Reaches the core through `window.core`. |
 
 Terminology is defined in [CONTEXT.md](CONTEXT.md); repo conventions in
-[CONVENTIONS.md](CONVENTIONS.md); design decisions in [docs/adr/](docs/adr/).
+[CONVENTIONS.md](CONVENTIONS.md).
 
 ## License
 

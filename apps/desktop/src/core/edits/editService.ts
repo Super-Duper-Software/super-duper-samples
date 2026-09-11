@@ -87,7 +87,7 @@ const EMPTY_WAVEFORM_URLS = { m: '', l: '' }
  * Where a parent Sound's audio actually lives on disk, source for a render.
  * Mirrors `Core.getContentPath`'s own negative-id branch: an ordinary Sound's
  * Original is at the fixed `<id>.<ext>` content-store path, but an Edit
- * (negative id, ADR-0005) is named from ITS OWN parent instead
+ * (negative id) is named from ITS OWN parent instead
  * (`<parentId>-edited[-N].<ext>`) and only its `local_path` column knows
  * where. Exporting an Edit of an Edit needs this to find the source at all —
  * `contentPaths(dataDir, parent).original` is simply the wrong path for a

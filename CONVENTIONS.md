@@ -2,7 +2,7 @@
 
 Read this before touching code. It exists so that tickets built by different sessions
 agree on structure. It records **mechanical** choices only; behavioural decisions live in
-`docs/specs/0001-v1.md` and `docs/adr/`.
+`docs/specs/0001-v1.md`.
 
 ## Layout — pnpm workspace
 
@@ -27,7 +27,7 @@ Root `pnpm-workspace.yaml` lists `apps/*` and `worker`.
 - **TypeScript** everywhere. `strict: true`.
 - **Vitest** for all tests (app and worker).
 - **electron-vite** for the desktop build; **electron-builder** for packaging
-  (`apps/desktop/electron-builder.yml`, ticket 19 — unsigned, ADR-0007).
+  (`apps/desktop/electron-builder.yml`, ticket 19 — unsigned).
 - **Prettier** defaults, no bikeshedding. ESLint optional and minimal.
 - **Comments**: code and `/** … */` JSDoc only. No narrative or rationale prose in
   `//` comments — put the "why" in a commit message, an ADR, or a test name. Directive
@@ -40,7 +40,7 @@ Each package has `.env.example` (committed) and `.env` (git-ignored). Known keys
 
 | Key | Package | Purpose |
 |---|---|---|
-| `FREESOUND_CLIENT_ID` | apps/desktop | OAuth authorization-code grant (public part). Required — no API key is bundled, so search runs on the user OAuth token (ADR-0004) |
+| `FREESOUND_CLIENT_ID` | apps/desktop | OAuth authorization-code grant (public part). Required — no API key is bundled, so search runs on the user OAuth token |
 | `FREESOUND_TOKEN_WORKER_URL` | apps/desktop | Deployed ticket-06 Worker base URL. Required (see above) |
 | `SDS_TELEMETRY` | apps/desktop | Optional. `0`/`false`/`off`/`no` stops the app sending its random install id to the Worker for the anonymous MAU count. Default: on |
 | `FREESOUND_CLIENT_ID` | worker | OAuth client id |
@@ -50,10 +50,10 @@ Each package has `.env.example` (committed) and `.env` (git-ignored). Known keys
 ## Fixed constants
 
 - OAuth loopback redirect URI: `http://localhost:8910/callback` — exactly one, registered
-  with Freesound (ADR-0004). Port 8910.
+  with Freesound. Port 8910.
 - Freesound API base: `https://freesound.org/apiv2`.
-- Content store: flat dir under Electron `userData`, files named `<soundId>.<ext>` (ADR-0002).
-- Every downloaded Original gets a mandatory sidecar `<soundId>.json` (ADR-0002).
+- Content store: flat dir under Electron `userData`, files named `<soundId>.<ext>`.
+- Every downloaded Original gets a mandatory sidecar `<soundId>.json`.
 
 ## The load-bearing rule (spec, repeated here because it is easy to erode)
 

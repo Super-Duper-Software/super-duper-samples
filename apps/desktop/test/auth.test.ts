@@ -305,7 +305,7 @@ describe('sign-out', () => {
 })
 
 describe('signed-out usability', () => {
-  it('search is rejected while signed out and never reaches the gateway (ADR-0004: no bundled API key)', async () => {
+  it('search is rejected while signed out and never reaches the gateway (no bundled API key)', async () => {
     const gateway = makeFakeGateway()
     const { core } = await makeTestCore({ gateway })
 

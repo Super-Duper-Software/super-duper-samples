@@ -18,7 +18,7 @@ export interface ExportDialogProps {
   /**
    * The Sound's EFFECTIVE name (`customName ?? name`): for an Edit being
    * re-exported, `sound.name` is only ever the core's bare `edited` / `edited (N)`
-   * fallback (ADR-0005), never what the user named it.
+   * fallback, never what the user named it.
    */
   sourceName: string
   region: Region | null

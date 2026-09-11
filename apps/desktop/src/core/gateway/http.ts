@@ -35,7 +35,7 @@ export interface HttpFreesoundGatewayConfig {
   /**
    * Token Worker base URL (`FREESOUND_TOKEN_WORKER_URL`). The Worker holds
    * `client_secret`; this app never does. Required — without it there is no way
-   * to get the bearer token search and download both need (ADR-0004).
+   * to get the bearer token search and download both need.
    */
   tokenWorkerUrl?: string
   /** Override the API base. Must end with a slash. Defaults to the real API. */
@@ -71,7 +71,7 @@ interface WorkerErrorBody {
 /**
  * Real gateway. Every Freesound call — search included — hits
  * `https://freesound.org/apiv2/...` with the signed-in user's OAuth2 bearer
- * token (`Authorization: Bearer <accessToken>`); ADR-0004 explains why no API
+ * token (`Authorization: Bearer <accessToken>`); no API
  * key is bundled. Token exchange/refresh go to the Cloudflare token Worker.
  */
 export class HttpFreesoundGateway implements FreesoundGateway {

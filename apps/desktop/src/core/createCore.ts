@@ -40,6 +40,10 @@ import {
 
 const DEBOUNCE_MS = 320
 
+/**
+ * Assemble the application core and wire its persistence, auth, staging,
+ * search, telemetry, and media services to the supplied platform dependencies.
+ */
 export function createCore(deps: CoreDeps): Core {
   const { gateway, dbPath, dataDir, debounceMs = DEBOUNCE_MS } = deps
 

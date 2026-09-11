@@ -47,6 +47,7 @@ export interface SearchService {
   close(): void
 }
 
+/** Create the cache-backed, authenticated search service used by the core. */
 export function createSearchService({
   db,
   gateway,
@@ -73,6 +74,7 @@ export function createSearchService({
     }
   }
 
+  /** Fetch one result page, persist its sounds and cache metadata, and report failures. */
   async function fetchAndStore(
     query: string,
     page: number,

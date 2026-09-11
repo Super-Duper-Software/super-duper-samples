@@ -63,6 +63,7 @@ export interface DownloadQueue {
   clear(): void
 }
 
+/** Create a bounded-concurrency Original download queue with retry support. */
 export function createDownloadQueue(deps: DownloadQueueDeps): DownloadQueue {
   const concurrency = deps.concurrency ?? DOWNLOAD_CONCURRENCY
   const maxRetries = deps.maxRetries ?? DOWNLOAD_MAX_RETRIES
@@ -127,6 +128,7 @@ export function createDownloadQueue(deps: DownloadQueueDeps): DownloadQueue {
     }
   }
 
+  /** Run one job attempt, scheduling a retry or reporting its terminal failure. */
   async function runAttempt(job: Job): Promise<void> {
     let releasedSlot = false
     const releaseSlot = (): void => {

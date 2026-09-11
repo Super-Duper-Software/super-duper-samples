@@ -559,6 +559,7 @@ describe("error reports (/report)", () => {
     osRelease: "10.0.19045",
   };
 
+  /** Create an Analytics Engine test double that records submitted data points. */
   function fakeErrorAnalytics(): {
     binding: NonNullable<Env["ERROR_ANALYTICS"]>;
     points: Array<{ indexes?: unknown[]; blobs?: unknown[]; doubles?: unknown[] }>;

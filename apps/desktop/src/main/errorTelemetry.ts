@@ -36,6 +36,7 @@ const NOOP: ErrorTelemetry = {
 	stop() {},
 };
 
+/** Build the stable aggregation key for one anonymous error bucket. */
 const bucketKey = (
 	b: Pick<Bucket, "code" | "subReason" | "secondary" | "online">,
 ): string => `${b.code} ${b.subReason} ${b.secondary} ${b.online}`;
@@ -65,6 +66,7 @@ export function createErrorTelemetry(opts: {
 	const onlineNum = (b: boolean | undefined): number =>
 		b === true ? 1 : b === false ? 0 : -1;
 
+	/** Add one allowlisted event to its bounded in-memory aggregation bucket. */
 	function report(event: ClientErrorEvent): void {
 		const b: Bucket = {
 			code: event.code,
@@ -86,6 +88,7 @@ export function createErrorTelemetry(opts: {
 		buckets.set(key, b);
 	}
 
+	/** Send the current batch, re-queuing it only after a transient failure. */
 	async function flush(): Promise<void> {
 		if (buckets.size === 0) return;
 		const events = [...buckets.values()].slice(0, MAX_EVENTS_PER_FLUSH);

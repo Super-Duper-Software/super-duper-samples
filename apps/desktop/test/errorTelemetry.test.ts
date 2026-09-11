@@ -13,6 +13,7 @@ interface Sent {
   body: { context: unknown; events: Array<Record<string, unknown>> }
 }
 
+/** Create a recording fetch stub with a caller-controlled response status. */
 function stubFetch(status: () => number = () => 204) {
   const sent: Sent[] = []
   const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {

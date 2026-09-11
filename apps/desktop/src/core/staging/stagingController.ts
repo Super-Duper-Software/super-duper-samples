@@ -109,6 +109,10 @@ export interface StagingControllerDeps {
   backoffMs?: readonly number[]
 }
 
+/**
+ * Coordinate Original downloads, staged-file bookkeeping, Library promotion,
+ * peak generation, and eviction for the core.
+ */
 export function createStagingController(
   deps: StagingControllerDeps,
 ): StagingController {
